@@ -23,6 +23,13 @@ const appWindowTitle = "POSCloud Server — сервер"
 // Префикс Local\ ограничивает область текущим сеансом пользователя.
 const oneInstanceKey = `Local\POSCloud-Server-SingleInstance`
 
+// Акцентный цвет стрелок иконки в трее: сервер — сочный красный.
+const (
+	trayAccentR = 0xef
+	trayAccentG = 0x44
+	trayAccentB = 0x44
+)
+
 // serverFlags — параметры запуска сервера из командной строки.
 type serverFlags struct {
 	port      int

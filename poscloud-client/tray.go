@@ -15,69 +15,153 @@ import (
 )
 
 // --- иконка трея (ICO генерируется программно, бинарных файлов нет) ---
+//
+// Иконка рисуется в увеличенном размере и затем уменьшается с усреднением,
+// поэтому края получаются сглаженными и не «мылят». Акцентный цвет стрелок
+// задаётся константами в main.go: у клиента зелёный, у сервера красный.
 
-const trayIconSize = 32
+const (
+	trayIconSize   = 32                     // основной размер иконки в трее
+	trayIconSmall  = 16                     // уменьшенный размер для мелкого масштаба
+	traySuperSize  = 128                    // размер, в котором ведётся отрисовка
+	trayFrameCount = 12                     // число кадров анимации
+	trayFrameDelay = 100 * time.Millisecond // шаг анимации
+)
+
+// Акцентный цвет стрелок; значения заданы в main.go и различаются у клиента и сервера.
+var trayAccent = color.RGBA{R: trayAccentR, G: trayAccentG, B: trayAccentB, A: 0xff}
 
 var (
 	trayStatic []byte
 	trayFrames [][]byte
 )
 
-// buildTrayIcons готовит статичную иконку и кадры для анимации (8 поворотов).
+// buildTrayIcons готовит статичную иконку и кадры для анимации.
 func buildTrayIcons() {
-	trayStatic = makeIconICO(drawArrows(trayIconSize, 0))
-	trayFrames = make([][]byte, 0, 8)
-	for k := 0; k < 8; k++ {
-		trayFrames = append(trayFrames, makeIconICO(drawArrows(trayIconSize, float64(k)*45)))
+	trayStatic = trayICO(0)
+	trayFrames = make([][]byte, 0, trayFrameCount)
+	for k := 0; k < trayFrameCount; k++ {
+		trayFrames = append(trayFrames, trayICO(360*float64(k)/float64(trayFrameCount)))
 	}
 }
 
-// drawArrows рисует две круговые стрелки, повёрнутые на deg градусов.
-func drawArrows(size int, deg float64) *image.RGBA {
+// trayICO собирает ICO (кадры 32 и 16 пикселей) для поворота на deg градусов.
+func trayICO(deg float64) []byte {
+	super := drawSyncArrows(traySuperSize, deg)
+	return makeIconICO(downscale(super, trayIconSize), downscale(super, trayIconSmall))
+}
+
+// drawSyncArrows рисует две круговые стрелки с заострёнными наконечниками,
+// повёрнутые на deg градусов. Обе стрелки закручены по часовой стрелке.
+func drawSyncArrows(size int, deg float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 	c := (float64(size) - 1) / 2
-	rOut := float64(size) * 0.46
-	rIn := rOut * 0.62
+	rOut := float64(size) * 0.42
+	rIn := rOut * 0.55
 	rMid := (rOut + rIn) / 2
-	col := color.RGBA{R: 0x2e, G: 0xa0, B: 0x43, A: 0xff}
-	const pi = math.Pi
-	shift := deg * pi / 180
-	arcs := [2][2]float64{{0.15 * pi, 0.85 * pi}, {1.15 * pi, 1.85 * pi}}
-	for y := 0; y < size; y++ {
-		for x := 0; x < size; x++ {
-			dx := float64(x) - c
-			dy := float64(y) - c
-			d := math.Hypot(dx, dy)
-			if d < rIn || d > rOut {
-				continue
-			}
-			a := math.Atan2(dy, dx) - shift
-			for a < 0 {
-				a += 2 * pi
-			}
-			for a >= 2*pi {
-				a -= 2 * pi
-			}
-			for _, ar := range arcs {
-				if a >= ar[0] && a <= ar[1] {
-					img.SetRGBA(x, y, col)
-					break
+	hw := (rOut - rIn) / 2 // половина толщины дуги
+	headLen := hw * 2.0    // длина наконечника
+	headHalf := hw * 1.45  // половина ширины наконечника
+	shift := deg * math.Pi / 180
+
+	// Две дуги по 135°, вторая развёрнута на 180°. Наконечник — на конце дуги.
+	arcs := [2][2]float64{{195, 330}, {15, 150}}
+
+	for _, ar := range arcs {
+		a0 := ar[0]*math.Pi/180 + shift
+		a1 := ar[1]*math.Pi/180 + shift
+
+		// тело дуги
+		for y := 0; y < size; y++ {
+			for x := 0; x < size; x++ {
+				dx := float64(x) - c
+				dy := float64(y) - c
+				d := math.Hypot(dx, dy)
+				if d < rIn || d > rOut {
+					continue
+				}
+				if angleBetween(math.Atan2(dy, dx), a0, a1) {
+					img.SetRGBA(x, y, trayAccent)
 				}
 			}
 		}
+
+		// скруглённое начало дуги
+		disc(img, c+rMid*math.Cos(a0), c+rMid*math.Sin(a0), hw, trayAccent)
+
+		// заострённый наконечник, направленный по ходу дуги
+		px, py := c+rMid*math.Cos(a1), c+rMid*math.Sin(a1)
+		tx, ty := -math.Sin(a1), math.Cos(a1)
+		nx, ny := math.Cos(a1), math.Sin(a1)
+		fillTri(img,
+			px+tx*headLen, py+ty*headLen,
+			px+nx*headHalf, py+ny*headHalf,
+			px-nx*headHalf, py-ny*headHalf,
+			trayAccent)
 	}
-	for _, ar := range arcs {
-		end := ar[1] + shift
-		ax := c + rMid*math.Cos(end)
-		ay := c + rMid*math.Sin(end)
-		tx := c + rMid*math.Cos(end+0.35)
-		ty := c + rMid*math.Sin(end+0.35)
-		px := -math.Sin(end)
-		py := math.Cos(end)
-		hw := (rOut - rIn) * 0.95
-		fillTri(img, tx, ty, ax+px*hw, ay+py*hw, ax-px*hw, ay-py*hw, col)
-	}
+
+	applyVerticalShade(img, trayAccent)
 	return img
+}
+
+// angleBetween сообщает, попадает ли угол a в дугу от a0 до a1 (по возрастанию).
+func angleBetween(a, a0, a1 float64) bool {
+	d := math.Mod(a-a0, 2*math.Pi)
+	if d < 0 {
+		d += 2 * math.Pi
+	}
+	return d <= a1-a0
+}
+
+// applyVerticalShade накладывает лёгкий вертикальный градиент, чтобы иконка была «сочнее».
+func applyVerticalShade(img *image.RGBA, base color.RGBA) {
+	b := img.Bounds()
+	if b.Dy() == 0 {
+		return
+	}
+	for y := 0; y < b.Dy(); y++ {
+		f := 1.22 - 0.55*float64(y)/float64(b.Dy())
+		for x := 0; x < b.Dx(); x++ {
+			c := img.RGBAAt(x, y)
+			if c.A == 0 {
+				continue
+			}
+			img.SetRGBA(x, y, color.RGBA{
+				R: shade(base.R, f),
+				G: shade(base.G, f),
+				B: shade(base.B, f),
+				A: c.A,
+			})
+		}
+	}
+}
+
+func shade(v uint8, f float64) uint8 {
+	x := float64(v) * f
+	if x > 255 {
+		x = 255
+	}
+	if x < 0 {
+		x = 0
+	}
+	return uint8(x)
+}
+
+// disc закрашивает круг радиусом r.
+func disc(img *image.RGBA, cx, cy, r float64, col color.RGBA) {
+	b := img.Bounds()
+	for y := int(math.Floor(cy - r)); y <= int(math.Ceil(cy+r)); y++ {
+		for x := int(math.Floor(cx - r)); x <= int(math.Ceil(cx+r)); x++ {
+			if x < b.Min.X || x >= b.Max.X || y < b.Min.Y || y >= b.Max.Y {
+				continue
+			}
+			dx := float64(x) + 0.5 - cx
+			dy := float64(y) + 0.5 - cy
+			if dx*dx+dy*dy <= r*r {
+				img.SetRGBA(x, y, col)
+			}
+		}
+	}
 }
 
 func fillTri(img *image.RGBA, x1, y1, x2, y2, x3, y3 float64, col color.RGBA) {
@@ -108,42 +192,136 @@ func fillTri(img *image.RGBA, x1, y1, x2, y2, x3, y3 float64, col color.RGBA) {
 	}
 }
 
-// makeIconICO собирает ICO (один кадр, 32bpp BMP) из RGBA-картинки.
-func makeIconICO(img *image.RGBA) []byte {
-	w := img.Bounds().Dx()
-	h := img.Bounds().Dy()
-	xorStride := w * 4
-	andStride := ((w + 31) / 32) * 4
-	imgSize := 40 + xorStride*h + andStride*h
-	buf := make([]byte, 22+imgSize)
-	le16 := func(off int, v int) {
+// downscale уменьшает изображение усреднением с учётом прозрачности,
+// поэтому края остаются гладкими и не «сереют».
+func downscale(src *image.RGBA, n int) *image.RGBA {
+	s := src.Bounds().Dx()
+	dst := image.NewRGBA(image.Rect(0, 0, n, n))
+	if s == 0 || n <= 0 {
+		return dst
+	}
+	step := float64(s) / float64(n)
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			var r, g, bl, a float64
+			var cnt float64
+			for sy := int(float64(y) * step); sy < int(float64(y+1)*step); sy++ {
+				for sx := int(float64(x) * step); sx < int(float64(x+1)*step); sx++ {
+					c := src.RGBAAt(sx, sy)
+					af := float64(c.A) / 255
+					r += float64(c.R) * af
+					g += float64(c.G) * af
+					bl += float64(c.B) * af
+					a += af
+					cnt++
+				}
+			}
+			if cnt == 0 || a == 0 {
+				continue
+			}
+			dst.SetRGBA(x, y, color.RGBA{
+				R: uint8(clamp255(r / a)),
+				G: uint8(clamp255(g / a)),
+				B: uint8(clamp255(bl / a)),
+				A: uint8(clamp255(a / cnt * 255)),
+			})
+		}
+	}
+	return dst
+}
+
+func clamp255(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return v
+}
+
+// makeIconICO собирает ICO из переданных изображений (32bpp, с маской прозрачности).
+func makeIconICO(imgs ...*image.RGBA) []byte {
+	n := len(imgs)
+	if n == 0 {
+		return nil
+	}
+	frames := make([][]byte, n)
+	offsets := make([]int, n)
+	total := 6 + 16*n
+	for i, img := range imgs {
+		frames[i] = icoFrame(img)
+		offsets[i] = total
+		total += len(frames[i])
+	}
+
+	buf := make([]byte, total)
+	le16 := func(off, v int) {
 		buf[off] = byte(v)
 		buf[off+1] = byte(v >> 8)
 	}
-	le32 := func(off int, v int) {
+	le32 := func(off, v int) {
 		buf[off] = byte(v)
 		buf[off+1] = byte(v >> 8)
 		buf[off+2] = byte(v >> 16)
 		buf[off+3] = byte(v >> 24)
 	}
 	le16(0, 0)
-	le16(2, 1)
-	le16(4, 1)
-	buf[6] = byte(w)
-	buf[7] = byte(h)
-	le16(10, 1)
-	le16(12, 32)
-	le32(14, imgSize)
-	le32(18, 22)
-	le32(22, 40)
-	le32(26, w)
-	le32(30, h*2)
-	le16(34, 1)
-	le16(36, 32)
-	le32(42, xorStride*h)
-	off := 22 + 40
+	le16(2, 1) // тип: иконка
+	le16(4, n)
+
+	for i, img := range imgs {
+		w := img.Bounds().Dx()
+		h := img.Bounds().Dy()
+		e := 6 + 16*i
+		if w >= 256 {
+			buf[e] = 0
+		} else {
+			buf[e] = byte(w)
+		}
+		if h >= 256 {
+			buf[e+1] = 0
+		} else {
+			buf[e+1] = byte(h)
+		}
+		buf[e+2] = 0
+		buf[e+3] = 0
+		le16(e+4, 1)
+		le16(e+6, 32)
+		le32(e+8, len(frames[i]))
+		le32(e+12, offsets[i])
+		copy(buf[offsets[i]:], frames[i])
+	}
+	return buf
+}
+
+// icoFrame собирает один кадр ICO: BITMAPINFOHEADER + пиксели + маска прозрачности.
+func icoFrame(img *image.RGBA) []byte {
+	w := img.Bounds().Dx()
+	h := img.Bounds().Dy()
+	xorStride := w * 4
+	andStride := ((w + 31) / 32) * 4
+	buf := make([]byte, 40+xorStride*h+andStride*h)
+
+	le16 := func(off, v int) {
+		buf[off] = byte(v)
+		buf[off+1] = byte(v >> 8)
+	}
+	le32 := func(off, v int) {
+		buf[off] = byte(v)
+		buf[off+1] = byte(v >> 8)
+		buf[off+2] = byte(v >> 16)
+		buf[off+3] = byte(v >> 24)
+	}
+	le32(0, 40)
+	le32(4, w)
+	le32(8, h*2)
+	le16(12, 1)
+	le16(14, 32)
+	le32(20, xorStride*h)
+
 	for y := h - 1; y >= 0; y-- {
-		row := off + (h-1-y)*xorStride
+		row := 40 + (h-1-y)*xorStride
 		for x := 0; x < w; x++ {
 			c := img.RGBAAt(x, y)
 			p := row + x*4
@@ -151,6 +329,17 @@ func makeIconICO(img *image.RGBA) []byte {
 			buf[p+1] = c.G
 			buf[p+2] = c.R
 			buf[p+3] = c.A
+		}
+	}
+
+	// Маска: бит выставлен там, где пиксель прозрачный.
+	maskOff := 40 + xorStride*h
+	for y := h - 1; y >= 0; y-- {
+		row := maskOff + (h-1-y)*andStride
+		for x := 0; x < w; x++ {
+			if img.RGBAAt(x, y).A < 128 {
+				buf[row+x/8] |= 1 << (7 - uint(x%8))
+			}
 		}
 	}
 	return buf
@@ -200,7 +389,7 @@ func startTrayAnimation() {
 		i := 0
 		lastActive := false
 		for {
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(trayFrameDelay)
 			act := transfers.active()
 			if act {
 				i = (i + 1) % len(trayFrames)

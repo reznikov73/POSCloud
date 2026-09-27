@@ -23,6 +23,13 @@ const appWindowTitle = "POSCloud Client — клиент"
 // Префикс Local\ ограничивает область текущим сеансом пользователя.
 const oneInstanceKey = `Local\POSCloud-Client-SingleInstance`
 
+// Акцентный цвет стрелок иконки в трее: клиент — сочный зелёный.
+const (
+	trayAccentR = 0x22
+	trayAccentG = 0xc5
+	trayAccentB = 0x5e
+)
+
 // clientFlags — параметры запуска клиента из командной строки.
 type clientFlags struct {
 	host      string
