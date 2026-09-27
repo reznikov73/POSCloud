@@ -57,17 +57,17 @@ func trayICO(deg float64) []byte {
 func drawSyncArrows(size int, deg float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 	c := (float64(size) - 1) / 2
-	rOut := float64(size) * 0.37
+	rOut := float64(size) * 0.32
 	rIn := rOut * 0.60
 	rMid := (rOut + rIn) / 2
 	hw := (rOut - rIn) / 2 // половина толщины дуги
-	headLen := hw * 2.8    // длина наконечника
-	headHalf := hw * 2.2   // половина ширины наконечника
+	headLen := hw * 3.6    // длина наконечника
+	headHalf := hw * 3.4   // половина ширины наконечника
 	shift := deg * math.Pi / 180
 
-	// Дуги укорочены до 85°, чтобы крупный наконечник не сближал стрелки:
-	// промежутки остаются широкими даже при большом острие.
-	arcs := [2][2]float64{{207.5, 292.5}, {27.5, 112.5}}
+	// Дуги укорочены до 70°: крупный наконечник занимает по дуге около 52°,
+	// промежутки между стрелками остаются широкими.
+	arcs := [2][2]float64{{210, 280}, {30, 100}}
 
 	for _, ar := range arcs {
 		a0 := ar[0]*math.Pi/180 + shift
