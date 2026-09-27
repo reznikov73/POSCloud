@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"math"
 	"os"
+	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -349,14 +350,50 @@ func icoFrame(img *image.RGBA) []byte {
 func (a *App) trayInit(title string) {
 	systray.SetIcon(trayStatic)
 	systray.SetTooltip(title)
-	mOpen := systray.AddMenuItem("Открыть окно настроек", "Показать окно")
-	mOpen.Click(func() { a.trayShowWindow() })
-	mQuit := systray.AddMenuItem("Закрыть программу", "Выйти из программы")
-	mQuit.Click(func() { a.trayQuit() })
+	a.buildTrayMenu()
 	systray.SetOnClick(func(menu systray.IMenu) { a.trayShowWindow() })
 	systray.SetOnDClick(func(menu systray.IMenu) { a.trayShowWindow() })
 	systray.SetOnRClick(func(menu systray.IMenu) { _ = menu.ShowMenu() })
 	startTrayAnimation()
+	a.startTrayMenuRefresh()
+}
+
+// startTrayMenuRefresh раз в секунду обновляет подписи в шапке меню.
+func (a *App) startTrayMenuRefresh() {
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			a.updateTrayMenu()
+		}
+	}()
+}
+
+// openInExplorer открывает каталог или файл в проводнике.
+func openInExplorer(path string) {
+	if path == "" {
+		return
+	}
+	_ = exec.Command("explorer", path).Start()
+}
+
+// showAbout показывает информационное окно.
+func (a *App) showAbout(title, text string) {
+	if a.ctx == nil {
+		return
+	}
+	_, _ = runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		Type:    runtime.InfoDialog,
+		Title:   title,
+		Message: text,
+	})
+}
+
+// copyText кладёт текст в буфер обмена.
+func (a *App) copyText(text string) {
+	if a.ctx == nil || text == "" {
+		return
+	}
+	_ = runtime.ClipboardSetText(a.ctx, text)
 }
 
 func (a *App) trayShowWindow() {

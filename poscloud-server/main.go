@@ -30,6 +30,9 @@ const (
 	trayAccentB = 0x44
 )
 
+// Версия приложения — показывается в пункте «О программе».
+const appVersion = "1.0.0"
+
 // serverFlags — параметры запуска сервера из командной строки.
 type serverFlags struct {
 	port      int

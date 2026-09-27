@@ -30,6 +30,9 @@ const (
 	trayAccentB = 0x5e
 )
 
+// Версия приложения — показывается в пункте «О программе».
+const appVersion = "1.0.0"
+
 // clientFlags — параметры запуска клиента из командной строки.
 type clientFlags struct {
 	host      string
