@@ -1,0 +1,39 @@
+# Build outputs
+build/bin/
+*.exe
+*.dll
+*.test
+
+# Runtime data / logs
+pubClient/
+pubServer/
+*.log
+
+# Рабочие настройки и данные: содержат токен доступа и реестр пользователей.
+# В репозиторий попадать не должны.
+client.json
+server.json
+users.json
+.poscloud-state.json
+.poscloud-cache/
+
+# Служебное состояние инструментов разработки (к проекту не относится)
+.gigacode_vsc/
+.opencode/
+.autoclaw/
+.cluster/
+.agents/
+
+# Файлы «домашнего» воркспейса агента (шаблон, не часть POSCloud)
+AGENTS.md
+SOUL.md
+TOOLS.md
+IDENTITY.md
+USER.md
+HEARTBEAT.md
+MEMORY.md
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store

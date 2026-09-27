@@ -1,0 +1,47 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Клиент: отладка (Wails)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/poscloud-client",
+      "cwd": "${workspaceFolder}/poscloud-client",
+      "buildFlags": "-tags desktop,production,debug,devtools",
+      "showLog": true
+    },
+    {
+      "name": "Клиент: отладка с параметрами",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/poscloud-client",
+      "cwd": "${workspaceFolder}/poscloud-client",
+      "buildFlags": "-tags desktop,production,debug,devtools",
+      "args": ["-server", "localhost", "-port", "8090"],
+      "showLog": true
+    },
+    {
+      "name": "Сервер: отладка (Wails)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/poscloud-server",
+      "cwd": "${workspaceFolder}/poscloud-server",
+      "buildFlags": "-tags desktop,production,debug,devtools",
+      "showLog": true
+    },
+    {
+      "name": "Сервер: отладка с параметрами",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/poscloud-server",
+      "cwd": "${workspaceFolder}/poscloud-server",
+      "buildFlags": "-tags desktop,production,debug,devtools",
+      "args": ["-port", "8090"],
+      "showLog": true
+    }
+  ]
+}

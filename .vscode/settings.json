@@ -1,0 +1,19 @@
+{
+  "go.useLanguageServer": true,
+  "go.toolsManagement.autoUpdate": true,
+  "go.gopath": "C:\\Users\\Administrator\\go",
+  "go.goroot": "E:\\Program Files\\Go",
+  "go.formatTool": "gofmt",
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.insertSpaces": false,
+    "editor.tabSize": 4
+  },
+  "gopls": {
+    "ui.semanticTokens": true
+  },
+  "files.eol": "\n",
+  "terminal.integrated.env.windows": {
+    "GOBIN": "C:\\Users\\Administrator\\go\\bin"
+  }
+}

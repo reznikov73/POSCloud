@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>POSCloud Client</title>
+<link rel="stylesheet" href="./styles.css"/>
+<style>
+  textarea{width:100%;box-sizing:border-box;background:#11161c;color:#e6edf3;border:1px solid #2a323c;border-radius:8px;padding:8px;font:13px/1.45 ui-monospace,Consolas,monospace;resize:vertical}
+  .pbar{height:3px;background:#232a33;border-radius:2px;margin-top:5px;overflow:hidden}
+  .pfill{height:3px;background:#2ea043;border-radius:2px}
+  .pct{font-size:11px;color:#9aa7b2;margin-top:2px}
+  input[type=checkbox]{width:auto;height:auto;min-width:0;margin:0 6px 0 0;vertical-align:-1px;accent-color:#2ea043}
+  .autostart{display:inline-flex;align-items:center;font-size:12.5px;color:#9aa7b2;margin-top:8px}
+  .field-narrow input{max-width:110px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">C</div>
+      <div>
+        <div class="title">POSCloud Client</div>
+        <div class="subtitle">клиентская часть: синхронизирует вашу папку с сервером</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="pulse" class="pulse"></span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="tab-client">Клиент</button>
+    <button class="tab" data-tab="tab-files">Файлы</button>
+    <button class="tab" data-tab="tab-log">Журнал</button>
+  </div>
+
+  <!-- ===== КЛИЕНТ ===== -->
+  <div class="pane active" id="tab-client">
+    <div class="grid">
+      <div class="card status-card">
+        <div class="status-line">
+          <span id="cliDot" class="dot"></span>
+          <span id="cliStatusText" class="status-text">остановлен</span>
+        </div>
+        <div class="kv"><span>Сервер</span><b id="cliUrl">-</b></div>
+        <div class="kv"><span>Связь</span><b id="cliOnline">-</b></div>
+        <div class="kv"><span>Активная папка</span><b id="cliDir">-</b></div>
+        <div class="kv"><span>Интервал</span><b id="cliInt">3 с</b></div>
+        <div class="kv"><span>Последний синк</span><b id="cliLast">-</b></div>
+        <div class="kv"><span>Файлов локально</span><b id="cliCount">0</b></div>
+        <div class="row-btns">
+          <button class="btn primary" id="cliToggle">Запустить</button>
+          <button class="btn ghost" id="cliSync">Синхронизировать сейчас</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Настройки подключения</div>
+        <div class="inline-2">
+          <label class="field"><span>Адрес сервера</span><input id="cliHostInput" type="text" value="localhost" placeholder="IP или домен"/></label>
+          <label class="field"><span>Порт</span><input id="cliPortInput" type="number" min="1" max="65535" value="8090"/></label>
+        </div>
+        <label class="field"><span>Токен доступа</span><input id="cliTokenInput" type="text" placeholder="pcs_... (получить в окне сервера)"/></label>
+        <label class="field field-narrow"><span>Интервал опроса (сек)</span><input id="cliIntInput" type="number" min="1" value="3"/></label>
+        <label class="field"><span>Папка синхронизации</span>
+          <div class="inline"><input id="cliDirInput" type="text" placeholder="C:\Users\...\POSCloud\sync"/>
+          <button class="btn small" id="cliPick">…</button></div>
+        </label>
+        <label class="autostart"><input type="checkbox" id="cliAutostart"/><span>Запускать при включении компьютера</span></label>
+        <div class="row-btns">
+          <button class="btn ghost" id="cliSave">Сохранить настройки</button>
+          <button class="btn ghost" id="cliTest">Проверить связь</button>
+        </div>
+        <div class="hint-muted" id="cliCfgPath"></div>
+        <div class="hint" id="cliErr"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Исключения (.poscloudignore)</div>
+
+        <div class="field"><span>Готовые наборы (включаются галочкой)</span>
+          <div class="presets" id="cliPresets"></div>
+        </div>
+
+        <label class="field"><span>Шаблоны (по одному в строке; # — комментарий)</span>
+          <textarea id="cliIgnoreInput" rows="6" spellcheck="false" placeholder="build&#10;node_modules&#10;*.log"></textarea>
+        </label>
+
+        <div class="row-btns">
+          <button class="btn ghost" id="cliIgnoreSave">Сохранить исключения</button>
+          <button class="btn ghost" id="cliIgnorePick">Выбрать из папки…</button>
+          <button class="btn ghost" id="cliIgnoreImport">Импорт…</button>
+          <button class="btn ghost" id="cliIgnoreExport">Экспорт…</button>
+          <button class="btn ghost" id="cliIgnoreClear">Очистить</button>
+          <button class="btn ghost" id="cliIgnoreCheck">Проверить</button>
+        </div>
+
+        <div class="picker" id="cliIgnorePicker" hidden>
+          <div class="picker-head">
+            <span class="picker-path" id="cliPickerPath">корень папки синхронизации</span>
+            <span class="picker-actions">
+              <button class="btn small" id="cliPickerUp">↑ вверх</button>
+              <button class="btn small" id="cliPickerAdd">Добавить выбранное</button>
+              <button class="btn small" id="cliPickerClose">Закрыть</button>
+            </span>
+          </div>
+          <div class="picker-list" id="cliPickerList"></div>
+        </div>
+
+        <div class="hint-muted" id="cliIgnoreStats"></div>
+        <div class="hint-muted">Файл .poscloudignore в корне папки синхронизации. Игнорируемое не синхронизируется и не удаляется на сервере.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ФАЙЛЫ ===== -->
+  <div class="pane" id="tab-files">
+    <div class="card">
+      <div class="card-title">Файлы в папке синхронизации</div>
+      <table class="files">
+        <thead><tr><th>Имя</th><th>Размер</th><th>Изменён</th><th></th></tr></thead>
+        <tbody id="cliFiles"><tr><td colspan="4" class="empty">пусто</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== ЖУРНАЛ ===== -->
+  <div class="pane" id="tab-log">
+    <div class="card">
+      <div class="card-title">Журнал</div>
+      <div class="row-btns" style="margin-top:0">
+        <button class="btn small" id="logOpen">Открыть файл</button>
+        <button class="btn small" id="logClear">Очистить</button>
+        <button class="btn small ghost" id="logRefresh">Обновить</button>
+      </div>
+      <pre id="logbody"></pre>
+    </div>
+  </div>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

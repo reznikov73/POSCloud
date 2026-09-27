@@ -1,0 +1,72 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "wails: сборка клиента",
+      "type": "shell",
+      "command": "wails",
+      "args": ["build", "-s", "-skipbindings"],
+      "options": { "cwd": "${workspaceFolder}/poscloud-client" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: сборка клиента (debug)",
+      "type": "shell",
+      "command": "wails",
+      "args": ["build", "-debug", "-s", "-skipbindings"],
+      "options": { "cwd": "${workspaceFolder}/poscloud-client" },
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: сборка сервера",
+      "type": "shell",
+      "command": "wails",
+      "args": ["build", "-s", "-skipbindings"],
+      "options": { "cwd": "${workspaceFolder}/poscloud-server" },
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: сборка сервера (debug)",
+      "type": "shell",
+      "command": "wails",
+      "args": ["build", "-debug", "-s", "-skipbindings"],
+      "options": { "cwd": "${workspaceFolder}/poscloud-server" },
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: запуск клиента (dev)",
+      "type": "shell",
+      "command": "wails",
+      "args": ["dev"],
+      "options": { "cwd": "${workspaceFolder}/poscloud-client" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: запуск сервера (dev)",
+      "type": "shell",
+      "command": "wails",
+      "args": ["dev"],
+      "options": { "cwd": "${workspaceFolder}/poscloud-server" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "go: сборка клиента",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "./..."],
+      "options": { "cwd": "${workspaceFolder}/poscloud-client" },
+      "problemMatcher": []
+    },
+    {
+      "label": "go: сборка сервера",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "./..."],
+      "options": { "cwd": "${workspaceFolder}/poscloud-server" },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>POSCloud Server</title>
+<link rel="stylesheet" href="./styles.css"/>
+<style>
+  .pbar{height:3px;background:#232a33;border-radius:2px;margin-top:5px;overflow:hidden}
+  .pfill{height:3px;background:#2ea043;border-radius:2px}
+  .pct{font-size:11px;color:#9aa7b2;margin-top:2px}
+  input[type=checkbox]{width:auto;height:auto;min-width:0;margin:0 6px 0 0;vertical-align:-1px;accent-color:#2ea043}
+  .autostart{display:inline-flex;align-items:center;font-size:12.5px;color:#9aa7b2;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">S</div>
+      <div>
+        <div class="title">POSCloud Server</div>
+        <div class="subtitle">серверная часть: хранит файлы и отдаёт их клиентам по сети</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="pulse" class="pulse"></span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="tab-server">Сервер</button>
+    <button class="tab" data-tab="tab-users">Пользователи</button>
+    <button class="tab" data-tab="tab-files">Файлы</button>
+    <button class="tab" data-tab="tab-log">Журнал</button>
+  </div>
+
+  <!-- ===== СЕРВЕР ===== -->
+  <div class="pane active" id="tab-server">
+    <div class="grid">
+      <div class="card status-card">
+        <div class="status-line">
+          <span id="srvDot" class="dot"></span>
+          <span id="srvStatusText" class="status-text">остановлен</span>
+        </div>
+        <div class="kv"><span>Порт</span><b id="srvPort">8090</b></div>
+        <div class="kv"><span>Порт свободен</span><b id="srvPortFree">-</b></div>
+        <div class="kv"><span>Активный каталог</span><b id="srvDir">-</b></div>
+        <div class="kv"><span>Пользователей</span><b id="srvUsers">0</b></div>
+        <div class="row-btns">
+          <button class="btn primary" id="srvToggle">Запустить</button>
+          <button class="btn warn" id="srvRelease">Освободить порт</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Настройки сервера</div>
+        <label class="field"><span>Порт</span><input id="srvPortInput" type="number" min="1" max="65535" value="8090"/></label>
+        <label class="field"><span>Каталог хранения файлов</span>
+          <div class="inline"><input id="srvDirInput" type="text" placeholder="C:\Users\...\POSCloud\server-data"/>
+          <button class="btn small" id="srvPick">…</button></div>
+        </label>
+        <label class="autostart"><input type="checkbox" id="srvAutostart"/><span>Запускать при включении компьютера</span></label>
+        <div class="row-btns">
+          <button class="btn ghost" id="srvSave">Сохранить настройки</button>
+        </div>
+        <div class="addr-box">
+          <div class="addr-title">Адрес для клиентов</div>
+          <div class="addr-value" id="srvAddr">-</div>
+          <div class="addr-hint">Введите этот адрес, порт и токен в клиентском приложении на другом ПК.</div>
+        </div>
+        <div class="hint-muted" id="srvCfgPath"></div>
+        <div class="hint" id="srvErr"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ПОЛЬЗОВАТЕЛИ ===== -->
+  <div class="pane" id="tab-users">
+    <div class="card">
+      <div class="card-title">Пользователи и токены</div>
+      <div class="row-btns" style="margin-top:0">
+        <button class="btn primary" id="usrNew">Создать пользователя</button>
+        <button class="btn ghost" id="usrRefresh">Обновить</button>
+      </div>
+      <table class="files" style="margin-top:8px">
+        <thead><tr><th>Пользователь</th><th>ID</th><th>Токенов</th><th>Файлов</th><th>Статус</th><th></th></tr></thead>
+        <tbody id="usrRows"><tr><td colspan="6" class="empty">нет пользователей</td></tr></tbody>
+      </table>
+      <div class="addr-box" id="tokenBox" style="display:none">
+        <div class="addr-title">Новый токен - сохраните, он показывается один раз</div>
+        <div class="addr-value" id="tokenValue">-</div>
+        <div class="addr-hint">Введите этот токен в клиенте вместе с адресом сервера.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Пользователь: <span id="filesUser">не выбран</span></div>
+      <div class="row-btns" id="uActions" style="margin-top:0">
+        <button class="btn" id="uToken" disabled>Новый токен</button>
+        <button class="btn" id="uToggle" disabled>Отключить</button>
+        <button class="btn warn" id="uDelete" disabled>Удалить</button>
+      </div>
+      <div class="subtitle" style="margin:10px 0 4px">Устройства (токены)</div>
+      <table class="files">
+        <thead><tr><th>Устройство</th><th>Создан</th><th>Последний вход</th><th></th></tr></thead>
+        <tbody id="tokenRows"><tr><td colspan="4" class="empty">-</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== ФАЙЛЫ ===== -->
+  <div class="pane" id="tab-files">
+    <div class="card">
+      <div class="card-title">Дерево файлов</div>
+      <div class="row-btns" style="margin-top:0">
+        <button class="btn ghost" id="treeRefresh">Обновить</button>
+      </div>
+      <div id="fileTree" style="margin-top:8px"><div class="empty">нет данных</div></div>
+    </div>
+  </div>
+
+  <!-- ===== ЖУРНАЛ ===== -->
+  <div class="pane" id="tab-log">
+    <div class="card">
+      <div class="card-title">Журнал</div>
+      <div class="row-btns" style="margin-top:0">
+        <button class="btn small" id="logOpen">Открыть файл</button>
+        <button class="btn small" id="logClear">Очистить</button>
+        <button class="btn small ghost" id="logRefresh">Обновить</button>
+      </div>
+      <pre id="logbody"></pre>
+    </div>
+  </div>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

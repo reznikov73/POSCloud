@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "wails: сборка",
+      "type": "shell",
+      "command": "wails",
+      "args": ["build", "-s", "-skipbindings"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: сборка (debug)",
+      "type": "shell",
+      "command": "wails",
+      "args": ["build", "-debug", "-s", "-skipbindings"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "wails: запуск (dev)",
+      "type": "shell",
+      "command": "wails",
+      "args": ["dev"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "go: сборка",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "./..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}

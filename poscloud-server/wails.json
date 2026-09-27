@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "poscloud-server",
+  "outputfilename": "poscloud-server",
+  "frontend:install": "echo no-frontend-install",
+  "frontend:build": "echo no-frontend-build",
+  "frontend:dev:watcher": "echo no-frontend-watcher",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "reznikov73",
+    "email": "reznikov_a@mail.ru"
+  }
+}

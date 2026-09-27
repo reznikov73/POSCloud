@@ -1,0 +1,10 @@
+# Переводы строк: в репозитории хранится LF, в рабочей копии — по настройке Git.
+* text=auto
+
+# Бинарные файлы — без преобразований
+*.ico binary
+*.png binary
+*.jpg binary
+*.exe binary
+*.dll binary
+*.zip binary
