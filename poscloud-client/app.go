@@ -83,6 +83,7 @@ type App struct {
 	token    string
 	shotSync bool // сохранять снимки экрана в папку синхронизации
 	autoRun  bool // начинать синхронизацию сразу при открытии программы
+	hotkeys  HotkeyConfig
 	stopCh   chan struct{}
 	lastSync string
 	errMsg   string
@@ -112,6 +113,7 @@ func NewApp() *App {
 		interval: 3,
 		shotSync: true,
 		autoRun:  true,
+		hotkeys:  DefaultHotkeys(),
 	}
 }
 
@@ -203,6 +205,8 @@ type savedConfig struct {
 	ScreenshotSync *bool `json:"screenshotSync,omitempty"`
 	// nil — запуск при открытии программы включён по умолчанию
 	AutoRun *bool `json:"autoRun,omitempty"`
+	// nil — сочетания не менялись, остаются стандартные
+	Hotkeys *HotkeyConfig `json:"hotkeys,omitempty"`
 }
 
 func (a *App) loadConfig() {
@@ -233,13 +237,16 @@ func (a *App) loadConfig() {
 		if c.AutoRun != nil {
 			a.autoRun = *c.AutoRun
 		}
+		if c.Hotkeys != nil {
+			a.hotkeys = *c.Hotkeys
+		}
 	}
 }
 
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 

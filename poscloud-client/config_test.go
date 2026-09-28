@@ -113,6 +113,21 @@ func TestFlagOverridesSavedHost(t *testing.T) {
 	}
 }
 
+// Сохранённые сочетания горячих клавиш применяются, по умолчанию — стандартные.
+func TestHotkeysSetting(t *testing.T) {
+	a := newTestApp(t, `{"hotkeys":{"region":"Ctrl+Alt+7","window":"","full":"Ctrl+Shift+9"}}`)
+	a.loadConfig()
+	if a.hotkeys.Region != "Ctrl+Alt+7" || a.hotkeys.Window != "" || a.hotkeys.Full != "Ctrl+Shift+9" {
+		t.Fatalf("сочетания не применились: %+v", a.hotkeys)
+	}
+
+	b := newTestApp(t, "")
+	b.loadConfig()
+	if b.hotkeys != DefaultHotkeys() {
+		t.Fatalf("по умолчанию ожидались стандартные сочетания: %+v", b.hotkeys)
+	}
+}
+
 // Настройка «начинать при открытии программы» сохраняется, по умолчанию включена.
 func TestAutoRunSetting(t *testing.T) {
 	off := newTestApp(t, `{"autoRun":false}`)

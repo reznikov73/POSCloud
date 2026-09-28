@@ -178,23 +178,51 @@ func TestDibBytes(t *testing.T) {
 	}
 }
 
-// Комбинации горячих клавиш описаны полностью и не пересекаются.
-func TestHotkeySpecs(t *testing.T) {
-	specs := hotkeySpecs()
-	if len(specs) != 3 {
-		t.Fatalf("комбинаций %d, ожидалось 3", len(specs))
+// Разбор сочетаний: корректные принимаются, опасные и мусорные отклоняются.
+func TestParseHotkey(t *testing.T) {
+	good := []string{"Ctrl+Shift+1", "ctrl+alt+f5", "Shift+Ctrl+A", "Alt+F12", "Ctrl+Shift+F24"}
+	for _, s := range good {
+		if _, _, ok := parseHotkey(s); !ok {
+			t.Errorf("сочетание %q должно разбираться", s)
+		}
+	}
+	bad := []string{"", "1", "Ctrl", "Ctrl+Shift+", "Ctrl+Shift+Zz", "Ctrl+Shift+F25", "Meta+A", "Ctrl+Shift+Enter"}
+	for _, s := range bad {
+		if _, _, ok := parseHotkey(s); ok {
+			t.Errorf("сочетание %q должно отклоняться", s)
+		}
+	}
+
+	mods, vk, ok := parseHotkey("Ctrl+Shift+1")
+	if !ok || mods&modControl == 0 || mods&modShift == 0 || vk != '1' {
+		t.Fatalf("Ctrl+Shift+1 разобрано неверно: mods=%d vk=%d", mods, vk)
+	}
+	if _, vkF5, _ := parseHotkey("Ctrl+F5"); vkF5 != 0x74 {
+		t.Fatalf("F5 должно давать 0x74, получено %#x", vkF5)
+	}
+}
+
+// Действия горячих клавиш описаны полностью, не пересекаются,
+// а их стандартные сочетания разбираются.
+func TestHotkeyActions(t *testing.T) {
+	actions := hotkeyActions()
+	if len(actions) != 3 {
+		t.Fatalf("действий %d, ожидалось 3", len(actions))
 	}
 	ids := map[uintptr]bool{}
-	vks := map[uintptr]bool{}
-	for _, s := range specs {
-		if s.run == nil || s.id == 0 || s.vk == 0 {
-			t.Fatalf("неполное описание: %+v", s)
+	keys := map[string]bool{}
+	for _, a := range actions {
+		if a.run == nil || a.id == 0 || a.key == "" || a.title == "" {
+			t.Fatalf("неполное описание: %+v", a)
 		}
-		if ids[s.id] || vks[s.vk] {
-			t.Fatalf("повтор идентификатора или клавиши: %+v", s)
+		if ids[a.id] || keys[a.key] {
+			t.Fatalf("повтор идентификатора или ключа: %+v", a)
 		}
-		ids[s.id] = true
-		vks[s.vk] = true
+		ids[a.id] = true
+		keys[a.key] = true
+		if _, _, ok := parseHotkey(comboFor(DefaultHotkeys(), a.key)); !ok {
+			t.Fatalf("стандартное сочетание для %q не разбирается", a.key)
+		}
 	}
 }
 

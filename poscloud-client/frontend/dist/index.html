@@ -32,6 +32,8 @@
 
   <div class="tabs">
     <button class="tab active" data-tab="tab-client">Клиент</button>
+    <button class="tab" data-tab="tab-ignore">Исключения</button>
+    <button class="tab" data-tab="tab-shots">Снимки</button>
     <button class="tab" data-tab="tab-files">Файлы</button>
     <button class="tab" data-tab="tab-log">Журнал</button>
   </div>
@@ -77,7 +79,12 @@
         <div class="hint-muted" id="cliCfgPath"></div>
         <div class="hint" id="cliErr"></div>
       </div>
+    </div>
+  </div>
 
+  <!-- ===== ИСКЛЮЧЕНИЯ ===== -->
+  <div class="pane" id="tab-ignore">
+    <div class="grid">
       <div class="card">
         <div class="card-title">Исключения (.poscloudignore)</div>
 
@@ -113,7 +120,12 @@
         <div class="hint-muted" id="cliIgnoreStats"></div>
         <div class="hint-muted">Файл .poscloudignore в корне папки синхронизации. Игнорируемое не синхронизируется и не удаляется на сервере.</div>
       </div>
+    </div>
+  </div>
 
+  <!-- ===== СНИМКИ ===== -->
+  <div class="pane" id="tab-shots">
+    <div class="grid">
       <div class="card">
         <div class="card-title">Снимки экрана</div>
         <div class="row-btns">
@@ -125,8 +137,17 @@
         <label class="autostart"><input type="checkbox" id="shotSync"/><span>Отправлять снимки на сервер</span></label>
         <div class="hint-muted" id="shotInfo"></div>
         <div class="hint-muted" id="shotKeys"></div>
-        <div class="hint-muted">Снимок сразу попадает в буфер обмена. Он может содержать пароли и личные данные: при включённой отправке файл уходит на сервер.</div>
-        <div class="hint-muted">Снимок может содержать пароли и личные данные. При включённой отправке он попадает в папку синхронизации и уезжает на сервер; при снятой галочке остаётся только на этом компьютере.</div>
+        <div class="hint-muted">Снимок сразу попадает в буфер обмена и может содержать пароли и личные данные: при включённой отправке файл уходит на сервер, при снятой галочке остаётся только на этом компьютере.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Горячие клавиши</div>
+        <div class="hotkeys" id="hotkeyRows"></div>
+        <div class="row-btns">
+          <button class="btn ghost" id="hotkeyReset">Вернуть стандартные</button>
+        </div>
+        <div class="hint-muted" id="hotkeyHint"></div>
+        <div class="hint-muted">Нажмите сочетание прямо в поле. Нужен хотя бы один модификатор (Ctrl, Alt или Shift); клавиша Delete очищает поле. Пока вы вводите, старые сочетания временно отключены.</div>
       </div>
     </div>
   </div>

@@ -377,6 +377,95 @@ $("shotSync").addEventListener("change", async (e) => {
   await call("SetScreenshotSync", e.target.checked);
   await refreshShotState();
 });
+
+/* ---------- настраиваемые горячие клавиши ---------- */
+const hotkeyRows = [
+  { key: "region", title: "Снимок области" },
+  { key: "window", title: "Снимок активного окна" },
+  { key: "full", title: "Снимок всего экрана" },
+];
+let hotkeyCfg = { region: "", window: "", full: "" };
+let hotkeyStates = [];
+let hotkeyLoaded = false;
+
+// comboFromEvent превращает нажатие в строку вида «Ctrl+Shift+1».
+// null — ждём основную клавишу, пустая строка — очистить сочетание.
+function comboFromEvent(e) {
+  if (e.key === "Delete" || e.key === "Backspace") return "";
+  const mods = [];
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  const k = e.key;
+  let main = "";
+  if (/^[a-zA-Z]$/.test(k)) main = k.toUpperCase();
+  else if (/^[0-9]$/.test(k)) main = k;
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(k)) main = k.toUpperCase();
+  else return null;
+  if (!mods.length) return null;
+  return mods.join("+") + "+" + main;
+}
+
+function hotkeyStateText() {
+  if (!hotkeyStates.length) return "";
+  return "Состояние: " + hotkeyStates.map((s) => s.title + " — " + (s.ok ? s.combo : (s.error || "не назначено"))).join("; ");
+}
+
+function renderHotkeys() {
+  const box = $("hotkeyRows");
+  box.innerHTML = "";
+  hotkeyRows.forEach((row) => {
+    const wrap = document.createElement("div");
+    wrap.className = "hotkey-row";
+    const title = document.createElement("span");
+    title.className = "hotkey-title";
+    title.textContent = row.title;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "hotkey-input";
+    input.value = hotkeyCfg[row.key] || "";
+    input.placeholder = "не задано";
+    input.readOnly = true; // вводим не текст, а само нажатие
+    input.addEventListener("focus", () => call("SuspendHotkeys"));
+    input.addEventListener("blur", () => call("ResumeHotkeys"));
+    input.addEventListener("keydown", async (e) => {
+      e.preventDefault();
+      const combo = comboFromEvent(e);
+      if (combo === null) return;
+      input.value = combo;
+      hotkeyCfg[row.key] = combo;
+      await saveHotkeys();
+    });
+    const status = document.createElement("span");
+    const st = hotkeyStates.find((s) => s.key === row.key);
+    status.className = "hotkey-status " + (st && st.ok ? "ok" : "bad");
+    status.textContent = st ? (st.ok ? "назначено" : (st.error || "")) : "";
+    wrap.appendChild(title);
+    wrap.appendChild(input);
+    wrap.appendChild(status);
+    box.appendChild(wrap);
+  });
+  $("hotkeyHint").textContent = hotkeyStateText();
+}
+
+async function saveHotkeys() {
+  const states = await call("SetHotkeys", hotkeyCfg);
+  if (Array.isArray(states)) hotkeyStates = states;
+  renderHotkeys();
+}
+
+async function loadHotkeys() {
+  const cfg = await call("Hotkeys");
+  if (cfg) hotkeyCfg = { region: cfg.region || "", window: cfg.window || "", full: cfg.full || "" };
+  const states = await call("HotkeyStates");
+  if (Array.isArray(states)) hotkeyStates = states;
+  renderHotkeys();
+}
+
+$("hotkeyReset").addEventListener("click", async () => {
+  hotkeyCfg = { region: "Ctrl+Shift+1", window: "Ctrl+Shift+2", full: "Ctrl+Shift+3" };
+  await saveHotkeys();
+});
 $("cliAutostart").addEventListener("change", async (e) => {
   await call("SetAutostart", e.target.checked);
   flash(e.target.checked ? "программа будет запускаться при входе в Windows" : "запуск программы при входе выключен", true);
@@ -419,6 +508,10 @@ async function refresh() {
   if (!shotsLoaded) {
     await refreshShotState();
     shotsLoaded = true;
+  }
+  if (!hotkeyLoaded) {
+    await loadHotkeys();
+    hotkeyLoaded = true;
   }
   // выбор области, начатый из меню трея
   if ($("shotOverlay").hidden) {
