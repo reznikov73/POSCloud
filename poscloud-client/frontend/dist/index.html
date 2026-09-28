@@ -205,9 +205,10 @@
         <option value="4" selected>обычно</option>
         <option value="8">толсто</option>
       </select>
-      <button class="btn small ghost" id="editUndo">Отменить шаг</button>
+      <button class="btn small ghost" id="editUndo" disabled>Отменить шаг</button>
     </span>
     <span class="shot-actions">
+      <button class="btn small ghost" id="editReset">Вернуть исходный</button>
       <button class="btn small primary" id="editSave">Сохранить снимок</button>
       <button class="btn small" id="editCancel">Отмена</button>
     </span>
@@ -216,6 +217,7 @@
     <canvas id="editCanvas"></canvas>
   </div>
   <div class="shot-hint" id="editHint">Инструмент: стрелка — протяните от начала к концу</div>
+  <div class="shot-hint">Ctrl+Z — отменить шаг. «Вернуть исходный» снимает все правки сразу.</div>
 </div>
 <script src="./app.js"></script>
 </body>

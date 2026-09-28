@@ -500,12 +500,31 @@ function editCanvasPoint(e) {
   return { x: (e.clientX - r.left) * kx, y: (e.clientY - r.top) * ky };
 }
 
+let editOriginal = null; // снимок без правок — для кнопки «Вернуть исходный»
+
+function updateEditButtons() {
+  $("editUndo").disabled = editUndoStack.length === 0;
+}
+
+// undoEditStep снимает последнюю правку — тот же путь, что и у кнопки.
+function undoEditStep() {
+  const prev = editUndoStack.pop();
+  if (prev) {
+    editCtx().putImageData(prev, 0, 0);
+    $("editHint").textContent = "Шаг отменён";
+  } else {
+    $("editHint").textContent = "Отменять больше нечего";
+  }
+  updateEditButtons();
+}
+
 function editPushUndo() {
   const c = editCanvas();
   try {
     editUndoStack.push(editCtx().getImageData(0, 0, c.width, c.height));
   } catch (e) { /* очень большой снимок — просто без отмены шагов */ }
   if (editUndoStack.length > 6) editUndoStack.shift();
+  updateEditButtons();
 }
 
 function drawEditorArrow(ctx, x0, y0, x1, y1) {
@@ -584,11 +603,15 @@ async function openEditor(cap) {
       img.onerror = rej;
       img.src = cap.preview;
     });
-    editCtx().drawImage(img, 0, 0, c.width, c.height);
+    const ctx = editCtx();
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    editOriginal = ctx.getImageData(0, 0, c.width, c.height);
   } catch (e) {
+    editOriginal = null;
     flash("не удалось открыть снимок в редакторе", false);
   }
   setEditTool("arrow");
+  updateEditButtons();
   $("editHint").textContent = "Инструмент: стрелка — протяните от начала к концу";
   $("editOverlay").hidden = false;
 }
@@ -598,6 +621,8 @@ function closeEditor() {
   editUndoStack = [];
   editDragFrom = null;
   editBase = null;
+  editOriginal = null;
+  updateEditButtons();
   $("editOverlay").hidden = true;
 }
 
@@ -652,10 +677,23 @@ window.addEventListener("mouseup", (e) => {
   editBase = null;
 });
 
-$("editUndo").addEventListener("click", () => {
-  const prev = editUndoStack.pop();
-  if (prev) editCtx().putImageData(prev, 0, 0);
-  else $("editHint").textContent = "Отменять больше нечего";
+$("editUndo").addEventListener("click", undoEditStep);
+
+$("editReset").addEventListener("click", () => {
+  if (!editOriginal) return;
+  editPushUndo(); // чтобы и сброс можно было отменить
+  editCtx().putImageData(editOriginal, 0, 0);
+  $("editHint").textContent = "Все правки сняты — их можно вернуть кнопкой «Отменить шаг»";
+});
+
+// Ctrl+Z работает и в русской раскладке (там это клавиша «я»).
+window.addEventListener("keydown", (e) => {
+  if (!editCapture) return;
+  const key = (e.key || "").toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && (key === "z" || key === "я")) {
+    e.preventDefault();
+    undoEditStep();
+  }
 });
 
 $("editSave").addEventListener("click", async () => {
