@@ -6,7 +6,7 @@
 <title>POSCloud Client</title>
 <link rel="stylesheet" href="./styles.css"/>
 <style>
-  textarea{width:100%;box-sizing:border-box;background:#11161c;color:#e6edf3;border:1px solid #2a323c;border-radius:8px;padding:8px;font:13px/1.45 ui-monospace,Consolas,monospace;resize:vertical}
+  textarea{width:100%;box-sizing:border-box;background:#11161c;color:#e6edf3;border:1px solid #2a323c;border-radius:8px;padding:8px;font:13px/1.45 ui-monospace,Consolas,monospace;resize:vertical;min-height:260px;max-height:72vh}
   .pbar{height:3px;background:#232a33;border-radius:2px;margin-top:5px;overflow:hidden}
   .pfill{height:3px;background:#2ea043;border-radius:2px}
   .pct{font-size:11px;color:#9aa7b2;margin-top:2px}
@@ -93,7 +93,7 @@
         </div>
 
         <label class="field"><span>Шаблоны (по одному в строке; # — комментарий)</span>
-          <textarea id="cliIgnoreInput" rows="6" spellcheck="false" placeholder="build&#10;node_modules&#10;*.log"></textarea>
+          <textarea id="cliIgnoreInput" rows="16" spellcheck="false" placeholder="build&#10;node_modules&#10;*.log"></textarea>
         </label>
 
         <div class="row-btns">
