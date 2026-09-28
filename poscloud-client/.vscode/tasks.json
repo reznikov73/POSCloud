@@ -28,10 +28,10 @@
       "problemMatcher": []
     },
     {
-      "label": "go: сборка",
+      "label": "go: проверка (vet)",
       "type": "shell",
       "command": "go",
-      "args": ["build", "./..."],
+      "args": ["vet", "./..."],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     }
