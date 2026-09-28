@@ -61,6 +61,14 @@ func main() {
 	f := bindClientFlags(flag.CommandLine)
 	flag.Parse()
 
+	// Отличаем «аргумент не передавали» от «передали явно»: явный важнее сохранённой настройки.
+	autoStartSet := false
+	flag.Visit(func(fl *flag.Flag) {
+		if fl.Name == "autostart" {
+			autoStartSet = true
+		}
+	})
+
 	// Защита от двойного запуска: если программа уже работает, показываем окно
 	// уже запущенного экземпляра и завершаемся.
 	if !acquireSingleInstance(oneInstanceKey) {
@@ -75,6 +83,7 @@ func main() {
 	app.flagInterval = f.interval
 	app.flagToken = f.token
 	app.autoStart = f.autostart
+	app.autoStartSet = autoStartSet
 
 	buildTrayIcons()
 	trayStart, trayEnd := systray.RunWithExternalLoop(func() { app.trayInit("POSCloud Client") }, nil)

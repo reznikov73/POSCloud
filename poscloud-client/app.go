@@ -82,6 +82,7 @@ type App struct {
 	interval int
 	token    string
 	shotSync bool // сохранять снимки экрана в папку синхронизации
+	autoRun  bool // начинать синхронизацию сразу при открытии программы
 	stopCh   chan struct{}
 	lastSync string
 	errMsg   string
@@ -99,6 +100,7 @@ type App struct {
 	flagInterval int
 	flagToken    string
 	autoStart    bool
+	autoStartSet bool // -autostart передали явно в командной строке
 }
 
 func NewApp() *App {
@@ -109,6 +111,7 @@ func NewApp() *App {
 		localDir: filepath.Join(home, "POSCloud", "sync"),
 		interval: 3,
 		shotSync: true,
+		autoRun:  true,
 	}
 }
 
@@ -117,9 +120,13 @@ func (a *App) startup(ctx context.Context) {
 	a.openLogFile()
 	a.loadConfig()
 	a.applyFlagOverrides()
+	// Явно переданный -autostart важнее сохранённой настройки.
+	if a.autoStartSet {
+		a.autoRun = a.autoStart
+	}
 	a.startHotkeys()
 	a.log("Клиент POSCloud инициализирован")
-	if a.autoStart {
+	if a.autoRun {
 		a.startOnLaunch()
 	}
 }
@@ -194,6 +201,8 @@ type savedConfig struct {
 	Token    string `json:"token"`
 	// nil — настройка ещё не сохранялась, считаем включённой
 	ScreenshotSync *bool `json:"screenshotSync,omitempty"`
+	// nil — запуск при открытии программы включён по умолчанию
+	AutoRun *bool `json:"autoRun,omitempty"`
 }
 
 func (a *App) loadConfig() {
@@ -221,13 +230,16 @@ func (a *App) loadConfig() {
 		if c.ScreenshotSync != nil {
 			a.shotSync = *c.ScreenshotSync
 		}
+		if c.AutoRun != nil {
+			a.autoRun = *c.AutoRun
+		}
 	}
 }
 
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 
@@ -1624,6 +1636,22 @@ func runEventsOnce(base, token string, stop chan struct{}, onEvent func()) {
 }
 
 // AutostartEnabled сообщает, включён ли автозапуск при входе в Windows.
+// AutoRunEnabled сообщает, начинается ли синхронизация сразу при открытии программы.
+func (a *App) AutoRunEnabled() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.autoRun
+}
+
+// SetAutoRun включает и выключает старт синхронизации при открытии программы.
+func (a *App) SetAutoRun(on bool) error {
+	a.mu.Lock()
+	a.autoRun = on
+	a.mu.Unlock()
+	a.persistConfig()
+	return nil
+}
+
 func (a *App) AutostartEnabled() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
 	if err != nil {

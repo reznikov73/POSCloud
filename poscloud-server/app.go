@@ -61,9 +61,11 @@ type App struct {
 	dataRoot string
 	rootOnce sync.Once
 
-	flagPort  int
-	flagData  string
-	autoStart bool
+	flagPort     int
+	flagData     string
+	autoStart    bool
+	autoRun      bool // запускать сервер сразу при открытии программы
+	autoStartSet bool // -autostart передали явно в командной строке
 }
 
 func NewApp() *App {
@@ -71,6 +73,7 @@ func NewApp() *App {
 	return &App{
 		srvPort: 8090,
 		srvDir:  filepath.Join(home, "POSCloud", "server-data"),
+		autoRun: true,
 	}
 }
 
@@ -85,8 +88,12 @@ func (a *App) startup(ctx context.Context) {
 	if a.flagData != "" {
 		a.srvDir = a.flagData
 	}
+	// Явно переданный -autostart важнее сохранённой настройки.
+	if a.autoStartSet {
+		a.autoRun = a.autoStart
+	}
 	a.log("Сервер POSCloud инициализирован")
-	if a.autoStart {
+	if a.autoRun {
 		a.StartServer(a.srvPort, a.srvDir)
 	}
 }
@@ -121,6 +128,8 @@ func (a *App) root() string {
 type savedConfig struct {
 	Port    int    `json:"port"`
 	DataDir string `json:"dataDir"`
+	// nil — запуск при открытии программы включён по умолчанию
+	AutoRun *bool `json:"autoRun,omitempty"`
 }
 
 func (a *App) loadConfig() {
@@ -136,13 +145,16 @@ func (a *App) loadConfig() {
 		if c.DataDir != "" {
 			a.srvDir = c.DataDir
 		}
+		if c.AutoRun != nil {
+			a.autoRun = *c.AutoRun
+		}
 	}
 }
 
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "server.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, AutoRun: &a.autoRun}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 
@@ -1097,6 +1109,22 @@ func (a *App) unsubscribe(uid string, ch chan int64) {
 }
 
 // AutostartEnabled сообщает, включён ли автозапуск при входе в Windows.
+// AutoRunEnabled сообщает, запускается ли сервер сразу при открытии программы.
+func (a *App) AutoRunEnabled() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.autoRun
+}
+
+// SetAutoRun включает и выключает старт сервера при открытии программы.
+func (a *App) SetAutoRun(on bool) error {
+	a.mu.Lock()
+	a.autoRun = on
+	a.mu.Unlock()
+	a.persistConfig()
+	return nil
+}
+
 func (a *App) AutostartEnabled() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
 	if err != nil {

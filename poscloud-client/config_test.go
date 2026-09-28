@@ -113,6 +113,21 @@ func TestFlagOverridesSavedHost(t *testing.T) {
 	}
 }
 
+// Настройка «начинать при открытии программы» сохраняется, по умолчанию включена.
+func TestAutoRunSetting(t *testing.T) {
+	off := newTestApp(t, `{"autoRun":false}`)
+	off.loadConfig()
+	if off.autoRun {
+		t.Fatal("сохранённое значение autoRun=false не применилось")
+	}
+
+	def := newTestApp(t, "")
+	def.loadConfig()
+	if !def.autoRun {
+		t.Fatal("по умолчанию запуск при открытии должен быть включён")
+	}
+}
+
 // Без файла настроек и без аргументов остаются встроенные значения по умолчанию.
 func TestBuiltinDefaultsWithoutConfig(t *testing.T) {
 	a := newTestApp(t, "")

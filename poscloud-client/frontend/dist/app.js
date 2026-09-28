@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 let seeded = false;
 let ignoreLoaded = false;
 let autostartLoaded = false;
+let autoRunLoaded = false;
 let shotsLoaded = false;
 
 async function call(method, ...args) {
@@ -378,7 +379,11 @@ $("shotSync").addEventListener("change", async (e) => {
 });
 $("cliAutostart").addEventListener("change", async (e) => {
   await call("SetAutostart", e.target.checked);
-  flash(e.target.checked ? "автозапуск включён" : "автозапуск выключен", true);
+  flash(e.target.checked ? "программа будет запускаться при входе в Windows" : "запуск программы при входе выключен", true);
+});
+$("cliAutoRun").addEventListener("change", async (e) => {
+  await call("SetAutoRun", e.target.checked);
+  flash(e.target.checked ? "синхронизация будет начинаться при открытии программы" : "синхронизацию нужно будет запускать вручную", true);
 });
 $("cliPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("cliDirInput").value = d; });
 $("cliTest").addEventListener("click", async () => {
@@ -406,6 +411,10 @@ async function refresh() {
   if (!autostartLoaded) {
     const au = await call("AutostartEnabled");
     if (typeof au === "boolean") { $("cliAutostart").checked = au; autostartLoaded = true; }
+  }
+  if (!autoRunLoaded) {
+    const ar = await call("AutoRunEnabled");
+    if (typeof ar === "boolean") { $("cliAutoRun").checked = ar; autoRunLoaded = true; }
   }
   if (!shotsLoaded) {
     await refreshShotState();

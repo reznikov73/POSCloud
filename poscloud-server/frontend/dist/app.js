@@ -2,6 +2,7 @@
 const $ = (id) => document.getElementById(id);
 let seeded = false;      // поля ввода заполняются один раз
 let autostartLoaded = false;
+let autoRunLoaded = false;
 const expandedUsers = new Set();
 let currentTab = "tab-server";
 let selectedUser = null; // {id, name, enabled}
@@ -220,7 +221,11 @@ $("srvSave").addEventListener("click", async () => {
 $("srvPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("srvDirInput").value = d; });
 $("srvAutostart").addEventListener("change", async (e) => {
   await call("SetAutostart", e.target.checked);
-  flash(e.target.checked ? "автозапуск включён" : "автозапуск выключен", true);
+  flash(e.target.checked ? "программа будет запускаться при входе в Windows" : "запуск программы при входе выключен", true);
+});
+$("srvAutoRun").addEventListener("change", async (e) => {
+  await call("SetAutoRun", e.target.checked);
+  flash(e.target.checked ? "сервер будет стартовать при открытии программы" : "сервер нужно будет запускать вручную", true);
 });
 
 $("usrRefresh").addEventListener("click", () => refreshUsers());
@@ -289,6 +294,10 @@ async function refresh() {
   if (!autostartLoaded) {
     const au = await call("AutostartEnabled");
     if (typeof au === "boolean") { $("srvAutostart").checked = au; autostartLoaded = true; }
+  }
+  if (!autoRunLoaded) {
+    const ar = await call("AutoRunEnabled");
+    if (typeof ar === "boolean") { $("srvAutoRun").checked = ar; autoRunLoaded = true; }
   }
 }
 
