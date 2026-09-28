@@ -3,13 +3,16 @@
 package main
 
 import (
+	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // Имя файла снимка содержит дату и время и имеет расширение .png.
@@ -127,4 +130,106 @@ func TestCaptureFullScreenSavesFile(t *testing.T) {
 		t.Fatalf("неожиданный размер снимка: %dx%d", cfg.Width, cfg.Height)
 	}
 	t.Logf("снимок %dx%d сохранён: %s", cfg.Width, cfg.Height, path)
+}
+
+// Прямоугольник окна пересекается со снятой областью экрана (учёт второго монитора).
+func TestWindowCropRect(t *testing.T) {
+	screen := image.Rect(-1920, 0, 1920, 1080) // второй монитор слева
+	if r, ok := windowCropRect(screen, [4]int{-800, 100, -200, 500}); !ok || r != image.Rect(-800, 100, -200, 500) {
+		t.Fatalf("обычный случай: %v %v", r, ok)
+	}
+	// окно выходит за снятую область — обрезаем
+	if r, ok := windowCropRect(screen, [4]int{-2000, -50, -1000, 200}); !ok || r != image.Rect(-1920, 0, -1000, 200) {
+		t.Fatalf("обрезка не сработала: %v %v", r, ok)
+	}
+	// окно целиком вне области
+	if _, ok := windowCropRect(screen, [4]int{5000, 5000, 6000, 6000}); ok {
+		t.Fatal("окно вне области должно отклоняться")
+	}
+}
+
+// Изображение для буфера обмена: заголовок CF_DIB и пиксели снизу вверх в BGRA.
+func TestDibBytes(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	for x := 0; x < 3; x++ {
+		img.Set(x, 0, color.RGBA{R: 255, A: 255}) // верх — красный
+		img.Set(x, 1, color.RGBA{B: 255, A: 255}) // низ — синий
+	}
+	buf := dibBytes(img)
+	if len(buf) != 40+3*2*4 {
+		t.Fatalf("размер буфера %d, ожидалось %d", len(buf), 40+3*2*4)
+	}
+	le := func(off int) int {
+		return int(buf[off]) | int(buf[off+1])<<8 | int(buf[off+2])<<16 | int(buf[off+3])<<24
+	}
+	if le(0) != 40 || le(4) != 3 || le(8) != 2 {
+		t.Fatalf("заголовок неверен: размер=%d ширина=%d высота=%d", le(0), le(4), le(8))
+	}
+	if int(buf[14])|int(buf[15])<<8 != 32 {
+		t.Fatalf("глубина цвета не 32: %d", int(buf[14])|int(buf[15])<<8)
+	}
+	first := buf[40:44]
+	if first[0] != 255 || first[1] != 0 || first[2] != 0 {
+		t.Fatalf("первая строка должна быть нижней (синей) в порядке BGRA: %v", first)
+	}
+	last := buf[40+3*4 : 40+3*4+4]
+	if last[2] != 255 || last[0] != 0 {
+		t.Fatalf("последняя строка должна быть верхней (красной): %v", last)
+	}
+}
+
+// Комбинации горячих клавиш описаны полностью и не пересекаются.
+func TestHotkeySpecs(t *testing.T) {
+	specs := hotkeySpecs()
+	if len(specs) != 3 {
+		t.Fatalf("комбинаций %d, ожидалось 3", len(specs))
+	}
+	ids := map[uintptr]bool{}
+	vks := map[uintptr]bool{}
+	for _, s := range specs {
+		if s.run == nil || s.id == 0 || s.vk == 0 {
+			t.Fatalf("неполное описание: %+v", s)
+		}
+		if ids[s.id] || vks[s.vk] {
+			t.Fatalf("повтор идентификатора или клавиши: %+v", s)
+		}
+		ids[s.id] = true
+		vks[s.vk] = true
+	}
+}
+
+// Снимок активного окна: размер должен совпасть с прямоугольником самого окна
+// (оба измерения делаются на потоке с включённой осведомлённостью о DPI).
+func TestCaptureActiveWindowLive(t *testing.T) {
+	img, err := captureActiveWindow()
+	if err != nil {
+		t.Skipf("снимок активного окна недоступен: %v", err)
+	}
+
+	var wantW, wantH int
+	measErr := withDpiAwareness(func() error {
+		hwnd, _, _ := procGetForegroundWindow.Call()
+		if hwnd == 0 {
+			return fmt.Errorf("активное окно не определено")
+		}
+		var r winRect
+		if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ok == 0 {
+			return fmt.Errorf("не удалось получить прямоугольник окна")
+		}
+		wantW = int(r.Right - r.Left)
+		wantH = int(r.Bottom - r.Top)
+		return nil
+	})
+	if measErr != nil {
+		t.Skipf("не удалось измерить активное окно: %v", measErr)
+	}
+
+	b := img.Bounds()
+	if b.Dx() < 8 || b.Dy() < 8 {
+		t.Fatalf("подозрительно маленький снимок окна: %v", b)
+	}
+	if b.Dx() != wantW || b.Dy() != wantH {
+		t.Fatalf("размер снимка %dx%d не совпал с окном %dx%d", b.Dx(), b.Dy(), wantW, wantH)
+	}
+	t.Logf("снимок активного окна %dx%d", b.Dx(), b.Dy())
 }

@@ -51,6 +51,9 @@ func (a *App) buildTrayMenu() {
 	mShotFull := systray.AddMenuItem("Снимок всего экрана", "Сохранить снимок всего экрана")
 	mShotFull.Click(func() { go a.trayShotFull() })
 
+	mShotWindow := systray.AddMenuItem("Снимок активного окна", "Снять окно, которое сейчас в фокусе")
+	mShotWindow.Click(func() { go a.trayShotWindow() })
+
 	mShotRegion := systray.AddMenuItem("Снимок области", "Выделить область мышью и сохранить")
 	mShotRegion.Click(func() { go a.trayShotRegion() })
 
@@ -156,6 +159,13 @@ func (a *App) trayShotFull() {
 func (a *App) trayShotRegion() {
 	if _, err := a.StartRegionCapture(); err != nil {
 		a.log("не удалось начать снимок области: " + err.Error())
+	}
+}
+
+// trayShotWindow делает снимок активного окна.
+func (a *App) trayShotWindow() {
+	if _, err := a.CaptureActiveWindow(); err != nil {
+		a.log("не удалось сделать снимок активного окна: " + err.Error())
 	}
 }
 

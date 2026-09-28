@@ -280,6 +280,7 @@ async function refreshShotState() {
   if (!st) return;
   $("shotSync").checked = !!st.sync;
   $("shotInfo").textContent = "Папка: " + st.dir + " · снимков: " + st.count;
+  $("shotKeys").textContent = "Горячие клавиши: " + (st.hotkeys || "не назначены");
 }
 
 function shotImageRect() { return $("shotImage").getBoundingClientRect(); }
@@ -361,6 +362,12 @@ $("shotFull").addEventListener("click", async () => {
 $("shotRegion").addEventListener("click", async () => {
   const cap = await call("StartRegionCapture");
   if (cap && cap.id) await openShotOverlay(cap);
+});
+
+$("shotWindow").addEventListener("click", async () => {
+  const path = await call("CaptureActiveWindow");
+  flash(path ? ("снимок сохранён: " + path) : "не удалось сделать снимок активного окна", !!path);
+  await refreshShotState();
 });
 
 $("shotOpen").addEventListener("click", async () => { await call("OpenShotsFolder"); });

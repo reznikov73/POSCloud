@@ -117,6 +117,7 @@ func (a *App) startup(ctx context.Context) {
 	a.openLogFile()
 	a.loadConfig()
 	a.applyFlagOverrides()
+	a.startHotkeys()
 	a.log("Клиент POSCloud инициализирован")
 	if a.autoStart {
 		a.startOnLaunch()

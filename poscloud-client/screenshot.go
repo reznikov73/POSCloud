@@ -23,9 +23,11 @@ import (
 
 // ---------- снимки экрана ----------
 //
+// Поддерживаются три режима: активное окно, выделенная область и весь экран.
 // Снимок сохраняется в подпапку «Снимки экрана» внутри папки синхронизации и
-// уезжает на сервер обычным механизмом синхронизации. Если пользователь снял
-// галочку «Отправлять снимки на сервер», файл остаётся только на этом ПК.
+// уезжает на сервер обычной синхронизацией; изображение кладётся в буфер обмена.
+// Если пользователь снял галочку «Отправлять снимки на сервер», файл остаётся
+// только на этом компьютере.
 
 const shotsSubdir = "Снимки экрана"
 
@@ -36,6 +38,14 @@ var (
 	procReleaseDC             = user32S.NewProc("ReleaseDC")
 	procGetSystemMetrics      = user32S.NewProc("GetSystemMetrics")
 	procSetThreadDpiAwareness = user32S.NewProc("SetThreadDpiAwarenessContext")
+	procGetForegroundWindow   = user32S.NewProc("GetForegroundWindow")
+	procGetWindowRect         = user32S.NewProc("GetWindowRect")
+	procIsIconic              = user32S.NewProc("IsIconic")
+	procPrintWindow           = user32S.NewProc("PrintWindow")
+	procOpenClipboard         = user32S.NewProc("OpenClipboard")
+	procCloseClipboard        = user32S.NewProc("CloseClipboard")
+	procEmptyClipboard        = user32S.NewProc("EmptyClipboard")
+	procSetClipboardData      = user32S.NewProc("SetClipboardData")
 	procCreateCompatibleDC    = gdi32S.NewProc("CreateCompatibleDC")
 	procCreateDIBSection      = gdi32S.NewProc("CreateDIBSection")
 	procSelectObject          = gdi32S.NewProc("SelectObject")
@@ -43,6 +53,12 @@ var (
 	procGdiFlush              = gdi32S.NewProc("GdiFlush")
 	procDeleteObjectGDI       = gdi32S.NewProc("DeleteObject")
 	procDeleteDC              = gdi32S.NewProc("DeleteDC")
+	kernel32S                 = windows.NewLazySystemDLL("kernel32.dll")
+	procGlobalAlloc           = kernel32S.NewProc("GlobalAlloc")
+	procGlobalLock            = kernel32S.NewProc("GlobalLock")
+	procGlobalUnlock          = kernel32S.NewProc("GlobalUnlock")
+	procGlobalFree            = kernel32S.NewProc("GlobalFree")
+	procRtlMoveMemory         = kernel32S.NewProc("RtlMoveMemory")
 )
 
 const (
@@ -53,6 +69,9 @@ const (
 	srcCopy           = 0x00CC0020
 	dibRGBColors      = 0
 	biRGB             = 0
+	gmemMoveable      = 0x0002
+	cfDIB             = 8
+	pwRenderFull      = 2 // PW_RENDERFULLCONTENT — снимает и перекрытые окна
 )
 
 // dpiPerMonitorAwareV2 — DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (значение -4).
@@ -77,6 +96,10 @@ type bitmapInfo struct {
 	Colors [1]uint32
 }
 
+type winRect struct {
+	Left, Top, Right, Bottom int32
+}
+
 // RegionCapture — данные для выбора области в окне приложения.
 type RegionCapture struct {
 	ID      string `json:"id"`
@@ -87,9 +110,10 @@ type RegionCapture struct {
 
 // ShotsState — состояние папки со снимками для интерфейса.
 type ShotsState struct {
-	Dir   string `json:"dir"`
-	Count int    `json:"count"`
-	Sync  bool   `json:"sync"`
+	Dir     string `json:"dir"`
+	Count   int    `json:"count"`
+	Sync    bool   `json:"sync"`
+	Hotkeys string `json:"hotkeys"`
 }
 
 type screenCapture struct {
@@ -103,28 +127,36 @@ var (
 	pendingShot   *screenCapture
 )
 
-// captureVirtualScreen снимает весь рабочий стол (все мониторы вместе).
-// Осведомлённость о DPI включается только на время захвата и на одном потоке:
-// иначе координаты окажутся виртуальными и снимок выйдет размытым.
-func captureVirtualScreen() (*image.RGBA, error) {
-	type result struct {
-		img *image.RGBA
-		err error
-	}
-	ch := make(chan result, 1)
+// ---------- захват ----------
+
+// withDpiAwareness выполняет f в отдельном потоке с включённой осведомлённостью
+// о DPI (и возвращает прежнее значение). Иначе координаты оказались бы
+// виртуальными и снимок вышел бы размытым, а делать DPI-aware всё приложение
+// нельзя — поехал бы масштаб интерфейса.
+func withDpiAwareness(f func() error) error {
+	ch := make(chan error, 1)
 	go func() {
 		goruntime.LockOSThread()
 		defer goruntime.UnlockOSThread()
 		prev, _, _ := procSetThreadDpiAwareness.Call(dpiPerMonitorAwareV2)
 		defer procSetThreadDpiAwareness.Call(prev)
-		img, err := captureGDI()
-		ch <- result{img, err}
+		ch <- f()
 	}()
-	r := <-ch
-	return r.img, r.err
+	return <-ch
 }
 
-func captureGDI() (*image.RGBA, error) {
+// captureVirtualScreen снимает весь рабочий стол (все мониторы вместе).
+func captureVirtualScreen() (*image.RGBA, error) {
+	var img *image.RGBA
+	err := withDpiAwareness(func() error {
+		var e error
+		img, e = captureScreenArea()
+		return e
+	})
+	return img, err
+}
+
+func captureScreenArea() (*image.RGBA, error) {
 	x := systemMetrics(smXVirtualScreen)
 	y := systemMetrics(smYVirtualScreen)
 	w := systemMetrics(smCXVirtualScreen)
@@ -145,20 +177,9 @@ func captureGDI() (*image.RGBA, error) {
 	}
 	defer procDeleteDC.Call(memDC)
 
-	// Рисуем сразу в DIB-секцию: пиксели читаются из её памяти, GetDIBits не нужен.
-	bi := bitmapInfo{}
-	bi.Header.Size = uint32(unsafe.Sizeof(bitmapInfoHeader{}))
-	bi.Header.Width = int32(w)
-	bi.Header.Height = -int32(h) // отрицательная высота — строки сверху вниз
-	bi.Header.Planes = 1
-	bi.Header.BitCount = 32
-	bi.Header.Compression = biRGB
-
-	var bits unsafe.Pointer
-	hbmp, _, _ := procCreateDIBSection.Call(screenDC, uintptr(unsafe.Pointer(&bi)),
-		dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
-	if hbmp == 0 || bits == nil {
-		return nil, fmt.Errorf("не удалось создать растровое изображение")
+	hbmp, bits, err := newDIBSection(screenDC, w, h)
+	if err != nil {
+		return nil, err
 	}
 	defer procDeleteObjectGDI.Call(hbmp)
 
@@ -169,21 +190,213 @@ func captureGDI() (*image.RGBA, error) {
 	if blt == 0 {
 		return nil, fmt.Errorf("не удалось скопировать экран (код %d)", bltErr)
 	}
+	return rgbaFromBGRA(bits, w, h), nil
+}
 
+// captureActiveWindow снимает окно, которое сейчас в фокусе.
+func captureActiveWindow() (*image.RGBA, error) {
+	var img *image.RGBA
+	err := withDpiAwareness(func() error {
+		var e error
+		img, e = captureWindowArea()
+		return e
+	})
+	return img, err
+}
+
+func captureWindowArea() (*image.RGBA, error) {
+	hwnd, _, _ := procGetForegroundWindow.Call()
+	if hwnd == 0 {
+		return nil, fmt.Errorf("не удалось определить активное окно")
+	}
+	if iconic, _, _ := procIsIconic.Call(hwnd); iconic != 0 {
+		return nil, fmt.Errorf("активное окно свёрнуто")
+	}
+	var r winRect
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ok == 0 {
+		return nil, fmt.Errorf("не удалось получить размеры окна")
+	}
+	w := int(r.Right - r.Left)
+	h := int(r.Bottom - r.Top)
+	if w <= 0 || h <= 0 {
+		return nil, fmt.Errorf("у активного окна нулевой размер")
+	}
+
+	// Сначала пробуем снять само окно — так оно получится даже перекрытым.
+	if img, err := printWindow(hwnd, w, h); err == nil {
+		return img, nil
+	}
+
+	// Иначе — снимаем экран и вырезаем прямоугольник окна.
+	screen, err := captureScreenArea()
+	if err != nil {
+		return nil, err
+	}
+	vr := screen.Bounds()
+	vx := systemMetrics(smXVirtualScreen)
+	vy := systemMetrics(smYVirtualScreen)
+	rect, ok := windowCropRect(image.Rect(vx, vy, vx+vr.Dx(), vy+vr.Dy()),
+		[4]int{int(r.Left), int(r.Top), int(r.Right), int(r.Bottom)})
+	if !ok {
+		return nil, fmt.Errorf("активное окно целиком вне снятой области экрана")
+	}
+	return cropRGBA(screen, image.Rect(rect.Min.X-vx, rect.Min.Y-vy, rect.Max.X-vx, rect.Max.Y-vy)), nil
+}
+
+// printWindow просит окно нарисовать себя в память.
+func printWindow(hwnd uintptr, w, h int) (*image.RGBA, error) {
+	screenDC, _, _ := procGetDC.Call(0)
+	if screenDC == 0 {
+		return nil, fmt.Errorf("нет доступа к экрану")
+	}
+	defer procReleaseDC.Call(0, screenDC)
+
+	memDC, _, _ := procCreateCompatibleDC.Call(screenDC)
+	if memDC == 0 {
+		return nil, fmt.Errorf("не удалось создать контекст отрисовки")
+	}
+	defer procDeleteDC.Call(memDC)
+
+	hbmp, bits, err := newDIBSection(screenDC, w, h)
+	if err != nil {
+		return nil, err
+	}
+	defer procDeleteObjectGDI.Call(hbmp)
+
+	old, _, _ := procSelectObject.Call(memDC, hbmp)
+	ok, _, _ := procPrintWindow.Call(hwnd, memDC, pwRenderFull)
+	procGdiFlush.Call()
+	procSelectObject.Call(memDC, old)
+	if ok == 0 {
+		return nil, fmt.Errorf("окно не отдало изображение")
+	}
+	return rgbaFromBGRA(bits, w, h), nil
+}
+
+// newDIBSection создаёт 32-битное изображение сверху вниз и отдаёт указатель на пиксели.
+func newDIBSection(hdc uintptr, w, h int) (uintptr, unsafe.Pointer, error) {
+	bi := bitmapInfo{}
+	bi.Header.Size = uint32(unsafe.Sizeof(bitmapInfoHeader{}))
+	bi.Header.Width = int32(w)
+	bi.Header.Height = -int32(h) // отрицательная высота — строки сверху вниз
+	bi.Header.Planes = 1
+	bi.Header.BitCount = 32
+	bi.Header.Compression = biRGB
+
+	var bits unsafe.Pointer
+	hbmp, _, _ := procCreateDIBSection.Call(hdc, uintptr(unsafe.Pointer(&bi)),
+		dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if hbmp == 0 || bits == nil {
+		return 0, nil, fmt.Errorf("не удалось создать растровое изображение")
+	}
+	return hbmp, bits, nil
+}
+
+// rgbaFromBGRA превращает пиксели GDI (BGRA) в image.RGBA.
+func rgbaFromBGRA(bits unsafe.Pointer, w, h int) *image.RGBA {
 	src := unsafe.Slice((*byte)(bits), w*h*4)
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for i := 0; i+3 < len(src); i += 4 {
-		img.Pix[i] = src[i+2] // BGRA -> RGBA
+		img.Pix[i] = src[i+2]
 		img.Pix[i+1] = src[i+1]
 		img.Pix[i+2] = src[i]
 		img.Pix[i+3] = 0xff
 	}
-	return img, nil
+	return img
+}
+
+// cropRGBA вырезает область в новое изображение.
+func cropRGBA(src *image.RGBA, r image.Rectangle) *image.RGBA {
+	r = r.Intersect(src.Bounds())
+	if r.Empty() {
+		return image.NewRGBA(image.Rect(0, 0, 1, 1))
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	for y := 0; y < r.Dy(); y++ {
+		copy(dst.Pix[y*dst.Stride:(y+1)*dst.Stride], src.Pix[(r.Min.Y+y)*src.Stride+r.Min.X*4:])
+	}
+	return dst
 }
 
 func systemMetrics(index int) int {
 	v, _, _ := procGetSystemMetrics.Call(uintptr(index))
 	return int(int32(uint32(v)))
+}
+
+// windowCropRect пересекает прямоугольник окна со снятой областью экрана.
+func windowCropRect(screen image.Rectangle, win [4]int) (image.Rectangle, bool) {
+	r := image.Rect(win[0], win[1], win[2], win[3]).Intersect(screen)
+	if r.Dx() < 8 || r.Dy() < 8 {
+		return image.Rectangle{}, false
+	}
+	return r, true
+}
+
+// ---------- буфер обмена ----------
+
+// dibBytes собирает изображение в формате CF_DIB (заголовок + пиксели снизу вверх).
+func dibBytes(img image.Image) []byte {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	buf := make([]byte, 40+w*h*4)
+	le16 := func(off, v int) { buf[off] = byte(v); buf[off+1] = byte(v >> 8) }
+	le32 := func(off, v int) {
+		buf[off] = byte(v)
+		buf[off+1] = byte(v >> 8)
+		buf[off+2] = byte(v >> 16)
+		buf[off+3] = byte(v >> 24)
+	}
+	le32(0, 40)
+	le32(4, w)
+	le32(8, h) // положительная высота — строки снизу вверх
+	le16(12, 1)
+	le16(14, 32)
+	le32(16, biRGB)
+	le32(20, w*h*4)
+
+	for row := 0; row < h; row++ {
+		srcY := b.Min.Y + (h - 1 - row)
+		dst := 40 + row*w*4
+		for col := 0; col < w; col++ {
+			r, g, bl, _ := img.At(b.Min.X+col, srcY).RGBA()
+			buf[dst+col*4] = byte(bl >> 8)
+			buf[dst+col*4+1] = byte(g >> 8)
+			buf[dst+col*4+2] = byte(r >> 8)
+			buf[dst+col*4+3] = 0
+		}
+	}
+	return buf
+}
+
+// copyImageToClipboard кладёт изображение в буфер обмена.
+func copyImageToClipboard(img image.Image) error {
+	buf := dibBytes(img)
+	h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(buf)))
+	if h == 0 {
+		return fmt.Errorf("не удалось выделить память")
+	}
+	ptr, _, _ := procGlobalLock.Call(h)
+	if ptr == 0 {
+		procGlobalFree.Call(h)
+		return fmt.Errorf("не удалось получить доступ к памяти")
+	}
+	// Копируем через системную функцию: указатель из GlobalLock остаётся числом,
+	// поэтому преобразований uintptr -> unsafe.Pointer не требуется.
+	procRtlMoveMemory.Call(ptr, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	procGlobalUnlock.Call(h)
+
+	if r, _, _ := procOpenClipboard.Call(0); r == 0 {
+		procGlobalFree.Call(h)
+		return fmt.Errorf("буфер обмена занят другим приложением")
+	}
+	defer procCloseClipboard.Call()
+	procEmptyClipboard.Call()
+	if r, _, _ := procSetClipboardData.Call(cfDIB, h); r == 0 {
+		procGlobalFree.Call(h)
+		return fmt.Errorf("не удалось положить изображение в буфер обмена")
+	}
+	// Память после успешной передачи принадлежит системе — освобождать нельзя.
+	return nil
 }
 
 // ---------- сохранение ----------
@@ -205,7 +418,9 @@ func (a *App) shotDir() string {
 	return filepath.Join(home, "Pictures", "POSCloud")
 }
 
-// saveShot сохраняет снимок и возвращает путь к файлу.
+// saveShot сохраняет снимок, кладёт его в буфер обмена и возвращает путь к файлу.
+// Буфер обмена трогаем только в запущенном приложении (в тестах ctx пуст),
+// чтобы проверки не затирали содержимое буфера пользователя.
 func (a *App) saveShot(img image.Image) (string, error) {
 	dir := a.shotDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -216,19 +431,25 @@ func (a *App) saveShot(img image.Image) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
+		f.Close()
 		return "", err
+	}
+	f.Close()
+
+	copied := false
+	if a.ctx != nil {
+		copied = copyImageToClipboard(img) == nil
 	}
 
 	a.log("снимок экрана сохранён: " + path)
 	go a.syncOnce(false)
-	a.notifyShot(path)
+	a.notifyShot(path, copied)
 	return path, nil
 }
 
 // notifyShot сообщает пользователю, куда попал снимок и уедет ли он на сервер.
-func (a *App) notifyShot(path string) {
+func (a *App) notifyShot(path string, copied bool) {
 	if a.ctx == nil {
 		return
 	}
@@ -242,6 +463,9 @@ func (a *App) notifyShot(path string) {
 	} else {
 		body += "\nОтправка на сервер выключена — файл остаётся на этом компьютере."
 	}
+	if copied {
+		body += "\nИзображение скопировано в буфер обмена."
+	}
 	_ = runtime.SendNotification(a.ctx, runtime.NotificationOptions{
 		ID:    "poscloud-screenshot",
 		Title: "Снимок экрана",
@@ -254,6 +478,15 @@ func (a *App) notifyShot(path string) {
 // CaptureFullScreen снимает весь экран и сохраняет снимок.
 func (a *App) CaptureFullScreen() (string, error) {
 	img, err := captureVirtualScreen()
+	if err != nil {
+		return "", err
+	}
+	return a.saveShot(img)
+}
+
+// CaptureActiveWindow снимает активное окно и сохраняет снимок.
+func (a *App) CaptureActiveWindow() (string, error) {
+	img, err := captureActiveWindow()
 	if err != nil {
 		return "", err
 	}
@@ -320,7 +553,7 @@ func (a *App) FinishRegionCapture(id string, x, y, w, h float64) (string, error)
 	if !ok {
 		return "", fmt.Errorf("область слишком мала")
 	}
-	return a.saveShot(cap.img.SubImage(rect))
+	return a.saveShot(cropRGBA(cap.img, rect))
 }
 
 // CancelRegionCapture отменяет выбор области.
@@ -354,7 +587,7 @@ func (a *App) ShotsInfo() ShotsState {
 	a.mu.Lock()
 	on := a.shotSync
 	a.mu.Unlock()
-	return ShotsState{Dir: dir, Count: count, Sync: on}
+	return ShotsState{Dir: dir, Count: count, Sync: on, Hotkeys: HotkeySummary()}
 }
 
 // SetScreenshotSync включает и выключает отправку снимков на сервер.
