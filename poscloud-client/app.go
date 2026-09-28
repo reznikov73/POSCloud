@@ -81,6 +81,7 @@ type App struct {
 	localDir string
 	interval int
 	token    string
+	shotSync bool // сохранять снимки экрана в папку синхронизации
 	stopCh   chan struct{}
 	lastSync string
 	errMsg   string
@@ -107,6 +108,7 @@ func NewApp() *App {
 		port:     8090,
 		localDir: filepath.Join(home, "POSCloud", "sync"),
 		interval: 3,
+		shotSync: true,
 	}
 }
 
@@ -189,6 +191,8 @@ type savedConfig struct {
 	Dir      string `json:"dir"`
 	Interval int    `json:"interval"`
 	Token    string `json:"token"`
+	// nil — настройка ещё не сохранялась, считаем включённой
+	ScreenshotSync *bool `json:"screenshotSync,omitempty"`
 }
 
 func (a *App) loadConfig() {
@@ -213,13 +217,16 @@ func (a *App) loadConfig() {
 		if c.Token != "" {
 			a.token = c.Token
 		}
+		if c.ScreenshotSync != nil {
+			a.shotSync = *c.ScreenshotSync
+		}
 	}
 }
 
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 

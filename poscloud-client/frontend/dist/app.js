@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 let seeded = false;
 let ignoreLoaded = false;
 let autostartLoaded = false;
+let shotsLoaded = false;
 
 async function call(method, ...args) {
   try {
@@ -268,6 +269,106 @@ $("cliIgnoreClear").addEventListener("click", async () => {
   await refreshIgnoreStats();
 });
 $("cliIgnoreCheck").addEventListener("click", async () => { await refreshIgnoreStats(); });
+
+/* ---------- снимки экрана ---------- */
+let shotCapture = null;   // начатый выбор области
+let shotSelRect = null;   // выделение в долях от снимка
+let shotDragFrom = null;  // начало протяжки
+
+async function refreshShotState() {
+  const st = await call("ShotsInfo");
+  if (!st) return;
+  $("shotSync").checked = !!st.sync;
+  $("shotInfo").textContent = "Папка: " + st.dir + " · снимков: " + st.count;
+}
+
+function shotImageRect() { return $("shotImage").getBoundingClientRect(); }
+
+function drawShotSelection() {
+  const box = $("shotSel");
+  if (!shotSelRect) { box.hidden = true; return; }
+  const r = shotImageRect();
+  box.hidden = false;
+  box.style.left = (r.left + shotSelRect.x * r.width) + "px";
+  box.style.top = (r.top + shotSelRect.y * r.height) + "px";
+  box.style.width = (shotSelRect.w * r.width) + "px";
+  box.style.height = (shotSelRect.h * r.height) + "px";
+}
+
+function openShotOverlay(cap) {
+  shotCapture = cap;
+  shotSelRect = null;
+  shotDragFrom = null;
+  $("shotImage").src = cap.preview;
+  $("shotSel").hidden = true;
+  $("shotApply").disabled = true;
+  $("shotHint").textContent = "Выделите область мышью (" + cap.width + "×" + cap.height + ")";
+  $("shotOverlay").hidden = false;
+}
+
+function closeShotOverlay() {
+  shotCapture = null;
+  shotSelRect = null;
+  shotDragFrom = null;
+  $("shotOverlay").hidden = true;
+}
+
+$("shotStage").addEventListener("mousedown", (e) => {
+  if (!shotCapture) return;
+  const r = shotImageRect();
+  if (r.width <= 0 || r.height <= 0) return;
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  shotDragFrom = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  shotSelRect = { x: shotDragFrom.x, y: shotDragFrom.y, w: 0, h: 0 };
+  drawShotSelection();
+});
+window.addEventListener("mousemove", (e) => {
+  if (!shotDragFrom || !shotCapture) return;
+  const r = shotImageRect();
+  const cx = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+  const cy = Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1);
+  shotSelRect = {
+    x: Math.min(shotDragFrom.x, cx),
+    y: Math.min(shotDragFrom.y, cy),
+    w: Math.abs(cx - shotDragFrom.x),
+    h: Math.abs(cy - shotDragFrom.y),
+  };
+  $("shotApply").disabled = !(shotSelRect.w > 0.01 && shotSelRect.h > 0.01);
+  drawShotSelection();
+});
+window.addEventListener("mouseup", () => { shotDragFrom = null; });
+
+$("shotApply").addEventListener("click", async () => {
+  if (!shotCapture || !shotSelRect) return;
+  const path = await call("FinishRegionCapture", shotCapture.id,
+    shotSelRect.x, shotSelRect.y, shotSelRect.w, shotSelRect.h);
+  closeShotOverlay();
+  flash(path ? ("снимок сохранён: " + path) : "не удалось сохранить снимок", !!path);
+  await refreshShotState();
+});
+
+$("shotCancel").addEventListener("click", async () => {
+  if (shotCapture) await call("CancelRegionCapture", shotCapture.id);
+  closeShotOverlay();
+});
+
+$("shotFull").addEventListener("click", async () => {
+  const path = await call("CaptureFullScreen");
+  flash(path ? ("снимок сохранён: " + path) : "не удалось сделать снимок", !!path);
+  await refreshShotState();
+});
+
+$("shotRegion").addEventListener("click", async () => {
+  const cap = await call("StartRegionCapture");
+  if (cap && cap.id) await openShotOverlay(cap);
+});
+
+$("shotOpen").addEventListener("click", async () => { await call("OpenShotsFolder"); });
+
+$("shotSync").addEventListener("change", async (e) => {
+  await call("SetScreenshotSync", e.target.checked);
+  await refreshShotState();
+});
 $("cliAutostart").addEventListener("change", async (e) => {
   await call("SetAutostart", e.target.checked);
   flash(e.target.checked ? "автозапуск включён" : "автозапуск выключен", true);
@@ -298,6 +399,15 @@ async function refresh() {
   if (!autostartLoaded) {
     const au = await call("AutostartEnabled");
     if (typeof au === "boolean") { $("cliAutostart").checked = au; autostartLoaded = true; }
+  }
+  if (!shotsLoaded) {
+    await refreshShotState();
+    shotsLoaded = true;
+  }
+  // выбор области, начатый из меню трея
+  if ($("shotOverlay").hidden) {
+    const cap = await call("PendingRegionCapture");
+    if (cap && cap.id) await openShotOverlay(cap);
   }
 }
 

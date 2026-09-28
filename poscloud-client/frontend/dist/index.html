@@ -112,6 +112,18 @@
         <div class="hint-muted" id="cliIgnoreStats"></div>
         <div class="hint-muted">Файл .poscloudignore в корне папки синхронизации. Игнорируемое не синхронизируется и не удаляется на сервере.</div>
       </div>
+
+      <div class="card">
+        <div class="card-title">Снимки экрана</div>
+        <div class="row-btns">
+          <button class="btn" id="shotFull">Снимок всего экрана</button>
+          <button class="btn" id="shotRegion">Снимок области</button>
+          <button class="btn ghost" id="shotOpen">Открыть папку со снимками</button>
+        </div>
+        <label class="autostart"><input type="checkbox" id="shotSync"/><span>Отправлять снимки на сервер</span></label>
+        <div class="hint-muted" id="shotInfo"></div>
+        <div class="hint-muted">Снимок может содержать пароли и личные данные. При включённой отправке он попадает в папку синхронизации и уезжает на сервер; при снятой галочке остаётся только на этом компьютере.</div>
+      </div>
     </div>
   </div>
 
@@ -137,6 +149,19 @@
       </div>
       <pre id="logbody"></pre>
     </div>
+  </div>
+</div>
+<div class="shot-overlay" id="shotOverlay" hidden>
+  <div class="shot-bar">
+    <span class="shot-hint" id="shotHint">Выделите область мышью</span>
+    <span class="shot-actions">
+      <button class="btn small primary" id="shotApply" disabled>Сохранить снимок</button>
+      <button class="btn small" id="shotCancel">Отмена</button>
+    </span>
+  </div>
+  <div class="shot-stage" id="shotStage">
+    <img id="shotImage" alt=""/>
+    <div class="shot-sel" id="shotSel" hidden></div>
   </div>
 </div>
 <script src="./app.js"></script>

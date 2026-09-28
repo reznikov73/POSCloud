@@ -48,6 +48,17 @@ func (a *App) buildTrayMenu() {
 
 	systray.AddSeparator()
 
+	mShotFull := systray.AddMenuItem("Снимок всего экрана", "Сохранить снимок всего экрана")
+	mShotFull.Click(func() { go a.trayShotFull() })
+
+	mShotRegion := systray.AddMenuItem("Снимок области", "Выделить область мышью и сохранить")
+	mShotRegion.Click(func() { go a.trayShotRegion() })
+
+	mShotFolder := systray.AddMenuItem("Открыть папку со снимками", "Каталог со снимками экрана")
+	mShotFolder.Click(func() { a.OpenShotsFolder() })
+
+	systray.AddSeparator()
+
 	mMore := systray.AddMenuItem("Дополнительно", "Дополнительные действия")
 	mCfg := mMore.AddSubMenuItem("Открыть файл настроек", "client.json рядом с программой")
 	mCfg.Click(func() { openInExplorer(a.configPath()) })
@@ -132,6 +143,20 @@ func (a *App) currentDir() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.localDir
+}
+
+// trayShotFull делает снимок всего экрана из трея.
+func (a *App) trayShotFull() {
+	if _, err := a.CaptureFullScreen(); err != nil {
+		a.log("не удалось сделать снимок экрана: " + err.Error())
+	}
+}
+
+// trayShotRegion начинает выбор области из трея: снимок и показ окна.
+func (a *App) trayShotRegion() {
+	if _, err := a.StartRegionCapture(); err != nil {
+		a.log("не удалось начать снимок области: " + err.Error())
+	}
 }
 
 func (a *App) configPath() string { return filepath.Join(a.root(), "client.json") }
