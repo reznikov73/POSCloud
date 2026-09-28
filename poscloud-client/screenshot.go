@@ -100,12 +100,13 @@ type winRect struct {
 	Left, Top, Right, Bottom int32
 }
 
-// RegionCapture — данные для выбора области в окне приложения.
+// RegionCapture — данные для выбора области или для редактора в окне приложения.
 type RegionCapture struct {
 	ID      string `json:"id"`
+	Mode    string `json:"mode"` // "region" — выбор области, "edit" — редактор
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
-	Preview string `json:"preview"` // уменьшенный снимок в виде data URL
+	Preview string `json:"preview"` // снимок в виде data URL
 }
 
 // ShotsState — состояние папки со снимками для интерфейса.
@@ -118,6 +119,7 @@ type ShotsState struct {
 
 type screenCapture struct {
 	id      string
+	mode    string
 	img     *image.RGBA
 	preview string
 }
@@ -475,11 +477,19 @@ func (a *App) notifyShot(path string, copied bool) {
 
 // ---------- привязки для интерфейса ----------
 
-// CaptureFullScreen снимает весь экран и сохраняет снимок.
+// CaptureFullScreen снимает весь экран и сохраняет снимок. Если включён режим
+// «открывать редактор после снимка», файл не сохраняется: изображение остаётся
+// в памяти и открывается редактор (окно подхватит его само), поэтому путь пуст.
 func (a *App) CaptureFullScreen() (string, error) {
 	img, err := captureVirtualScreen()
 	if err != nil {
 		return "", err
+	}
+	if a.editAfterShotEnabled() {
+		if _, e := a.storeForEdit(newCaptureID(), img); e != nil {
+			return "", e
+		}
+		return "", nil
 	}
 	return a.saveShot(img)
 }
@@ -489,6 +499,12 @@ func (a *App) CaptureActiveWindow() (string, error) {
 	img, err := captureActiveWindow()
 	if err != nil {
 		return "", err
+	}
+	if a.editAfterShotEnabled() {
+		if _, e := a.storeForEdit(newCaptureID(), img); e != nil {
+			return "", e
+		}
+		return "", nil
 	}
 	return a.saveShot(img)
 }
@@ -510,6 +526,7 @@ func (a *App) StartRegionCapture() (RegionCapture, error) {
 
 	cap := &screenCapture{
 		id:      fmt.Sprintf("%d", time.Now().UnixNano()),
+		mode:    "region",
 		img:     img,
 		preview: dataURL,
 	}
@@ -518,7 +535,7 @@ func (a *App) StartRegionCapture() (RegionCapture, error) {
 	pendingShotMu.Unlock()
 
 	a.trayShowWindow() // окно нужно, чтобы выделить область
-	return RegionCapture{ID: cap.id, Width: b.Dx(), Height: b.Dy(), Preview: dataURL}, nil
+	return RegionCapture{ID: cap.id, Mode: "region", Width: b.Dx(), Height: b.Dy(), Preview: dataURL}, nil
 }
 
 // PendingRegionCapture возвращает начатый выбор области (окно опрашивает его).
@@ -531,6 +548,7 @@ func (a *App) PendingRegionCapture() *RegionCapture {
 	b := pendingShot.img.Bounds()
 	return &RegionCapture{
 		ID:      pendingShot.id,
+		Mode:    pendingShot.mode,
 		Width:   b.Dx(),
 		Height:  b.Dy(),
 		Preview: pendingShot.preview,
@@ -563,6 +581,92 @@ func (a *App) CancelRegionCapture(id string) {
 		pendingShot = nil
 	}
 	pendingShotMu.Unlock()
+}
+
+// BeginRegionEdit вырезает выбранную область и отдаёт её в редактор.
+// Предпросмотр здесь полноразмерный — правки должны ложиться на полное качество.
+func (a *App) BeginRegionEdit(id string, x, y, w, h float64) (RegionCapture, error) {
+	pendingShotMu.Lock()
+	cap := pendingShot
+	pendingShotMu.Unlock()
+	if cap == nil || cap.id != id {
+		return RegionCapture{}, fmt.Errorf("выбор области уже неактуален")
+	}
+	b := cap.img.Bounds()
+	rect, ok := cropRect(b.Dx(), b.Dy(), x, y, w, h)
+	if !ok {
+		return RegionCapture{}, fmt.Errorf("область слишком мала")
+	}
+	return a.storeForEdit(cap.id, cropRGBA(cap.img, rect))
+}
+
+// storeForEdit кладёт изображение в память и отдаёт полноразмерный предпросмотр.
+func (a *App) storeForEdit(id string, img *image.RGBA) (RegionCapture, error) {
+	b := img.Bounds()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return RegionCapture{}, err
+	}
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	pendingShotMu.Lock()
+	pendingShot = &screenCapture{id: id, mode: "edit", img: img, preview: dataURL}
+	pendingShotMu.Unlock()
+
+	a.trayShowWindow()
+	return RegionCapture{ID: id, Mode: "edit", Width: b.Dx(), Height: b.Dy(), Preview: dataURL}, nil
+}
+
+// SaveEditedShot сохраняет изображение, пришедшее из редактора (data URL в PNG).
+func (a *App) SaveEditedShot(id, dataURL string) (string, error) {
+	img, err := decodeDataURL(dataURL)
+	if err != nil {
+		return "", err
+	}
+	pendingShotMu.Lock()
+	if pendingShot != nil && (id == "" || pendingShot.id == id) {
+		pendingShot = nil
+	}
+	pendingShotMu.Unlock()
+	return a.saveShot(img)
+}
+
+// decodeDataURL разбирает «data:image/png;base64,…» в изображение.
+func decodeDataURL(s string) (image.Image, error) {
+	i := strings.Index(s, ",")
+	if i < 0 {
+		return nil, fmt.Errorf("неверный формат изображения")
+	}
+	raw, err := base64.StdEncoding.DecodeString(s[i+1:])
+	if err != nil {
+		return nil, fmt.Errorf("не удалось расшифровать изображение: %w", err)
+	}
+	img, err := png.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("не удалось прочитать изображение: %w", err)
+	}
+	return img, nil
+}
+
+func newCaptureID() string { return fmt.Sprintf("%d", time.Now().UnixNano()) }
+
+// editAfterShotEnabled сообщает, нужно ли открывать редактор после снимка.
+func (a *App) editAfterShotEnabled() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.editAfterShot
+}
+
+// EditAfterShotEnabled — привязка для интерфейса.
+func (a *App) EditAfterShotEnabled() bool { return a.editAfterShotEnabled() }
+
+// SetEditAfterShot включает и выключает открытие редактора после снимка.
+func (a *App) SetEditAfterShot(on bool) error {
+	a.mu.Lock()
+	a.editAfterShot = on
+	a.mu.Unlock()
+	a.persistConfig()
+	return nil
 }
 
 // OpenShotsFolder открывает папку со снимками в проводнике.

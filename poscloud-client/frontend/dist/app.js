@@ -5,6 +5,7 @@ let ignoreLoaded = false;
 let autostartLoaded = false;
 let autoRunLoaded = false;
 let shotsLoaded = false;
+let editAfterLoaded = false;
 
 async function call(method, ...args) {
   try {
@@ -304,6 +305,7 @@ function openShotOverlay(cap) {
   $("shotImage").src = cap.preview;
   $("shotSel").hidden = true;
   $("shotApply").disabled = true;
+  $("shotEdit").disabled = true;
   $("shotHint").textContent = "Выделите область мышью (" + cap.width + "×" + cap.height + ")";
   $("shotOverlay").hidden = false;
 }
@@ -335,7 +337,9 @@ window.addEventListener("mousemove", (e) => {
     w: Math.abs(cx - shotDragFrom.x),
     h: Math.abs(cy - shotDragFrom.y),
   };
-  $("shotApply").disabled = !(shotSelRect.w > 0.01 && shotSelRect.h > 0.01);
+  const okSel = shotSelRect.w > 0.01 && shotSelRect.h > 0.01;
+  $("shotApply").disabled = !okSel;
+  $("shotEdit").disabled = !okSel;
   drawShotSelection();
 });
 window.addEventListener("mouseup", () => { shotDragFrom = null; });
@@ -356,7 +360,7 @@ $("shotCancel").addEventListener("click", async () => {
 
 $("shotFull").addEventListener("click", async () => {
   const path = await call("CaptureFullScreen");
-  flash(path ? ("снимок сохранён: " + path) : "не удалось сделать снимок", !!path);
+  if (path) flash("снимок сохранён: " + path, true);
   await refreshShotState();
 });
 
@@ -367,7 +371,7 @@ $("shotRegion").addEventListener("click", async () => {
 
 $("shotWindow").addEventListener("click", async () => {
   const path = await call("CaptureActiveWindow");
-  flash(path ? ("снимок сохранён: " + path) : "не удалось сделать снимок активного окна", !!path);
+  if (path) flash("снимок сохранён: " + path, true);
   await refreshShotState();
 });
 
@@ -466,6 +470,219 @@ $("hotkeyReset").addEventListener("click", async () => {
   hotkeyCfg = { region: "Ctrl+Shift+1", window: "Ctrl+Shift+2", full: "Ctrl+Shift+3" };
   await saveHotkeys();
 });
+
+/* ---------- редактор снимков ---------- */
+let editCapture = null;
+let editTool = "arrow";
+let editUndoStack = [];
+let editDragFrom = null;
+let editBase = null;
+
+function editCanvas() { return $("editCanvas"); }
+function editCtx() { return editCanvas().getContext("2d"); }
+function editColor() { return $("editColor").value || "#ff3b30"; }
+function editWidth() { return parseInt($("editWidth").value, 10) || 4; }
+
+function setEditTool(tool) {
+  editTool = tool;
+  [["editArrow", "arrow"], ["editBlur", "blur"], ["editText", "text"]].forEach(([id, t]) => {
+    $(id).classList.toggle("primary", t === tool);
+  });
+}
+
+// editCanvasPoint переводит координаты мыши в пиксели снимка:
+// холст показывается уменьшенным, а рисуем мы всегда в полном размере.
+function editCanvasPoint(e) {
+  const c = editCanvas();
+  const r = c.getBoundingClientRect();
+  const kx = r.width ? c.width / r.width : 1;
+  const ky = r.height ? c.height / r.height : 1;
+  return { x: (e.clientX - r.left) * kx, y: (e.clientY - r.top) * ky };
+}
+
+function editPushUndo() {
+  const c = editCanvas();
+  try {
+    editUndoStack.push(editCtx().getImageData(0, 0, c.width, c.height));
+  } catch (e) { /* очень большой снимок — просто без отмены шагов */ }
+  if (editUndoStack.length > 6) editUndoStack.shift();
+}
+
+function drawEditorArrow(ctx, x0, y0, x1, y1) {
+  const w = editWidth();
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  const head = Math.max(14, w * 4);
+  ctx.strokeStyle = editColor();
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.lineWidth = w;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1 - Math.cos(a) * head * 0.7, y1 - Math.sin(a) * head * 0.7);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x1 - Math.cos(a - 0.45) * head, y1 - Math.sin(a - 0.45) * head);
+  ctx.lineTo(x1 - Math.cos(a + 0.45) * head, y1 - Math.sin(a + 0.45) * head);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawEditorBlurBox(ctx, x0, y0, x1, y1) {
+  ctx.save();
+  ctx.strokeStyle = editColor();
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+  ctx.restore();
+}
+
+function applyEditorBlur(ctx, x0, y0, x1, y1) {
+  const x = Math.floor(Math.min(x0, x1));
+  const y = Math.floor(Math.min(y0, y1));
+  const w = Math.floor(Math.abs(x1 - x0));
+  const h = Math.floor(Math.abs(y1 - y0));
+  if (w < 3 || h < 3) return;
+  const cell = Math.max(6, Math.round(editWidth() * 2.5));
+  const tmp = document.createElement("canvas");
+  tmp.width = Math.max(1, Math.round(w / cell));
+  tmp.height = Math.max(1, Math.round(h / cell));
+  const tctx = tmp.getContext("2d");
+  tctx.imageSmoothingEnabled = false;
+  tctx.drawImage(editCanvas(), x, y, w, h, 0, 0, tmp.width, tmp.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, x, y, w, h);
+  ctx.imageSmoothingEnabled = true;
+}
+
+function drawEditorText(ctx, x, y, text) {
+  const size = 12 + editWidth() * 4;
+  ctx.save();
+  ctx.font = size + "px 'Segoe UI', Arial, sans-serif";
+  ctx.textBaseline = "top";
+  ctx.shadowColor = "rgba(0,0,0,.75)";
+  ctx.shadowBlur = 4;
+  ctx.fillStyle = editColor();
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+async function openEditor(cap) {
+  editCapture = cap;
+  editUndoStack = [];
+  editDragFrom = null;
+  editBase = null;
+  $("shotOverlay").hidden = true;
+
+  const c = editCanvas();
+  c.width = cap.width;
+  c.height = cap.height;
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = cap.preview;
+    });
+    editCtx().drawImage(img, 0, 0, c.width, c.height);
+  } catch (e) {
+    flash("не удалось открыть снимок в редакторе", false);
+  }
+  setEditTool("arrow");
+  $("editHint").textContent = "Инструмент: стрелка — протяните от начала к концу";
+  $("editOverlay").hidden = false;
+}
+
+function closeEditor() {
+  editCapture = null;
+  editUndoStack = [];
+  editDragFrom = null;
+  editBase = null;
+  $("editOverlay").hidden = true;
+}
+
+$("editArrow").addEventListener("click", () => {
+  setEditTool("arrow");
+  $("editHint").textContent = "Инструмент: стрелка — протяните от начала к концу";
+});
+$("editBlur").addEventListener("click", () => {
+  setEditTool("blur");
+  $("editHint").textContent = "Инструмент: размытие — выделите прямоугольник";
+});
+$("editText").addEventListener("click", () => {
+  setEditTool("text");
+  $("editHint").textContent = "Инструмент: текст — впишите подпись и щёлкните по снимку";
+});
+
+$("editCanvas").addEventListener("mousedown", (e) => {
+  if (!editCapture) return;
+  const p = editCanvasPoint(e);
+  if (editTool === "text") {
+    const text = $("editTextValue").value.trim();
+    if (!text) {
+      $("editHint").textContent = "Сначала впишите текст подписи в поле сверху";
+      return;
+    }
+    editPushUndo();
+    drawEditorText(editCtx(), p.x, p.y, text);
+    return;
+  }
+  editPushUndo();
+  editBase = editCtx().getImageData(0, 0, editCanvas().width, editCanvas().height);
+  editDragFrom = p;
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!editCapture || !editDragFrom || !editBase) return;
+  const p = editCanvasPoint(e);
+  const ctx = editCtx();
+  ctx.putImageData(editBase, 0, 0);
+  if (editTool === "arrow") drawEditorArrow(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
+  else if (editTool === "blur") drawEditorBlurBox(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
+});
+
+window.addEventListener("mouseup", (e) => {
+  if (!editCapture || !editDragFrom || !editBase) return;
+  const p = editCanvasPoint(e);
+  const ctx = editCtx();
+  ctx.putImageData(editBase, 0, 0);
+  if (editTool === "arrow") drawEditorArrow(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
+  else if (editTool === "blur") applyEditorBlur(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
+  editDragFrom = null;
+  editBase = null;
+});
+
+$("editUndo").addEventListener("click", () => {
+  const prev = editUndoStack.pop();
+  if (prev) editCtx().putImageData(prev, 0, 0);
+  else $("editHint").textContent = "Отменять больше нечего";
+});
+
+$("editSave").addEventListener("click", async () => {
+  if (!editCapture) return;
+  const dataURL = editCanvas().toDataURL("image/png");
+  const path = await call("SaveEditedShot", editCapture.id, dataURL);
+  closeEditor();
+  flash(path ? ("снимок сохранён: " + path) : "не удалось сохранить снимок", !!path);
+  await refreshShotState();
+});
+
+$("editCancel").addEventListener("click", async () => {
+  if (editCapture) await call("CancelRegionCapture", editCapture.id);
+  closeEditor();
+});
+
+$("shotEdit").addEventListener("click", async () => {
+  if (!shotCapture || !shotSelRect) return;
+  const cap = await call("BeginRegionEdit", shotCapture.id,
+    shotSelRect.x, shotSelRect.y, shotSelRect.w, shotSelRect.h);
+  if (cap && cap.id) await openEditor(cap);
+});
+
+$("editAfterShot").addEventListener("change", async (e) => {
+  await call("SetEditAfterShot", e.target.checked);
+  flash(e.target.checked ? "редактор будет открываться после снимка" : "снимок будет сохраняться сразу", true);
+});
 $("cliAutostart").addEventListener("change", async (e) => {
   await call("SetAutostart", e.target.checked);
   flash(e.target.checked ? "программа будет запускаться при входе в Windows" : "запуск программы при входе выключен", true);
@@ -513,10 +730,17 @@ async function refresh() {
     await loadHotkeys();
     hotkeyLoaded = true;
   }
-  // выбор области, начатый из меню трея
-  if ($("shotOverlay").hidden) {
+  if (!editAfterLoaded) {
+    const ea = await call("EditAfterShotEnabled");
+    if (typeof ea === "boolean") { $("editAfterShot").checked = ea; editAfterLoaded = true; }
+  }
+  // захват, начатый из трея или горячей клавишей: выбор области или редактор
+  if ($("shotOverlay").hidden && $("editOverlay").hidden) {
     const cap = await call("PendingRegionCapture");
-    if (cap && cap.id) await openShotOverlay(cap);
+    if (cap && cap.id) {
+      if (cap.mode === "edit") await openEditor(cap);
+      else await openShotOverlay(cap);
+    }
   }
 }
 

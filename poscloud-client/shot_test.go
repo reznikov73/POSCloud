@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
@@ -223,6 +225,47 @@ func TestHotkeyActions(t *testing.T) {
 		if _, _, ok := parseHotkey(comboFor(DefaultHotkeys(), a.key)); !ok {
 			t.Fatalf("стандартное сочетание для %q не разбирается", a.key)
 		}
+	}
+}
+
+// Разбор data URL: настоящий PNG принимается, мусор отклоняется.
+func TestDecodeDataURL(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	for x := 0; x < 4; x++ {
+		src.Set(x, 0, color.RGBA{R: 255, A: 255})
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	url := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	img, err := decodeDataURL(url)
+	if err != nil {
+		t.Fatalf("корректный data URL не разобрался: %v", err)
+	}
+	if img.Bounds().Dx() != 4 || img.Bounds().Dy() != 3 {
+		t.Fatalf("размер изображения %v", img.Bounds())
+	}
+	if _, err := decodeDataURL("не-url"); err == nil {
+		t.Fatal("строка без запятой должна отклоняться")
+	}
+	if _, err := decodeDataURL("data:image/png;base64,AAAA"); err == nil {
+		t.Fatal("битые данные должны отклоняться")
+	}
+}
+
+// Настройка «открывать редактор после снимка» сохраняется.
+func TestEditAfterShotSetting(t *testing.T) {
+	on := newTestApp(t, `{"editAfterShot":true}`)
+	on.loadConfig()
+	if !on.editAfterShot {
+		t.Fatal("сохранённое значение editAfterShot=true не применилось")
+	}
+	def := newTestApp(t, "")
+	def.loadConfig()
+	if def.editAfterShot {
+		t.Fatal("по умолчанию редактор после снимка должен быть выключен")
 	}
 }
 

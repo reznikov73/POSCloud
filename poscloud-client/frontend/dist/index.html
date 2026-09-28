@@ -135,6 +135,7 @@
           <button class="btn ghost" id="shotOpen">Открыть папку со снимками</button>
         </div>
         <label class="autostart"><input type="checkbox" id="shotSync"/><span>Отправлять снимки на сервер</span></label>
+        <label class="autostart"><input type="checkbox" id="editAfterShot"/><span>Открывать редактор после снимка</span></label>
         <div class="hint-muted" id="shotInfo"></div>
         <div class="hint-muted" id="shotKeys"></div>
         <div class="hint-muted">Снимок сразу попадает в буфер обмена и может содержать пароли и личные данные: при включённой отправке файл уходит на сервер, при снятой галочке остаётся только на этом компьютере.</div>
@@ -181,6 +182,7 @@
     <span class="shot-hint" id="shotHint">Выделите область мышью</span>
     <span class="shot-actions">
       <button class="btn small primary" id="shotApply" disabled>Сохранить снимок</button>
+      <button class="btn small" id="shotEdit" disabled>Редактировать…</button>
       <button class="btn small" id="shotCancel">Отмена</button>
     </span>
   </div>
@@ -188,6 +190,32 @@
     <img id="shotImage" alt=""/>
     <div class="shot-sel" id="shotSel" hidden></div>
   </div>
+</div>
+
+<div class="shot-overlay" id="editOverlay" hidden>
+  <div class="shot-bar">
+    <span class="shot-actions">
+      <button class="btn small" id="editArrow">Стрелка</button>
+      <button class="btn small" id="editBlur">Размытие</button>
+      <button class="btn small" id="editText">Текст</button>
+      <input type="text" id="editTextValue" class="editor-text" placeholder="текст подписи"/>
+      <input type="color" id="editColor" class="editor-color" value="#ff3b30"/>
+      <select id="editWidth" class="editor-width">
+        <option value="2">тонко</option>
+        <option value="4" selected>обычно</option>
+        <option value="8">толсто</option>
+      </select>
+      <button class="btn small ghost" id="editUndo">Отменить шаг</button>
+    </span>
+    <span class="shot-actions">
+      <button class="btn small primary" id="editSave">Сохранить снимок</button>
+      <button class="btn small" id="editCancel">Отмена</button>
+    </span>
+  </div>
+  <div class="shot-stage" id="editStage">
+    <canvas id="editCanvas"></canvas>
+  </div>
+  <div class="shot-hint" id="editHint">Инструмент: стрелка — протяните от начала к концу</div>
 </div>
 <script src="./app.js"></script>
 </body>
