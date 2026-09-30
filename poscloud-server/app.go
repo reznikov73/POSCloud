@@ -546,7 +546,9 @@ func (a *App) serverMux() *http.ServeMux {
 		gcBlocks(dir, &m)
 		a.notifyVersion(userIDFromCtx(r), ver)
 		a.mu.Unlock()
-		_ = os.Remove(filepath.Join(dir, filepath.FromSlash(clean)))
+		target := filepath.Join(dir, filepath.FromSlash(clean))
+		_ = os.Remove(target)
+		pruneEmptyDirs(dir, target)
 		a.log("удалён " + clean + " (пользователь " + userIDFromCtx(r) + ")")
 		writeJSON(w, 200, map[string]any{"deleted": clean, "version": ver})
 	})
@@ -918,6 +920,10 @@ func (a *App) StartServer(port int, dataDir string) ServerState {
 		return a.GetServerState()
 	}
 
+	// Разовая уборка при запуске: раньше удаление файлов оставляло в хранилище
+	// пустой скелет каталогов (файлы удалялись, а папки — нет).
+	go a.pruneStore()
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
 		Handler:           a.withLog(a.withAuth(a.serverMux())),
@@ -1044,6 +1050,66 @@ func (a *App) RevokeToken(userID, tokenID string) error {
 	return nil
 }
 
+// pruneEmptyDirs удаляет опустевшие каталоги, поднимаясь от файла вверх до root.
+// Протокол удаляет только файлы, поэтому без такой чистки в хранилище
+// остаётся пустой скелет каталогов. Ровно так же это сделано у клиента.
+func pruneEmptyDirs(root, filePath string) {
+	root = filepath.Clean(root)
+	dir := filepath.Dir(filepath.Clean(filePath))
+	for dir != root && strings.HasPrefix(dir, root+string(filepath.Separator)) {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			return
+		}
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// pruneEmptyTree убирает все пустые каталоги внутри root и возвращает их число.
+// Нужна при запуске сервера, чтобы вычистить скелет, накопившийся раньше.
+// Служебные каталоги (с точкой в начале, например .blocks) не трогаем.
+func pruneEmptyTree(root string) int {
+	var dirs []string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || !d.IsDir() {
+			return nil
+		}
+		if p != root && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		if p != root {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+
+	// Сначала самые глубокие: иначе родитель не станет пустым вовремя.
+	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+	removed := 0
+	for _, d := range dirs {
+		if err := os.Remove(d); err == nil { // непустой каталог не удалится
+			removed++
+		}
+	}
+	return removed
+}
+
+// pruneStore убирает пустые каталоги у всех пользователей хранилища.
+func (a *App) pruneStore() {
+	if a.auth == nil {
+		return
+	}
+	root := a.storageRoot()
+	for _, u := range a.auth.list() {
+		if n := pruneEmptyTree(filepath.Join(root, u.ID)); n > 0 {
+			a.log(fmt.Sprintf("уборка: удалено пустых каталогов — %d (пользователь %s)", n, u.ID))
+		}
+	}
+}
+
 func (a *App) UserFiles(userID string) []FileItem {
 	return listFiles(filepath.Join(a.storageRoot(), userID))
 }
@@ -1061,9 +1127,11 @@ func (a *App) DeleteUserFile(userID, name string) error {
 	gcBlocks(dir, &m)
 	a.notifyVersion(userID, ver)
 	a.mu.Unlock()
-	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(clean))); err != nil && !os.IsNotExist(err) {
+	target := filepath.Join(dir, filepath.FromSlash(clean))
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	pruneEmptyDirs(dir, target)
 	a.log("удалён " + clean + " у пользователя " + userID + " (tombstone)")
 	return nil
 }
