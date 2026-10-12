@@ -363,31 +363,15 @@ async function renderSync() {
       await renderSync();
     });
     row.appendChild(sel);
-    if (n.rule) {
-      const rst = document.createElement("button");
-      rst.className = "del";
-      rst.textContent = "Убрать правило";
-      rst.title = "снять правило папки — снова действует правило родительской папки или общий режим";
-      rst.addEventListener("click", async () => {
-        const ok = await call("RemoveFolderRule", n.path);
-        if (ok === null) {
-          flash("не удалось убрать правило — смотрите журнал", false);
-        } else {
-          flash("правило убрано", true);
-        }
-        await renderSync();
-      });
-      row.appendChild(rst);
-    }
     if (n.local && n.mode === "off") {
       const clr = document.createElement("button");
       clr.className = "del";
-      clr.textContent = "Убрать копию";
-      clr.title = "удалить локальную копию папки";
+      clr.textContent = "Освободить место";
+      clr.title = "удалить локальные файлы папки — данные на сервере останутся";
       clr.addEventListener("click", async () => {
-        if (!confirm("Удалить локальную копию папки «" + n.path + "»?\n\nДанные на сервере останутся.")) return;
+        if (!confirm("Удалить локальные файлы папки «" + n.path + "» с этого компьютера?\n\nДанные на сервере останутся.")) return;
         await call("ClearLocalCopy", n.path);
-        flash("локальная копия удалена", true);
+        flash("локальные файлы папки удалены", true);
         await renderSync();
       });
       row.appendChild(clr);
