@@ -6,7 +6,9 @@
 
 param(
     [switch]$SkipApps,
-    [switch]$StopRunning
+    [switch]$StopRunning,
+    [string]$Version,   # своя версия установщика; по умолчанию — +1 к version.txt
+    [switch]$NoBump     # не увеличивать версию
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +55,22 @@ if (-not $SkipApps) {
         if ($LASTEXITCODE -ne 0) { throw "wails build (client) завершился с кодом $LASTEXITCODE" }
     } finally { Pop-Location }
 }
+
+$versionFile = Join-Path $PSScriptRoot 'version.txt'
+if (-not $Version) {
+    $cur = '1.0.0'
+    if (Test-Path $versionFile) { $cur = (Get-Content $versionFile -Raw).Trim() }
+    if ($NoBump) {
+        $Version = $cur
+    } else {
+        $parts = $cur.Split('.')
+        if ($parts.Count -lt 2) { throw "version.txt: ожидается версия вида x.y.z, сейчас '$cur'" }
+        $parts[$parts.Count - 1] = [string]([int]$parts[$parts.Count - 1] + 1)
+        $Version = ($parts -join '.')
+    }
+}
+Set-Content -Path $versionFile -Value $Version -NoNewline -Encoding ASCII
+Write-Host "Версия установщика: $Version"
 
 $iscc = Find-Iscc
 Write-Host 'Компиляция установщика...'

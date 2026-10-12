@@ -1,8 +1,9 @@
 ; POSCloud — установщик с выбором компонентов «сервер» и/или «клиент».
 ; Компиляция: ISCC.exe poscloud-setup.iss   (или .\build.ps1 из этой папки)
+; Версия хранится в version.txt; build.ps1 увеличивает её при каждой сборке.
 
 #define MyAppName "POSCloud"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion Trim(FileRead(FileOpen(AddBackslash(SourcePath) + "version.txt")))
 #define MyAppPublisher "reznikov73"
 #define MyAppURL "https://github.com/reznikov73/POSCloud"
 #define RepoRoot ".."
@@ -15,7 +16,7 @@ AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoProductName={#MyAppName}
 DefaultDirName={autopf}\POSCloud
