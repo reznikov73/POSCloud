@@ -124,6 +124,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.openLogFile()
+	go a.logPruneLoop()
 	a.loadConfig()
 	a.applyFlagOverrides()
 	// Явно переданный -autostart важнее сохранённой настройки.
@@ -322,6 +323,53 @@ func (a *App) openLogFile() {
 		a.mu.Lock()
 		a.logFile = f
 		a.mu.Unlock()
+	}
+}
+
+// pruneLogFile оставляет в файле журнала только последние 3 дня.
+func (a *App) pruneLogFile() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	p := a.logPath()
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
+	kept := make([]string, 0, 512)
+	for _, ln := range strings.Split(string(b), "\n") {
+		if len(ln) >= 10 && ln[4] == '-' && ln[7] == '-' && ln[:10] < cutoff {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	if len(kept) > 20000 {
+		kept = kept[len(kept)-20000:]
+	}
+	res := []byte(strings.Join(kept, "\n"))
+	if len(res) == len(b) {
+		return
+	}
+	if a.logFile != nil {
+		_ = a.logFile.Close()
+		a.logFile = nil
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, res, 0644); err == nil {
+		_ = os.Rename(tmp, p)
+	}
+	if f, oerr := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); oerr == nil {
+		a.logFile = f
+	}
+}
+
+// logPruneLoop режет журнал при запуске и затем раз в час.
+func (a *App) logPruneLoop() {
+	a.pruneLogFile()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for range t.C {
+		a.pruneLogFile()
 	}
 }
 
