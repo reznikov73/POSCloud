@@ -293,20 +293,13 @@ function syncStatusOf(n) {
 async function renderSync() {
   const box = $("syncList");
   if (!box) return;
-  const [tree, rules] = await Promise.all([call("ServerFolders"), call("ListFolderRules")]);
+  const tree = await call("ServerFolders");
   const rows = [];
-  const serverPaths = new Set();
   if (Array.isArray(tree)) {
     tree.forEach((n) => {
-      serverPaths.add(String(n.path).toLowerCase());
-      rows.push({ path: n.path, files: n.files, bytes: n.bytes, local: !!n.local, rule: n.rule || "", mode: n.mode, pending: !!n.pending });
+      rows.push({ path: n.path, files: n.files, bytes: n.bytes, local: !!n.local, rule: n.rule || "", mode: n.mode, pending: !!n.pending, onlyRule: !!n.onlyRule });
     });
   }
-  (rules || []).forEach((r) => {
-    if (!serverPaths.has(String(r.path).toLowerCase())) {
-      rows.push({ path: r.path, files: 0, bytes: 0, local: false, rule: r.mode, mode: r.mode, pending: false, onlyRule: true });
-    }
-  });
   box.innerHTML = "";
   if (!rows.length) {
     box.innerHTML = '<div class="empty">' + (Array.isArray(tree) ? "на сервере пока нет папок" : "не удалось получить список с сервера (нет связи?)") + "</div>";

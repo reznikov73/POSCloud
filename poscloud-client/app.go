@@ -839,6 +839,14 @@ func (a *App) syncOnce(verbose bool) {
 			dirNames[name] = true
 			continue
 		}
+		// файл-артефакт от устаревшего клиента на месте локальной папки:
+		// разбираемся в отдельном проходе, как с папками
+		if hasSrv && !cs.Dir {
+			if fi, err := os.Stat(localPath(dir, name)); err == nil && fi.IsDir() {
+				dirNames[name] = true
+				continue
+			}
+		}
 
 		mode := rules.modeFor(name)
 		if mode == folderOff {
@@ -1096,7 +1104,7 @@ func (a *App) syncOnce(verbose bool) {
 		_, statErr := os.Stat(lp)
 		hasLocal := statErr == nil
 		switch {
-		case hasSrv && cs.Deleted:
+		case hasSrv && cs.Deleted && cs.Dir:
 			if !allowDown {
 				if hasState {
 					next.Files[n] = ss
@@ -1111,7 +1119,7 @@ func (a *App) syncOnce(verbose bool) {
 					a.log("вниз удаление (папка): " + n)
 				}
 			}
-		case hasSrv && !cs.Deleted:
+		case hasSrv && !cs.Deleted && cs.Dir:
 			if !hasLocal && allowDown {
 				if err := os.MkdirAll(lp, 0755); err == nil {
 					next.Files[n] = stateFile{Dir: true, Version: cs.Version}
@@ -1122,6 +1130,19 @@ func (a *App) syncOnce(verbose bool) {
 				}
 			} else if hasLocal {
 				next.Files[n] = stateFile{Dir: true, Version: cs.Version}
+			} else if hasState {
+				next.Files[n] = ss
+			}
+		case hasSrv && !cs.Dir:
+			// на сервере на месте папки файл-артефакт — заново регистрируем папку
+			if hasLocal && allowUp {
+				if v, err := mkdirRemote(base, n, tok); err == nil {
+					next.Files[n] = stateFile{Dir: true, Version: v}
+					up++
+					a.log("вверх папка (заново): " + n)
+				} else if hasState {
+					next.Files[n] = ss
+				}
 			} else if hasState {
 				next.Files[n] = ss
 			}
@@ -1797,13 +1818,14 @@ func (a *App) ResyncServer() {
 
 // ServerFolderNode — папка на сервере (для закладки «Синхронизация»).
 type ServerFolderNode struct {
-	Path    string `json:"path"`
-	Files   int    `json:"files"`
-	Bytes   int64  `json:"bytes"`
-	Local   bool   `json:"local"`
-	Rule    string `json:"rule"`
-	Mode    string `json:"mode"`
-	Pending bool   `json:"pending"`
+	Path     string `json:"path"`
+	Files    int    `json:"files"`
+	Bytes    int64  `json:"bytes"`
+	Local    bool   `json:"local"`
+	Rule     string `json:"rule"`
+	OnlyRule bool   `json:"onlyRule"`
+	Mode     string `json:"mode"`
+	Pending  bool   `json:"pending"`
 }
 
 // ServerFolders отдаёт интерфейсу дерево папок сервера со статусами.
@@ -1860,6 +1882,16 @@ func (a *App) ServerFolders() ([]ServerFolderNode, error) {
 			m[p].bytes += f.Size
 		}
 	}
+	// правила для папок, которых нет на сервере: отдельные строки списка
+	ruleOnly := map[string]bool{}
+	for _, r := range list {
+		p, ok := normalizeRulePath(r.Path)
+		if !ok || m[p] != nil {
+			continue
+		}
+		m[p] = &agg{}
+		ruleOnly[p] = true
+	}
 	out := make([]ServerFolderNode, 0, len(m))
 	for p, s := range m {
 		node := ServerFolderNode{Path: p, Files: s.files, Bytes: s.bytes}
@@ -1877,6 +1909,7 @@ func (a *App) ServerFolders() ([]ServerFolderNode, error) {
 			top = p[:i]
 		}
 		node.Pending = askNew && !rules.covered(p) && !node.Local && !mastered[strings.ToLower(top)]
+		node.OnlyRule = ruleOnly[p]
 		out = append(out, node)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
