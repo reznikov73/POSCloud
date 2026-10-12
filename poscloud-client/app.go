@@ -1766,6 +1766,62 @@ func (a *App) ClearLocalCopy(rel string) (int, error) {
 	return n, nil
 }
 
+// DeleteServerFolder удаляет папку на сервере (все её файлы), убирает локальную
+// копию и правила для неё. Данные исчезают и с других устройств — кнопка
+// «Удалить с сервера» на закладке «Синхронизация».
+func (a *App) DeleteServerFolder(rel string) (int, error) {
+	clean, ok := normalizeRulePath(rel)
+	if !ok {
+		return 0, fmt.Errorf("недопустимый путь папки")
+	}
+	a.mu.Lock()
+	tok := a.token
+	base := fmt.Sprintf("http://%s:%d", a.host, a.port)
+	a.mu.Unlock()
+	if tok == "" {
+		return 0, fmt.Errorf("не задан токен доступа")
+	}
+	_, files, err := fetchManifest(base, tok)
+	if err != nil {
+		return 0, err
+	}
+	prefix := strings.ToLower(clean) + "/"
+	n := 0
+	for _, f := range files {
+		if !strings.HasPrefix(strings.ToLower(f.Name), prefix) {
+			continue
+		}
+		if err := deleteRemote(base, f.Name, tok); err != nil {
+			a.log(fmt.Sprintf("удаление папки «%s» прервано на файле %s: %v", clean, f.Name, err))
+			return n, err
+		}
+		n++
+	}
+	if _, err := a.ClearLocalCopy(clean); err != nil {
+		a.log("удаление папки «" + clean + "»: локальная копия не убрана: " + err.Error())
+	}
+	lp := strings.ToLower(clean)
+	a.mu.Lock()
+	out := a.folderRules[:0]
+	removedRules := 0
+	for _, r := range a.folderRules {
+		rl := strings.ToLower(r.Path)
+		if rl == lp || strings.HasPrefix(rl, lp+"/") {
+			removedRules++
+			continue
+		}
+		out = append(out, r)
+	}
+	a.folderRules = out
+	a.mu.Unlock()
+	if removedRules > 0 {
+		a.persistConfig()
+	}
+	a.log(fmt.Sprintf("папка «%s» удалена с сервера: файлов %d, правил убрано %d", clean, n, removedRules))
+	a.markManifestResync()
+	return n, nil
+}
+
 // blockSize — размер блока для дельта-передачи (4 МиБ).
 const blockSize = 4 << 20
 

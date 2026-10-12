@@ -389,6 +389,23 @@ async function renderSync() {
       });
       row.appendChild(clr);
     }
+    if (!n.onlyRule) {
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "Удалить с сервера";
+      del.title = "удалить папку на сервере и её локальную копию здесь";
+      del.addEventListener("click", async () => {
+        if (!confirm("Удалить папку «" + n.path + "» с сервера?\n\nНа сервере: " + n.files + " ф. (" + fmtSize(n.bytes) + ").\nФайлы исчезнут и с других устройств, локальная копия на этом компьютере тоже будет удалена.")) return;
+        const num = await call("DeleteServerFolder", n.path);
+        if (num === null) {
+          flash("не удалось удалить папку — смотрите журнал", false);
+        } else {
+          flash("папка «" + n.path + "» удалена с сервера (файлов: " + num + ")", true);
+        }
+        await renderSync();
+      });
+      row.appendChild(del);
+    }
     box.appendChild(row);
   });
 }
