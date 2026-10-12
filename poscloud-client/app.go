@@ -1751,7 +1751,7 @@ func (a *App) RemoveFolderRule(path string) error {
 	a.folderRules = append(a.folderRules[:i], a.folderRules[i+1:]...)
 	a.mu.Unlock()
 	a.persistConfig()
-	a.log("папка «" + clean + "»: правило убрано — снова в обе стороны")
+	a.log("папка «" + clean + "»: правило убрано")
 	a.markManifestResync()
 	go a.syncOnce(false)
 	return nil

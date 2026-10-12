@@ -366,10 +366,15 @@ async function renderSync() {
     if (n.rule) {
       const rst = document.createElement("button");
       rst.className = "del";
-      rst.textContent = "Сбросить";
-      rst.title = "убрать правило";
+      rst.textContent = "Убрать правило";
+      rst.title = "снять правило папки — снова действует правило родительской папки или общий режим";
       rst.addEventListener("click", async () => {
-        await call("RemoveFolderRule", n.path);
+        const ok = await call("RemoveFolderRule", n.path);
+        if (ok === null) {
+          flash("не удалось убрать правило — смотрите журнал", false);
+        } else {
+          flash("правило убрано", true);
+        }
         await renderSync();
       });
       row.appendChild(rst);
