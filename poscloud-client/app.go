@@ -1909,7 +1909,8 @@ func (a *App) ServerFolders() ([]ServerFolderNode, error) {
 			top = p[:i]
 		}
 		node.Pending = askNew && !rules.covered(p) && !node.Local && !mastered[strings.ToLower(top)]
-		node.OnlyRule = ruleOnly[p]
+		// «Правило без папки» — только если папки нет ни на сервере, ни здесь.
+		node.OnlyRule = ruleOnly[p] && !node.Local
 		out = append(out, node)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
