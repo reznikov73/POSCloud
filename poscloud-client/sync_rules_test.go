@@ -2,10 +2,23 @@ package main
 
 import "testing"
 
-func TestFolderRulesDefaultBoth(t *testing.T) {
+func TestFolderRulesDefaultOff(t *testing.T) {
 	r := parseFolderRules(nil)
-	if got := r.modeFor("любая/подпапка/файл.txt"); got != folderBoth {
-		t.Fatalf("без правил ожидался режим both, получено %q", got)
+	if got := r.modeFor("любая/подпапка/файл.txt"); got != folderOff {
+		t.Fatalf("без правил ожидался режим off (новая папка ждёт решения), получено %q", got)
+	}
+	if got := r.modeForFile("заметка.txt"); got != folderBoth {
+		t.Fatalf("файл в корне должен синхронизироваться в обе стороны, получено %q", got)
+	}
+}
+
+func TestRulesFreeSyncsEverything(t *testing.T) {
+	r := parseFolderRules([]FolderRule{{Path: "Видео", Mode: folderOff}})
+	r.free = true
+	for _, p := range []string{"Видео/фильм.mp4", "Новая/файл.txt", "заметка.txt"} {
+		if got := r.modeForFile(p); got != folderBoth {
+			t.Fatalf("в режиме без правил для %q ожидался both, получено %q", p, got)
+		}
 	}
 }
 
@@ -23,9 +36,9 @@ func TestFolderRulesDeepestWins(t *testing.T) {
 		{"Видео/Отпуск/фото.jpg", folderUp},
 		{"Видео/Отпуск/вложенное/фото.jpg", folderUp},
 		{"Сканы/док.pdf", folderUp},
-		{"Документы/док.pdf", folderBoth},
-		{"Сканы-2/док.pdf", folderBoth},
-		{"Видео и музыка/файл", folderBoth},
+		{"Документы/док.pdf", folderOff},
+		{"Сканы-2/док.pdf", folderOff},
+		{"Видео и музыка/файл", folderOff},
 	}
 	for _, c := range cases {
 		if got := r.modeFor(c.path); got != c.want {
@@ -58,8 +71,11 @@ func TestFolderRulesModeHelpers(t *testing.T) {
 	if !r.isOff("Выкл/файл") || r.canUpload("Выкл/файл") || r.canDownload("Выкл/файл") {
 		t.Fatal("«не синхронизировать»: оба направления закрыты")
 	}
-	if !r.canUpload("Обычное/файл") || !r.canDownload("Обычное/файл") {
-		t.Fatal("без правила разрешены оба направления")
+	if r.canUpload("Обычное/файл") || r.canDownload("Обычное/файл") {
+		t.Fatal("без правила папка не синхронизируется")
+	}
+	if !r.canUpload("заметка.txt") || !r.canDownload("заметка.txt") {
+		t.Fatal("файл в корне синхронизируется в обе стороны")
 	}
 }
 
@@ -122,28 +138,5 @@ func TestFolderRulesCovered(t *testing.T) {
 		if got := r.covered(c.path); got != c.want {
 			t.Errorf("covered(%q) = %v, ожидалось %v", c.path, got, c.want)
 		}
-	}
-}
-
-func TestPendingBlocked(t *testing.T) {
-	r := parseFolderRules([]FolderRule{{Path: "Фото", Mode: folderBoth}})
-	mastered := map[string]bool{"документы": true}
-	if pendingBlocked("Документы/отчёт.docx", true, r, mastered) {
-		t.Fatal("освоенная папка не должна ждать решения (регистр не важен)")
-	}
-	if !pendingBlocked("Новая/файл.txt", true, r, mastered) {
-		t.Fatal("незнакомая папка должна ждать решения")
-	}
-	if !pendingBlocked("Новая/вложенная/файл.txt", true, r, mastered) {
-		t.Fatal("вложенный файл незнакомой папки тоже ждёт решения")
-	}
-	if pendingBlocked("Фото/снимок.jpg", true, r, mastered) {
-		t.Fatal("папка с правилом не ждёт решения")
-	}
-	if pendingBlocked("заметка.txt", true, r, mastered) {
-		t.Fatal("файл в корне не ждёт решения")
-	}
-	if pendingBlocked("Новая/файл.txt", false, r, mastered) {
-		t.Fatal("при выключенном режиме «спрашивать» ожиданий нет")
 	}
 }

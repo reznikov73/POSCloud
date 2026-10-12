@@ -2,13 +2,16 @@ package main
 
 import "strings"
 
-// ---------- режимы папок (выборочная синхронизация подпапок) ----------
+// ---------- режимы папок (выборочная синхронизация) ----------
 //
-// Внутри основной папки синхронизации для любой подпапки можно задать режим:
-//   both — в обе стороны (по умолчанию);
+// Режимы задаются для папок первого уровня папки синхронизации; всё вложенное
+// наследует режим своей папки первого уровня:
+//   off  — не синхронизировать (по умолчанию: новая папка ничего не передаёт);
+//   both — в обе стороны;
 //   up   — только отправлять на сервер (изменения с сервера не применяются);
-//   down — только получать с сервера (локальные изменения не выгружаются);
-//   off  — не синхронизировать вовсе.
+//   down — только получать с сервера (локальные изменения не выгружаются).
+// Файлы в корне (вне папок) синхронизируются всегда, в обе стороны.
+// free — специальный режим «без правил»: всё синхронизируется в обе стороны.
 // Правила хранятся в настройках клиента и действуют только на этом компьютере.
 
 const (
@@ -64,7 +67,10 @@ func normalizeRulePath(p string) (string, bool) {
 }
 
 // folderRules — набор правил; режим выбирается по самому глубокому совпадению.
-type folderRules struct{ rules []FolderRule }
+type folderRules struct {
+	rules []FolderRule
+	free  bool // режим «без правил»: синхронизировать всё в обе стороны
+}
 
 // parseFolderRules нормализует список правил и отбрасывает негодные записи.
 func parseFolderRules(list []FolderRule) folderRules {
@@ -90,10 +96,15 @@ func parseFolderRules(list []FolderRule) folderRules {
 }
 
 // modeFor возвращает режим для относительного пути ("a/b" или "a/b/c.txt").
-// Побеждает правило с самым глубоким совпавшим путём; без правил — folderBoth.
+// Побеждает правило с самым глубоким совпавшим путём; без правил — folderOff
+// (новая папка ничего не передаёт, пока не выбран режим). Режим «без правил»
+// (free) синхронизирует всё в обе стороны.
 func (r folderRules) modeFor(rel string) string {
+	if r.free {
+		return folderBoth
+	}
 	bestLen := -1
-	mode := folderBoth
+	mode := folderOff
 	name := strings.ToLower(rel)
 	for _, rule := range r.rules {
 		rp := strings.ToLower(rule.Path)
@@ -107,13 +118,22 @@ func (r folderRules) modeFor(rel string) string {
 	return mode
 }
 
+// modeForFile — режим для файла: файлы в корне (без "/") синхронизируются
+// всегда, в обе стороны; остальные — по режиму своей папки.
+func (r folderRules) modeForFile(rel string) string {
+	if !strings.Contains(rel, "/") {
+		return folderBoth
+	}
+	return r.modeFor(rel)
+}
+
 func (r folderRules) canUpload(rel string) bool {
-	m := r.modeFor(rel)
+	m := r.modeForFile(rel)
 	return m == folderBoth || m == folderUp
 }
 
 func (r folderRules) canDownload(rel string) bool {
-	m := r.modeFor(rel)
+	m := r.modeForFile(rel)
 	return m == folderBoth || m == folderDown
 }
 
@@ -141,22 +161,4 @@ func (r folderRules) explicit(rel string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// pendingBlocked сообщает, нужно ли отложить скачивание файла: включён режим
-// «сначала спрашивать», на путь нет ни одного правила и верхнеуровневая папка
-// ещё не освоена на этом ПК. Файлы в корне не откладываются.
-// mastered — множество освоенных верхнеуровневых папок (в нижнем регистре).
-func pendingBlocked(rel string, ask bool, r folderRules, mastered map[string]bool) bool {
-	if !ask {
-		return false
-	}
-	i := strings.Index(rel, "/")
-	if i <= 0 {
-		return false
-	}
-	if r.covered(rel) {
-		return false
-	}
-	return !mastered[strings.ToLower(rel[:i])]
 }

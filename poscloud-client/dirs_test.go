@@ -44,7 +44,10 @@ func TestLocalDirs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".poscloudignore"), []byte("skip\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	rules := parseFolderRules([]FolderRule{{Path: "offf", Mode: folderOff}})
+	rules := parseFolderRules([]FolderRule{
+		{Path: "a", Mode: folderBoth},
+		{Path: "offf", Mode: folderOff},
+	})
 	got := localDirs(dir, rules)
 	want := []string{"a", "a/b"}
 	if !reflect.DeepEqual(got, want) {
