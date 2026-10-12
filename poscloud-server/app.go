@@ -56,6 +56,9 @@ type App struct {
 
 	auth *authStore
 
+	mfMu    sync.Mutex
+	mfCache map[string]manifestCacheEntry
+
 	logs     []string
 	logMu    sync.Mutex
 	logFile  *os.File
@@ -161,6 +164,51 @@ func (a *App) persistConfig() {
 	if err := atomicReplaceFile(p, b, 0644); err != nil {
 		a.log("не удалось сохранить настройки: " + err.Error())
 	}
+}
+
+// manifestCacheEntry — закэшированный манифест вместе с отпечатком файла.
+type manifestCacheEntry struct {
+	m     Manifest
+	mtime time.Time
+	size  int64
+}
+
+// loadManifestCached возвращает манифест пользователя, перечитывая файл с диска
+// только когда он изменился. Манифесты бывают в мегабайты, а /changes клиент
+// запрашивает каждые несколько секунд — разбирать файл каждый раз слишком дорого.
+func (a *App) loadManifestCached(dir string) Manifest {
+	a.mfMu.Lock()
+	defer a.mfMu.Unlock()
+	var mtime time.Time
+	var size int64
+	if fi, err := os.Stat(manifestPath(dir)); err == nil {
+		mtime = fi.ModTime()
+		size = fi.Size()
+	}
+	if a.mfCache == nil {
+		a.mfCache = map[string]manifestCacheEntry{}
+	}
+	if e, ok := a.mfCache[dir]; ok && e.size == size && e.mtime.Equal(mtime) && !mtime.IsZero() {
+		return e.m
+	}
+	m := loadManifest(dir)
+	a.mfCache[dir] = manifestCacheEntry{m: m, mtime: mtime, size: size}
+	return m
+}
+
+// saveManifestCached пишет манифест на диск и обновляет кэш.
+func (a *App) saveManifestCached(dir string, m Manifest) error {
+	a.mfMu.Lock()
+	defer a.mfMu.Unlock()
+	if err := saveManifest(dir, m); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(manifestPath(dir)); err == nil {
+		a.mfCache[dir] = manifestCacheEntry{m: m, mtime: fi.ModTime(), size: fi.Size()}
+	} else if a.mfCache != nil {
+		delete(a.mfCache, dir)
+	}
+	return nil
 }
 
 // SaveSettings — сохранить настройки, не запуская сервер.
@@ -485,14 +533,14 @@ func (a *App) serverMux() *http.ServeMux {
 		}
 		hash, _ := fileHash(dst)
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		if prev, ok := m.Files[clean]; ok && !prev.Deleted && prev.Hash == hash {
 			a.mu.Unlock()
 			writeJSON(w, 200, map[string]any{"name": clean, "size": prev.Size, "mtime": prev.MTime, "hash": prev.Hash, "version": prev.Version})
 			return
 		}
 		ver := upsertFile(dir, &m, clean, sz, mt, hash, nil)
-		_ = saveManifest(dir, m)
+		_ = a.saveManifestCached(dir, m)
 		gcBlocks(dir, &m)
 		a.notifyVersion(userIDFromCtx(r), ver)
 		a.mu.Unlock()
@@ -516,7 +564,7 @@ func (a *App) serverMux() *http.ServeMux {
 			return
 		}
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		mf := m.Files[clean]
 		a.mu.Unlock()
 		if mf.Hash != "" {
@@ -548,9 +596,9 @@ func (a *App) serverMux() *http.ServeMux {
 			return
 		}
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		ver := markDeleted(dir, &m, clean)
-		_ = saveManifest(dir, m)
+		_ = a.saveManifestCached(dir, m)
 		gcBlocks(dir, &m)
 		a.notifyVersion(userIDFromCtx(r), ver)
 		a.mu.Unlock()
@@ -567,9 +615,9 @@ func (a *App) serverMux() *http.ServeMux {
 			return
 		}
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		if reconcileManifest(dir, &m) {
-			_ = saveManifest(dir, m)
+			_ = a.saveManifestCached(dir, m)
 		}
 		files := make([]ManifestFile, 0, len(m.Files))
 		for _, f := range m.Files {
@@ -591,7 +639,7 @@ func (a *App) serverMux() *http.ServeMux {
 		}
 		since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		ch := make([]ManifestFile, 0)
 		for _, f := range m.Files {
 			if f.Version > since {
@@ -620,7 +668,7 @@ func (a *App) serverMux() *http.ServeMux {
 			return
 		}
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		mf := m.Files[clean]
 		a.mu.Unlock()
 		blocks := mf.Blocks
@@ -793,9 +841,9 @@ func (a *App) serverMux() *http.ServeMux {
 		}
 		hash, _ := fileHash(dst)
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		ver := upsertFile(dir, &m, clean, sz, mt, hash, req.Blocks)
-		_ = saveManifest(dir, m)
+		_ = a.saveManifestCached(dir, m)
 		gcBlocks(dir, &m)
 		a.notifyVersion(userIDFromCtx(r), ver)
 		a.mu.Unlock()
@@ -823,7 +871,7 @@ func (a *App) serverMux() *http.ServeMux {
 		var cur int64
 		if dir, pok := a.userDir(r); pok {
 			a.mu.Lock()
-			m := loadManifest(dir)
+			m := a.loadManifestCached(dir)
 			cur = m.Version
 			a.mu.Unlock()
 		}
@@ -856,7 +904,7 @@ func (a *App) serverMux() *http.ServeMux {
 			return
 		}
 		a.mu.Lock()
-		m := loadManifest(dir)
+		m := a.loadManifestCached(dir)
 		seen := map[string]bool{}
 		out := []string{}
 		for _, f := range m.Files {
@@ -1129,9 +1177,9 @@ func (a *App) DeleteUserFile(userID, name string) error {
 	}
 	dir := filepath.Join(a.storageRoot(), userID)
 	a.mu.Lock()
-	m := loadManifest(dir)
+	m := a.loadManifestCached(dir)
 	ver := markDeleted(dir, &m, clean)
-	_ = saveManifest(dir, m)
+	_ = a.saveManifestCached(dir, m)
 	gcBlocks(dir, &m)
 	a.notifyVersion(userID, ver)
 	a.mu.Unlock()

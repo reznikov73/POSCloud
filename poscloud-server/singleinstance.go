@@ -23,6 +23,7 @@ var (
 	procFindWindowW         = user32.NewProc("FindWindowW")
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
+	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
 )
 
 // SW_RESTORE — восстановить окно (свёрнутое или скрытое) и активировать его.
@@ -69,4 +70,37 @@ func activateExistingWindow(title string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// findAppWindow находит окно приложения по заголовку (0 — не найдено).
+func findAppWindow() uintptr {
+	t, err := windows.UTF16PtrFromString(appWindowTitle)
+	if err != nil {
+		return 0
+	}
+	hwnd, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(t)))
+	return hwnd
+}
+
+// isWindowVisible сообщает, видимо ли окно в данный момент (окно, скрытое
+// в трей, невидимо).
+func isWindowVisible(hwnd uintptr) bool {
+	if hwnd == 0 {
+		return false
+	}
+	v, _, _ := procIsWindowVisible.Call(hwnd)
+	return v != 0
+}
+
+// WindowHidden сообщает интерфейсу, что окно скрыто (свёрнуто в трей):
+// страница в этом состоянии не обновляется, чтобы не тратить процессор впустую.
+func (a *App) WindowHidden() bool {
+	if a.ctx == nil {
+		return false
+	}
+	h := findAppWindow()
+	if h == 0 {
+		return false
+	}
+	return !isWindowVisible(h)
 }

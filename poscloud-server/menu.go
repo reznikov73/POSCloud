@@ -19,6 +19,11 @@ var (
 	// счётчик файлов считается редко — обход каталога небыстрый
 	trayMenuTicks     int
 	trayMenuFileCount int
+
+	// последние выведенные подписи — SetTitle вызываем только при изменении
+	trayLastStatus  string
+	trayLastSummary string
+	trayLastToggle  string
 )
 
 const trayAppTitle = "POSCloud · Сервер"
@@ -106,19 +111,28 @@ func (a *App) updateTrayMenu() {
 		port = 8090
 	}
 
-	trayMenuStatus.SetTitle("Статус: " + serverStateLabel(running, portFree(port), port))
+	if s := "Статус: " + serverStateLabel(running, portFree(port), port); s != trayLastStatus {
+		trayLastStatus = s
+		trayMenuStatus.SetTitle(s)
+	}
 
 	// Обход каталога делаем не каждую секунду, а раз в десять секунд.
 	trayMenuTicks++
 	if trayMenuTicks%10 == 1 {
 		trayMenuFileCount = countFiles(dir)
 	}
-	trayMenuSummary.SetTitle(fmt.Sprintf("Файлов на сервере: %d · пользователей: %d", trayMenuFileCount, users))
+	if s := fmt.Sprintf("Файлов на сервере: %d · пользователей: %d", trayMenuFileCount, users); s != trayLastSummary {
+		trayLastSummary = s
+		trayMenuSummary.SetTitle(s)
+	}
 
+	toggle := "Запустить сервер"
 	if running {
-		trayMenuToggle.SetTitle("Остановить сервер")
-	} else {
-		trayMenuToggle.SetTitle("Запустить сервер")
+		toggle = "Остановить сервер"
+	}
+	if toggle != trayLastToggle {
+		trayLastToggle = toggle
+		trayMenuToggle.SetTitle(toggle)
 	}
 }
 

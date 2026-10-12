@@ -128,6 +128,7 @@ async function loadUserDetails() {
 
 /* ---------- дерево файлов ---------- */
 async function renderTree() {
+  if (document.hidden || await call("WindowHidden")) return;
   const box = $("fileTree");
   const users = (await call("ListUsers")) || [];
   if (users.length === 0) { box.innerHTML = '<div class="empty">нет пользователей</div>'; return; }
@@ -288,6 +289,8 @@ async function refreshUsers() {
 }
 
 async function refresh() {
+  if (document.hidden) return;
+  if (await call("WindowHidden")) return;
   const [st, logs] = await Promise.all([call("GetServerState"), call("GetLogs")]);
   renderServer(st); renderLogs(logs);
   $("pulse").className = "pulse" + (st && st.running ? " on" : "");
@@ -301,4 +304,9 @@ async function refresh() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => { refresh(); refreshUsers(); setInterval(refresh, 500); setInterval(() => { if (currentTab === "tab-files") renderTree(); }, 1500); });
+window.addEventListener("DOMContentLoaded", () => {
+  refresh(); refreshUsers();
+  setInterval(() => { if (!document.hidden) refresh(); }, 1500);
+  setInterval(() => { if (!document.hidden && currentTab === "tab-files") renderTree(); }, 3000);
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
