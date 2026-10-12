@@ -65,6 +65,11 @@ type authStore struct {
 	mu    sync.Mutex
 	path  string
 	users []User
+
+	logf    func(string)  // журнал приложения (необязательный)
+	pending []string      // сообщения, накопленные до подключения журнала
+	dirty   bool          // есть несохранённые изменения (отметки LastSeen)
+	stopF   chan struct{} // остановка фонового сброса
 }
 
 func newAuthStore(path string) *authStore {
@@ -73,24 +78,171 @@ func newAuthStore(path string) *authStore {
 	return s
 }
 
-func (s *authStore) load() {
+// setLogger подключает журнал приложения: сообщения о сохранении и
+// восстановлении реестра попадают в общий журнал сервера.
+func (s *authStore) setLogger(fn func(string)) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return
-	}
-	var f usersFile
-	if json.Unmarshal(data, &f) == nil {
-		s.users = f.Users
+	s.logf = fn
+	pend := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	for _, m := range pend {
+		fn(m)
 	}
 }
 
-// saveLocked пишет реестр на диск. Вызывать ТОЛЬКО под s.mu.
-func (s *authStore) saveLocked() {
-	_ = os.MkdirAll(filepath.Dir(s.path), 0755)
-	b, _ := json.MarshalIndent(usersFile{Users: s.users}, "", "  ")
-	_ = os.WriteFile(s.path, b, 0600)
+func (s *authStore) log(msg string) {
+	if s.logf != nil {
+		s.logf(msg)
+		return
+	}
+	s.pending = append(s.pending, msg)
+}
+
+// readUsersFile читает файл реестра. Возвращает список пользователей, признак
+// успешного разбора и признак того, что файл существует.
+func readUsersFile(path string) ([]User, bool, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, false
+	}
+	if len(data) == 0 {
+		return nil, false, true
+	}
+	var f usersFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, false, true
+	}
+	if f.Users == nil {
+		f.Users = []User{}
+	}
+	return f.Users, true, true
+}
+
+func (s *authStore) load() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	users, ok, exists := readUsersFile(s.path)
+	if ok {
+		s.users = users
+		return
+	}
+	// Основной файл повреждён или отсутствует — пробуем резервную копию.
+	usersBak, okBak, _ := readUsersFile(s.path + ".bak")
+	if exists {
+		s.preserveCorruptLocked()
+	}
+	if okBak {
+		s.users = usersBak
+		if err := s.saveLocked(); err != nil {
+			s.log("реестр: восстановлен из users.json.bak, но основной файл перезаписать не удалось: " + err.Error())
+		} else {
+			s.log("реестр: users.json отсутствовал или был повреждён — восстановлен из users.json.bak")
+		}
+		return
+	}
+	if exists {
+		s.users = []User{}
+		if err := s.saveLocked(); err != nil {
+			s.log("реестр: не удалось записать пустой реестр: " + err.Error())
+		}
+		s.log("реестр: users.json повреждён, резервной копии нет — список пользователей пуст")
+	}
+}
+
+// preserveCorruptLocked переносит повреждённый users.json в сторону, чтобы его
+// не затёрла первая же запись: файл может понадобиться для разбора.
+// Вызывать под s.mu.
+func (s *authStore) preserveCorruptLocked() {
+	dst := s.path + ".corrupt-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(s.path, dst); err == nil {
+		s.log("реестр: повреждённый файл сохранён как " + filepath.Base(dst))
+	}
+}
+
+// saveLocked пишет реестр на диск: основную копию — атомарной подменой файла,
+// предыдущее исправное состояние — в users.json.bak. Даже при внезапном
+// выключении ПК на диске остаётся либо прежняя, либо новая копия целиком:
+// «обрезать» или опустошить users.json запись не может.
+// Вызывать ТОЛЬКО под s.mu.
+func (s *authStore) saveLocked() error {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(usersFile{Users: s.users}, "", "  ")
+	if err != nil {
+		return err
+	}
+	var prev []byte
+	if old, err := os.ReadFile(s.path); err == nil && len(old) > 0 {
+		prev = old
+	}
+	if err := atomicReplaceFile(s.path, b, 0600); err != nil {
+		return err
+	}
+	if prev != nil && json.Valid(prev) {
+		if err := atomicReplaceFile(s.path+".bak", prev, 0600); err != nil {
+			s.log("реестр: не удалось обновить резервную копию: " + err.Error())
+		}
+	}
+	s.dirty = false
+	return nil
+}
+
+// ---------- фоновый сброс отложенных изменений ----------
+
+// authFlushInterval — период фонового сохранения отложенных изменений (LastSeen).
+const authFlushInterval = 60 * time.Second
+
+// startFlusher запускает фоновое сохранение отложенных изменений: отметки
+// LastSeen копятся в памяти и пишутся на диск не чаще раза в минуту, поэтому
+// реестр больше не переписывается на каждый запрос с токеном.
+func (s *authStore) startFlusher() {
+	s.mu.Lock()
+	if s.stopF != nil {
+		s.mu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	s.stopF = stop
+	s.mu.Unlock()
+	go func() {
+		t := time.NewTicker(authFlushInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				s.flush()
+			}
+		}
+	}()
+}
+
+// stopFlusher останавливает фоновый сброс и сохраняет остаток. Вызывать при завершении.
+func (s *authStore) stopFlusher() {
+	s.mu.Lock()
+	stop := s.stopF
+	s.stopF = nil
+	s.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+	s.flush()
+}
+
+// flush сохраняет реестр, если есть несохранённые изменения.
+func (s *authStore) flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dirty {
+		return
+	}
+	if err := s.saveLocked(); err != nil {
+		s.log("реестр: не удалось сохранить users.json: " + err.Error())
+	}
 }
 
 func hashToken(tok string) string {
@@ -162,7 +314,10 @@ func (s *authStore) findUserByToken(tok string) (string, string, bool) {
 			t := &u.Tokens[ti]
 			if t.Enabled && t.Hash == h {
 				t.LastSeen = nowStamp()
-				s.saveLocked()
+				// Запись откладывается до ближайшего сброса: реестр больше не
+				// переписывается на каждый запрос с токеном (иначе файл почти
+				// постоянно был «в процессе записи»).
+				s.dirty = true
 				return u.ID, t.ID, true
 			}
 		}
@@ -196,7 +351,10 @@ func (s *authStore) createUser(name string) (User, error) {
 		CreatedAt: nowStamp(),
 	}
 	s.users = append(s.users, u)
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.users = s.users[:len(s.users)-1]
+		return User{}, fmt.Errorf("не удалось сохранить реестр: %w", err)
+	}
 	return u, nil
 }
 
@@ -207,8 +365,12 @@ func (s *authStore) setUserEnabled(id string, enabled bool) error {
 	if i < 0 {
 		return fmt.Errorf("пользователь не найден")
 	}
+	prev := s.users[i].Enabled
 	s.users[i].Enabled = enabled
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.users[i].Enabled = prev
+		return fmt.Errorf("не удалось сохранить реестр: %w", err)
+	}
 	return nil
 }
 
@@ -219,8 +381,12 @@ func (s *authStore) deleteUser(id string) error {
 	if i < 0 {
 		return fmt.Errorf("пользователь не найден")
 	}
+	before := append([]User(nil), s.users...)
 	s.users = append(s.users[:i], s.users[i+1:]...)
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.users = before
+		return fmt.Errorf("не удалось сохранить реестр: %w", err)
+	}
 	return nil
 }
 
@@ -244,7 +410,10 @@ func (s *authStore) issueToken(userID, deviceName string) (string, error) {
 		Enabled:   true,
 		CreatedAt: nowStamp(),
 	})
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.users[i].Tokens = s.users[i].Tokens[:len(s.users[i].Tokens)-1]
+		return "", fmt.Errorf("не удалось сохранить реестр: %w", err)
+	}
 	return tok, nil
 }
 
@@ -266,8 +435,12 @@ func (s *authStore) revokeToken(userID, tokenID string) error {
 	if j < 0 {
 		return fmt.Errorf("токен не найден")
 	}
+	before := append([]DeviceToken(nil), ts...)
 	s.users[i].Tokens = append(ts[:j], ts[j+1:]...)
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.users[i].Tokens = before
+		return fmt.Errorf("не удалось сохранить реестр: %w", err)
+	}
 	return nil
 }
 

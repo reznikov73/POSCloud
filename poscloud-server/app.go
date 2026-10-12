@@ -57,6 +57,7 @@ type App struct {
 	auth *authStore
 
 	logs     []string
+	logMu    sync.Mutex
 	logFile  *os.File
 	dataRoot string
 	rootOnce sync.Once
@@ -82,6 +83,8 @@ func (a *App) startup(ctx context.Context) {
 	a.openLogFile()
 	a.loadConfig()
 	a.auth = newAuthStore(filepath.Join(a.root(), "users.json"))
+	a.auth.setLogger(a.log)
+	a.auth.startFlusher()
 	if a.flagPort > 0 {
 		a.srvPort = a.flagPort
 	}
@@ -155,7 +158,9 @@ func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "server.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
 	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, AutoRun: &a.autoRun}, "", "  ")
-	_ = os.WriteFile(p, b, 0644)
+	if err := atomicReplaceFile(p, b, 0644); err != nil {
+		a.log("не удалось сохранить настройки: " + err.Error())
+	}
 }
 
 // SaveSettings — сохранить настройки, не запуская сервер.
@@ -182,11 +187,14 @@ func (a *App) shutdown(ctx context.Context) {
 		_ = srv.Shutdown(c)
 		cancel()
 	}
+	if a.auth != nil {
+		a.auth.stopFlusher()
+	}
 }
 
 func (a *App) log(s string) {
 	line := time.Now().Format("15:04:05") + "  " + s
-	a.mu.Lock()
+	a.logMu.Lock()
 	a.logs = append(a.logs, line)
 	if len(a.logs) > 500 {
 		a.logs = a.logs[len(a.logs)-500:]
@@ -194,7 +202,7 @@ func (a *App) log(s string) {
 	if a.logFile != nil {
 		_, _ = a.logFile.WriteString(time.Now().Format("2006-01-02 ") + line + "\n")
 	}
-	a.mu.Unlock()
+	a.logMu.Unlock()
 }
 
 func (a *App) logPath() string { return filepath.Join(a.root(), "server.log") }
@@ -204,9 +212,9 @@ func (a *App) openLogFile() {
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
-		a.mu.Lock()
+		a.logMu.Lock()
 		a.logFile = f
-		a.mu.Unlock()
+		a.logMu.Unlock()
 	}
 }
 
@@ -217,17 +225,17 @@ func (a *App) OpenLogFile() {
 }
 
 func (a *App) GetLogs() []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
 	out := make([]string, len(a.logs))
 	copy(out, a.logs)
 	return out
 }
 
 func (a *App) ClearLogs() {
-	a.mu.Lock()
+	a.logMu.Lock()
 	a.logs = nil
-	a.mu.Unlock()
+	a.logMu.Unlock()
 }
 
 func (a *App) PickDirectory() string {

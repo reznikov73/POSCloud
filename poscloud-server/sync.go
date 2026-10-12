@@ -64,7 +64,9 @@ func loadManifest(userDir string) Manifest {
 func saveManifest(userDir string, m Manifest) error {
 	_ = os.MkdirAll(userDir, 0755)
 	b, _ := json.MarshalIndent(m, "", "  ")
-	return os.WriteFile(manifestPath(userDir), b, 0644)
+	// Атомарная запись: при сбое питания манифест останется прежним, а не
+	// превратится в обрезанный файл — по нему сервер отдаёт версии файлов.
+	return atomicReplaceFile(manifestPath(userDir), b, 0644)
 }
 
 // reconcileManifest добавляет в манифест файлы, лежащие на диске, но отсутствующие
