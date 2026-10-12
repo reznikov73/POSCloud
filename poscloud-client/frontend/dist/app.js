@@ -285,11 +285,9 @@ let folderPickerRel = "";
 
 function syncStatusOf(n) {
   if (n.pending) return { text: "Ждёт решения", cls: "pend" };
-  if (n.mode === "off") return { text: "Не синхронизировать", cls: "offf" };
-  if (n.mode === "up") return { text: "Только отправлять", cls: "" };
-  if (n.mode === "down") return { text: "Только получать", cls: "" };
-  if (n.local) return { text: "Синхронизируется", cls: "okk" };
-  return { text: "Будет скачана", cls: "" };
+  if (n.local) return { text: "Есть на этом ПК", cls: n.mode === "off" ? "offf" : "okk" };
+  if (n.mode === "both" || n.mode === "down") return { text: "Будет скачана", cls: "" };
+  return { text: "Нет на этом ПК", cls: "offf" };
 }
 
 async function renderSync() {
@@ -325,7 +323,7 @@ async function renderSync() {
     nm.title = n.path;
     const meta = document.createElement("span");
     meta.className = "sync-meta";
-    meta.textContent = n.onlyRule ? "правило" : n.files + " ф. · " + fmtSize(n.bytes);
+    meta.textContent = n.onlyRule ? "правило" : (n.files === 0 ? "папка" : n.files + " ф. · " + fmtSize(n.bytes));
     const stt = syncStatusOf(n);
     const badge = document.createElement("span");
     badge.className = "sync-status " + stt.cls;
