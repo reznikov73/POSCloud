@@ -689,6 +689,31 @@ func (a *App) serverMux() *http.ServeMux {
 		a.log("удалён " + clean + " (пользователь " + userIDFromCtx(r) + ")")
 		writeJSON(w, 200, map[string]any{"deleted": clean, "version": ver})
 	})
+	// POST /mkdir — зарегистрировать папку (в т.ч. пустую) в манифесте.
+	mux.HandleFunc("POST /mkdir", func(w http.ResponseWriter, r *http.Request) {
+		dir, ok := a.userDir(r)
+		if !ok {
+			writeJSON(w, 401, map[string]any{"error": "нет пользователя"})
+			return
+		}
+		clean, ok := sanitizeRel(r.URL.Query().Get("name"))
+		if !ok {
+			writeJSON(w, 400, map[string]any{"error": "недопустимое имя"})
+			return
+		}
+		a.mu.Lock()
+		m := a.loadManifestCached(dir)
+		ver, changed := upsertDirEntry(&m, clean)
+		if changed {
+			_ = a.saveManifestCached(dir, m)
+			a.notifyVersion(userIDFromCtx(r), ver)
+		}
+		a.mu.Unlock()
+		if changed {
+			a.log("отмечена папка " + clean + " (пользователь " + userIDFromCtx(r) + ")")
+		}
+		writeJSON(w, 200, map[string]any{"name": clean, "version": ver})
+	})
 	mux.HandleFunc("GET /manifest", func(w http.ResponseWriter, r *http.Request) {
 		dir, ok := a.userDir(r)
 		if !ok {

@@ -13,7 +13,7 @@ import (
 
 // ---------- B1/B2: манифест пространства, версии, tombstones ----------
 
-// ManifestFile — запись о файле в пространстве пользователя.
+// ManifestFile — запись о файле (или пустой папке) в пространстве пользователя.
 type ManifestFile struct {
 	Name    string   `json:"name"`
 	Size    int64    `json:"size"`
@@ -21,6 +21,7 @@ type ManifestFile struct {
 	Hash    string   `json:"hash"`
 	Version int64    `json:"version"`
 	Deleted bool     `json:"deleted"`
+	Dir     bool     `json:"dir,omitempty"`
 	Blocks  []string `json:"blocks,omitempty"`
 }
 
@@ -121,8 +122,20 @@ func upsertFile(userDir string, m *Manifest, name string, size, mtime int64, has
 func markDeleted(userDir string, m *Manifest, name string) int64 {
 	prev := m.Files[name]
 	m.Version++
-	m.Files[name] = ManifestFile{Name: name, Size: prev.Size, MTime: prev.MTime, Hash: prev.Hash, Version: m.Version, Deleted: true}
+	m.Files[name] = ManifestFile{Name: name, Size: prev.Size, MTime: prev.MTime, Hash: prev.Hash, Version: m.Version, Deleted: true, Dir: prev.Dir}
 	return m.Version
+}
+
+// upsertDirEntry регистрирует папку (каталог без файлов) в манифесте. Если
+// запись уже есть и не удалена — ничего не меняем. Возвращает версию манифеста
+// и признак изменения. Вызывать под a.mu.
+func upsertDirEntry(m *Manifest, name string) (int64, bool) {
+	if prev, ok := m.Files[name]; ok && !prev.Deleted {
+		return m.Version, false
+	}
+	m.Version++
+	m.Files[name] = ManifestFile{Name: name, Dir: true, Version: m.Version}
+	return m.Version, true
 }
 
 // tombstoneKeep — сколько последних версий манифеста хранит отметки об

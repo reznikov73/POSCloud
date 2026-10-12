@@ -55,14 +55,16 @@ type manifestFile struct {
 	Hash    string `json:"hash"`
 	Version int64  `json:"version"`
 	Deleted bool   `json:"deleted"`
+	Dir     bool   `json:"dir,omitempty"`
 }
 
-// stateFile — что клиент знает о файле (локальное состояние синхронизации).
+// stateFile — что клиент знает о файле (или папке) в синхронизации.
 type stateFile struct {
 	Hash    string `json:"hash"`
 	Size    int64  `json:"size"`
 	MTime   int64  `json:"mtime"`
 	Version int64  `json:"version"`
+	Dir     bool   `json:"dir,omitempty"`
 }
 
 type clientState struct {
@@ -549,6 +551,47 @@ func localScan(dir string, st clientState, rules folderRules) map[string]stateFi
 	return out
 }
 
+// localDirs собирает подкаталоги папки синхронизации (для переноса пустых
+// папок). Скрытые, исключённые и отключённые правилами пропускаются.
+func localDirs(dir string, rules folderRules) []string {
+	var out []string
+	ign := loadIgnore(dir)
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || !d.IsDir() {
+			return nil
+		}
+		if p == dir {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return nil
+		}
+		key := filepath.ToSlash(rel)
+		if strings.HasPrefix(d.Name(), ".") || ign.match(key) || rules.isOff(key) {
+			return filepath.SkipDir
+		}
+		out = append(out, key)
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+// stateCoversDir сообщает, известна ли папка состоянию: есть запись для неё
+// самой (файл или папка) либо что-то внутри неё.
+func stateCoversDir(files map[string]stateFile, dir string) bool {
+	ld := strings.ToLower(filepath.ToSlash(dir))
+	prefix := ld + "/"
+	for k := range files {
+		lk := strings.ToLower(filepath.ToSlash(k))
+		if lk == ld || strings.HasPrefix(lk, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // masteredTop возвращает «освоенные» верхнеуровневые папки: те, что уже есть
 // на этом компьютере (каталоги, файлы или записи состояния). Нужно для режима
 // «сначала спрашивать»: такие папки продолжают синхронизироваться без вопросов.
@@ -768,6 +811,7 @@ func (a *App) syncOnce(verbose bool) {
 		mastered = masteredTop(dir, st.Files, local)
 	}
 
+	dirNames := map[string]bool{}
 	names := map[string]bool{}
 	for n := range local {
 		names[n] = true
@@ -789,6 +833,12 @@ func (a *App) syncOnce(verbose bool) {
 		ls, hasLocal := local[name]
 		ss, hasState := st.Files[name]
 		cs, hasSrv := srv[name]
+
+		// записи о папках обрабатываем отдельным проходом ниже
+		if (hasSrv && cs.Dir) || (hasState && ss.Dir) {
+			dirNames[name] = true
+			continue
+		}
 
 		mode := rules.modeFor(name)
 		if mode == folderOff {
@@ -1020,6 +1070,109 @@ func (a *App) syncOnce(verbose bool) {
 		}
 	}
 
+	// ==== папки: перенос пустых каталогов ====
+	for n := range dirNames {
+		ss, hasState := st.Files[n]
+		cs, hasSrv := srv[n]
+		mode := rules.modeFor(n)
+		if mode == folderOff {
+			if hasState {
+				next.Files[n] = ss
+			}
+			skipped++
+			continue
+		}
+		if pendingBlocked(n, askNew, rules, mastered) {
+			if hasState {
+				next.Files[n] = ss
+			}
+			skipped++
+			waited++
+			continue
+		}
+		allowUp := mode == folderBoth || mode == folderUp
+		allowDown := mode == folderBoth || mode == folderDown
+		lp := localPath(dir, n)
+		_, statErr := os.Stat(lp)
+		hasLocal := statErr == nil
+		switch {
+		case hasSrv && cs.Deleted:
+			if !allowDown {
+				if hasState {
+					next.Files[n] = ss
+				}
+				skipped++
+				continue
+			}
+			if hasLocal {
+				if err := os.Remove(lp); err == nil {
+					pruneEmptyDirs(dir, lp)
+					del++
+					a.log("вниз удаление (папка): " + n)
+				}
+			}
+		case hasSrv && !cs.Deleted:
+			if !hasLocal && allowDown {
+				if err := os.MkdirAll(lp, 0755); err == nil {
+					next.Files[n] = stateFile{Dir: true, Version: cs.Version}
+					down++
+					a.log("вниз папка: " + n)
+				} else if hasState {
+					next.Files[n] = ss
+				}
+			} else if hasLocal {
+				next.Files[n] = stateFile{Dir: true, Version: cs.Version}
+			} else if hasState {
+				next.Files[n] = ss
+			}
+		default:
+			if hasLocal {
+				if hasState {
+					next.Files[n] = ss
+				} else if allowUp {
+					if v, err := mkdirRemote(base, n, tok); err == nil {
+						next.Files[n] = stateFile{Dir: true, Version: v}
+						up++
+						a.log("вверх папка: " + n)
+					}
+				}
+			} else if hasState {
+				if allowUp {
+					if err := deleteRemote(base, n, tok); err == nil {
+						del++
+						a.log("вверх удаление (папка): " + n)
+					} else {
+						next.Files[n] = ss
+					}
+				} else {
+					// «только получать»: удаление папки не уходит на сервер
+					if err := os.MkdirAll(lp, 0755); err == nil {
+						down++
+					}
+					next.Files[n] = ss
+				}
+			}
+		}
+	}
+	// новые локальные папки, которых ещё нет ни в состоянии, ни на сервере
+	for _, n := range localDirs(dir, rules) {
+		if dirNames[n] || stateCoversDir(next.Files, n) {
+			continue
+		}
+		mode := rules.modeFor(n)
+		if mode != folderBoth && mode != folderUp {
+			continue
+		}
+		if pendingBlocked(n, askNew, rules, mastered) {
+			continue
+		}
+		if v, err := mkdirRemote(base, n, tok); err == nil {
+			next.Files[n] = stateFile{Dir: true, Version: v}
+			up++
+			a.log("вверх папка: " + n)
+		}
+	}
+
 	maxv := srvVer
 	for _, f := range next.Files {
 		if f.Version > maxv {
@@ -1244,6 +1397,30 @@ func deleteRemote(base, name, token string) error {
 		return fmt.Errorf("статус %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// mkdirRemote регистрирует папку (пустой каталог) на сервере, возвращает её версию.
+func mkdirRemote(base, name, token string) (int64, error) {
+	req, err := http.NewRequest("POST", strings.TrimRight(base, "/")+"/mkdir?name="+urlQ(name), nil)
+	if err != nil {
+		return 0, err
+	}
+	authHeader(req, token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("статус %d", resp.StatusCode)
+	}
+	var payload struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return 0, err
+	}
+	return payload.Version, nil
 }
 
 // watchLoop следит за изменениями в папке синхронизации и запускает цикл синхронизации
@@ -1661,6 +1838,16 @@ func (a *App) ServerFolders() ([]ServerFolderNode, error) {
 			continue
 		}
 		parts := strings.Split(f.Name, "/")
+		if f.Dir {
+			// пустая папка на сервере: показываем её саму и родителей
+			for i := 1; i <= len(parts); i++ {
+				p := strings.Join(parts[:i], "/")
+				if m[p] == nil {
+					m[p] = &agg{}
+				}
+			}
+			continue
+		}
 		if len(parts) < 2 {
 			continue
 		}
@@ -1725,6 +1912,7 @@ func (a *App) ClearLocalCopy(rel string) (int, error) {
 		return 0, fmt.Errorf("недопустимый путь папки")
 	}
 	n := 0
+	var dirs []string
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d == nil {
 			return nil
@@ -1733,6 +1921,7 @@ func (a *App) ClearLocalCopy(rel string) (int, error) {
 			if p != root && strings.HasPrefix(d.Name(), ".") {
 				return filepath.SkipDir
 			}
+			dirs = append(dirs, p)
 			return nil
 		}
 		if strings.HasPrefix(d.Name(), ".") {
@@ -1743,11 +1932,17 @@ func (a *App) ClearLocalCopy(rel string) (int, error) {
 		}
 		return nil
 	})
+	// убрать опустевшие каталоги (снизу вверх)
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i])
+	}
 	st := loadState(dir)
-	prefix := strings.ToLower(clean) + "/"
+	lp := strings.ToLower(clean)
+	prefix := lp + "/"
 	removed := 0
 	for k := range st.Files {
-		if strings.HasPrefix(strings.ToLower(filepath.ToSlash(k)), prefix) {
+		lk := strings.ToLower(filepath.ToSlash(k))
+		if lk == lp || strings.HasPrefix(lk, prefix) {
 			delete(st.Files, k)
 			removed++
 		}
@@ -1785,10 +1980,12 @@ func (a *App) DeleteServerFolder(rel string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	prefix := strings.ToLower(clean) + "/"
+	lp := strings.ToLower(clean)
+	prefix := lp + "/"
 	n := 0
 	for _, f := range files {
-		if !strings.HasPrefix(strings.ToLower(f.Name), prefix) {
+		lf := strings.ToLower(f.Name)
+		if lf != lp && !strings.HasPrefix(lf, prefix) {
 			continue
 		}
 		if err := deleteRemote(base, f.Name, tok); err != nil {
@@ -1800,7 +1997,6 @@ func (a *App) DeleteServerFolder(rel string) (int, error) {
 	if _, err := a.ClearLocalCopy(clean); err != nil {
 		a.log("удаление папки «" + clean + "»: локальная копия не убрана: " + err.Error())
 	}
-	lp := strings.ToLower(clean)
 	a.mu.Lock()
 	out := a.folderRules[:0]
 	removedRules := 0
