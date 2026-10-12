@@ -77,6 +77,18 @@ wails build -s -skipbindings -webview2 browser
 Готовые файлы появляются в `build\bin\`. Иконку и оконные ресурсы подкладывает только `wails build`:
 собранный вручную через `go build` exe останется **без иконки**.
 
+## Установщик
+
+Единый установщик Windows с выбором компонентов (**сервер** и/или **клиент**):
+
+```powershell
+cd installer
+.\build.ps1 -SkipApps       # собрать установщик из готовых exe
+```
+
+Готовый файл — `installer\out\POSCloud-Setup-<версия>.exe`. Нужен Inno Setup 6.
+Подробности — в [installer/README.md](installer/README.md).
+
 ## Проверка
 
 ```powershell
@@ -135,6 +147,7 @@ cd ..\poscloud-server; go test ./...
 | `poscloud-client/` | приложение-клиент: `app.go`, `menu.go`, `tray.go`, `screenshot.go`, `hotkeys.go`, `singleinstance.go`, `frontend/` |
 | `poscloud-server/` | приложение-сервер: `app.go`, `auth.go`, `sync.go`, `port.go`, `menu.go`, `tray.go`, `frontend/` |
 | `poscloud-*/build/bin/` | результат сборки |
+| `installer/` | установщик: `poscloud-setup.iss` (Inno Setup) и сборка `build.ps1` |
 | `pubClient/`, `pubServer/` | рабочие каталоги при проверках (в репозиторий не входят) |
 | `POSCloud.code-workspace` | открывает оба модуля одним окном VS Code |
 
