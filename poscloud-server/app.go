@@ -601,6 +601,19 @@ func (a *App) serverMux() *http.ServeMux {
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
+		// устаревший клиент может прислать пустой файл на место папки:
+		// не затираем запись о папке, отвечаем как обычно
+		if fi, statErr := os.Stat(tn); statErr == nil && fi.Size() == 0 {
+			a.mu.Lock()
+			mm := a.loadManifestCached(dir)
+			prevDir, prevOK := mm.Files[clean]
+			a.mu.Unlock()
+			if prevOK && !prevDir.Deleted && prevDir.Dir {
+				os.Remove(tn)
+				writeJSON(w, 200, map[string]any{"name": clean, "size": 0, "mtime": prevDir.MTime, "hash": emptyFileHash, "version": prevDir.Version})
+				return
+			}
+		}
 		if err := os.Rename(tn, dst); err != nil {
 			os.Remove(tn)
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
@@ -640,7 +653,7 @@ func (a *App) serverMux() *http.ServeMux {
 			return
 		}
 		path := filepath.Join(dir, filepath.FromSlash(clean))
-		if _, err := os.Stat(path); err != nil {
+		if fi, err := os.Stat(path); err != nil || fi.IsDir() {
 			writeJSON(w, 404, map[string]any{"error": "файл не найден"})
 			return
 		}
@@ -648,6 +661,10 @@ func (a *App) serverMux() *http.ServeMux {
 		m := a.loadManifestCached(dir)
 		mf := m.Files[clean]
 		a.mu.Unlock()
+		if mf.Dir && !mf.Deleted {
+			writeJSON(w, 404, map[string]any{"error": "это папка"})
+			return
+		}
 		if mf.Hash != "" {
 			w.Header().Set("X-PC-Hash", mf.Hash)
 			w.Header().Set("X-PC-Version", strconv.FormatInt(mf.Version, 10))
@@ -710,6 +727,11 @@ func (a *App) serverMux() *http.ServeMux {
 		}
 		a.mu.Unlock()
 		if changed {
+			// подчистить физический пустой файл-артефакт, если остался
+			target := filepath.Join(dir, filepath.FromSlash(clean))
+			if fi, statErr := os.Stat(target); statErr == nil && !fi.IsDir() && fi.Size() == 0 {
+				_ = os.Remove(target)
+			}
 			a.log("отмечена папка " + clean + " (пользователь " + userIDFromCtx(r) + ")")
 		}
 		writeJSON(w, 200, map[string]any{"name": clean, "version": ver})

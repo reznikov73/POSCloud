@@ -127,16 +127,23 @@ func markDeleted(userDir string, m *Manifest, name string) int64 {
 }
 
 // upsertDirEntry регистрирует папку (каталог без файлов) в манифесте. Если
-// запись уже есть и не удалена — ничего не меняем. Возвращает версию манифеста
-// и признак изменения. Вызывать под a.mu.
+// запись уже есть и это не пустой файл-артефакт — ничего не меняем. Возвращает
+// версию манифеста и признак изменения. Вызывать под a.mu.
 func upsertDirEntry(m *Manifest, name string) (int64, bool) {
 	if prev, ok := m.Files[name]; ok && !prev.Deleted {
-		return m.Version, false
+		if prev.Dir || prev.Size != 0 {
+			return m.Version, false
+		}
+		// пустой файл-артефакт (например, от устаревшего клиента) — заменяем папкой
 	}
 	m.Version++
 	m.Files[name] = ManifestFile{Name: name, Dir: true, Version: m.Version}
 	return m.Version, true
 }
+
+// emptyFileHash — sha256 пустого файла: по нему распознаются файлы-артефакты
+// устаревших клиентов, присланные на место папки.
+const emptyFileHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 // tombstoneKeep — сколько последних версий манифеста хранит отметки об
 // удалении (надгробия). Всё более старое убирается, чтобы манифест не рос.

@@ -33,3 +33,22 @@ func TestUpsertDirEntry(t *testing.T) {
 		t.Fatalf("запись после восстановления: %+v", f)
 	}
 }
+
+// TestUpsertDirEntryReplacesEmptyFile: пустой файл-артефакт на месте папки
+// заменяется записью папки, непустой файл — не трогается.
+func TestUpsertDirEntryReplacesEmptyFile(t *testing.T) {
+	m := Manifest{Version: 10, Files: map[string]ManifestFile{}}
+	m.Files["пусто"] = ManifestFile{Name: "пусто", Version: 5}
+	v, changed := upsertDirEntry(&m, "пусто")
+	if !changed || v != 11 || !m.Files["пусто"].Dir {
+		t.Fatalf("пустой файл: changed=%v v=%d запись=%+v", changed, v, m.Files["пусто"])
+	}
+	m.Files["файл"] = ManifestFile{Name: "файл", Size: 5, Version: 6}
+	v2, changed2 := upsertDirEntry(&m, "файл")
+	if changed2 || v2 != 11 {
+		t.Fatalf("непустой файл не должен затираться: changed=%v v=%d", changed2, v2)
+	}
+	if m.Files["файл"].Dir || m.Files["файл"].Size != 5 {
+		t.Fatalf("запись файла испорчена: %+v", m.Files["файл"])
+	}
+}
