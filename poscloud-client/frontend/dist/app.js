@@ -284,6 +284,7 @@ const folderModes = [
 let folderPickerRel = "";
 
 function syncStatusOf(n) {
+  if (n.onlyRule) return { text: "Правило без папки", cls: "offf" };
   if (n.pending) return { text: "Ждёт решения", cls: "pend" };
   if (n.local) return { text: "Есть на этом ПК", cls: n.mode === "off" ? "offf" : "okk" };
   if (n.mode === "both" || n.mode === "down") return { text: "Будет скачана", cls: "" };
@@ -368,6 +369,18 @@ async function renderSync() {
         await renderSync();
       });
       row.appendChild(clr);
+    }
+    if (n.onlyRule) {
+      const rm = document.createElement("button");
+      rm.className = "del";
+      rm.textContent = "Убрать правило";
+      rm.title = "убрать сохранённое правило для папки";
+      rm.addEventListener("click", async () => {
+        await call("RemoveFolderRule", n.path);
+        flash("правило убрано", true);
+        await renderSync();
+      });
+      row.appendChild(rm);
     }
     if (!n.onlyRule) {
       const del = document.createElement("button");
