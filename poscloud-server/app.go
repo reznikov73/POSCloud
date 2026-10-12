@@ -84,6 +84,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.openLogFile()
+	go a.logPruneLoop()
 	a.loadConfig()
 	a.auth = newAuthStore(filepath.Join(a.root(), "users.json"))
 	a.auth.setLogger(a.log)
@@ -200,6 +201,7 @@ func (a *App) loadManifestCached(dir string) Manifest {
 func (a *App) saveManifestCached(dir string, m Manifest) error {
 	a.mfMu.Lock()
 	defer a.mfMu.Unlock()
+	pruneTombstones(&m)
 	if err := saveManifest(dir, m); err != nil {
 		return err
 	}
@@ -209,6 +211,36 @@ func (a *App) saveManifestCached(dir string, m Manifest) error {
 		delete(a.mfCache, dir)
 	}
 	return nil
+}
+
+// compactManifests — разовая уборка при запуске: сжимает раздутые манифесты
+// пользователей (убирает старые надгробия, чтобы файлы не оставались
+// многомегабайтными).
+func (a *App) compactManifests(dataDir string) {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	total := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(dataDir, e.Name())
+		if _, err := os.Stat(manifestPath(dir)); err != nil {
+			continue
+		}
+		m := a.loadManifestCached(dir)
+		removed := pruneTombstones(&m)
+		if removed > 0 && a.saveManifestCached(dir, m) == nil {
+			total += removed
+		}
+	}
+	if total > 0 {
+		a.log(fmt.Sprintf("уборка манифестов: убрано старых отметок об удалении — %d", total))
+	}
 }
 
 // SaveSettings — сохранить настройки, не запуская сервер.
@@ -263,6 +295,55 @@ func (a *App) openLogFile() {
 		a.logMu.Lock()
 		a.logFile = f
 		a.logMu.Unlock()
+	}
+}
+
+// pruneLogFile оставляет в файле журнала только последние 3 дня.
+func (a *App) pruneLogFile() {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	p := a.logPath()
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
+	kept := make([]string, 0, 512)
+	for _, ln := range strings.Split(string(b), "\n") {
+		if len(ln) >= 10 && ln[4] == '-' && ln[7] == '-' && ln[:10] < cutoff {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	if len(kept) > 20000 {
+		kept = kept[len(kept)-20000:]
+	}
+	res := []byte(strings.Join(kept, "\n"))
+	if len(res) == len(b) {
+		return
+	}
+	if a.logFile != nil {
+		_ = a.logFile.Close()
+		a.logFile = nil
+	}
+	if err := atomicReplaceFile(p, res, 0644); err != nil {
+		if f, oerr := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); oerr == nil {
+			a.logFile = f
+		}
+		return
+	}
+	if f, oerr := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); oerr == nil {
+		a.logFile = f
+	}
+}
+
+// logPruneLoop режет журнал при запуске и затем раз в час.
+func (a *App) logPruneLoop() {
+	a.pruneLogFile()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for range t.C {
+		a.pruneLogFile()
 	}
 }
 
@@ -979,6 +1060,8 @@ func (a *App) StartServer(port int, dataDir string) ServerState {
 	// Разовая уборка при запуске: раньше удаление файлов оставляло в хранилище
 	// пустой скелет каталогов (файлы удалялись, а папки — нет).
 	go a.pruneStore()
+	// И уборка манифестов: старые надгробия удаляются, чтобы файлы не росли.
+	go a.compactManifests(dataDir)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),

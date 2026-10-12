@@ -125,6 +125,28 @@ func markDeleted(userDir string, m *Manifest, name string) int64 {
 	return m.Version
 }
 
+// tombstoneKeep — сколько последних версий манифеста хранит отметки об
+// удалении (надгробия). Всё более старое убирается, чтобы манифест не рос.
+const tombstoneKeep = 2000
+
+// pruneTombstones убирает старые надгробия, чтобы манифест не разрастался.
+// Устройство, пропавшее на много тысяч изменений, в редком случае не узнает
+// об удалении — данные при этом не теряются.
+func pruneTombstones(m *Manifest) int {
+	cut := m.Version - tombstoneKeep
+	if cut <= 0 {
+		return 0
+	}
+	removed := 0
+	for name, f := range m.Files {
+		if f.Deleted && f.Version <= cut {
+			delete(m.Files, name)
+			removed++
+		}
+	}
+	return removed
+}
+
 // blocksDir — каталог блочного хранилища пользователя.
 func blocksDir(userDir string) string { return filepath.Join(userDir, ".blocks") }
 
