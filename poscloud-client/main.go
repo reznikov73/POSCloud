@@ -95,7 +95,9 @@ func main() {
 		MinWidth:         820,
 		MinHeight:        560,
 		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 22, A: 1},
-		AssetServer:      &assetserver.Options{Assets: assets},
+		// правый клик в полях ввода: копировать/вставить/вырезать/выделить всё
+		EnableDefaultContextMenu: true,
+		AssetServer:              &assetserver.Options{Assets: assets},
 		OnStartup: func(ctx context.Context) {
 			trayStart()
 			app.startup(ctx)
