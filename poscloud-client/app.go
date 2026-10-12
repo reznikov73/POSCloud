@@ -74,23 +74,25 @@ type App struct {
 	ctx context.Context
 	mu  sync.Mutex
 
-	syncRun       bool
-	syncMu        sync.Mutex
-	host          string
-	port          int
-	localDir      string
-	interval      int
-	token         string
-	shotSync      bool // сохранять снимки экрана в папку синхронизации
-	editAfterShot bool // открывать редактор после снимка
-	autoRun       bool // начинать синхронизацию сразу при открытии программы
-	hotkeys       HotkeyConfig
-	folderRules   []FolderRule // режимы подпапок (выборочная синхронизация)
-	stopCh        chan struct{}
-	lastSync      string
-	errMsg        string
-	count         int
-	online        bool
+	syncRun        bool
+	syncMu         sync.Mutex
+	host           string
+	port           int
+	localDir       string
+	interval       int
+	token          string
+	shotSync       bool // сохранять снимки экрана в папку синхронизации
+	editAfterShot  bool // открывать редактор после снимка
+	autoRun        bool // начинать синхронизацию сразу при открытии программы
+	hotkeys        HotkeyConfig
+	folderRules    []FolderRule // режимы подпапок (выборочная синхронизация)
+	autoNewFolders bool         // новые папки сервера скачиваются автоматически
+	needManifest   bool         // перечитать полный манифест на следующем цикле
+	stopCh         chan struct{}
+	lastSync       string
+	errMsg         string
+	count          int
+	online         bool
 
 	logs     []string
 	logFile  *os.File
@@ -213,6 +215,8 @@ type savedConfig struct {
 	EditAfterShot *bool `json:"editAfterShot,omitempty"`
 	// nil — правила папок не задавались (все подпапки синхронизируются в обе стороны)
 	FolderRules []FolderRule `json:"folderRules,omitempty"`
+	// nil — новые папки сервера ждут решения (не скачиваются автоматически)
+	AutoNewFolders *bool `json:"autoNewFolders,omitempty"`
 }
 
 func (a *App) loadConfig() {
@@ -250,13 +254,16 @@ func (a *App) loadConfig() {
 			a.editAfterShot = *c.EditAfterShot
 		}
 		a.folderRules = c.FolderRules
+		if c.AutoNewFolders != nil {
+			a.autoNewFolders = *c.AutoNewFolders
+		}
 	}
 }
 
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys, EditAfterShot: &a.editAfterShot, FolderRules: a.folderRules}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys, EditAfterShot: &a.editAfterShot, FolderRules: a.folderRules, AutoNewFolders: &a.autoNewFolders}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 
@@ -494,6 +501,31 @@ func localScan(dir string, st clientState, rules folderRules) map[string]stateFi
 	return out
 }
 
+// masteredTop возвращает «освоенные» верхнеуровневые папки: те, что уже есть
+// на этом компьютере (каталоги, файлы или записи состояния). Нужно для режима
+// «сначала спрашивать»: такие папки продолжают синхронизироваться без вопросов.
+func masteredTop(dir string, sets ...map[string]stateFile) map[string]bool {
+	m := map[string]bool{}
+	add := func(rel string) {
+		if i := strings.Index(rel, "/"); i > 0 {
+			m[strings.ToLower(rel[:i])] = true
+		}
+	}
+	for _, set := range sets {
+		for k := range set {
+			add(filepath.ToSlash(k))
+		}
+	}
+	if ents, err := os.ReadDir(dir); err == nil {
+		for _, e := range ents {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				m[strings.ToLower(e.Name())] = true
+			}
+		}
+	}
+	return m
+}
+
 func conflictName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
@@ -629,6 +661,9 @@ func (a *App) syncOnce(verbose bool) {
 	dir := a.localDir
 	tok := a.token
 	list := append([]FolderRule(nil), a.folderRules...)
+	askNew := !a.autoNewFolders
+	needMF := a.needManifest
+	a.needManifest = false
 	a.mu.Unlock()
 	if dir == "" {
 		return
@@ -660,7 +695,30 @@ func (a *App) syncOnce(verbose bool) {
 		}
 		srv[c.Name] = c
 	}
+	if needMF {
+		if mv, mf, err := fetchManifest(base, tok); err == nil {
+			for _, m := range mf {
+				if _, ok := sanitizeRel(m.Name); !ok {
+					continue
+				}
+				if _, ok := srv[m.Name]; !ok {
+					srv[m.Name] = m
+				}
+			}
+			if mv > srvVer {
+				srvVer = mv
+			}
+			a.log(fmt.Sprintf("полная сверка с сервером: файлов %d", len(mf)))
+		} else {
+			a.log("не удалось перечитать манифест: " + err.Error())
+		}
+	}
 	local := localScan(dir, st, rules)
+
+	var mastered map[string]bool
+	if askNew {
+		mastered = masteredTop(dir, st.Files, local)
+	}
 
 	names := map[string]bool{}
 	for n := range local {
@@ -677,7 +735,7 @@ func (a *App) syncOnce(verbose bool) {
 	}
 
 	next := clientState{ServerVersion: st.ServerVersion, Files: map[string]stateFile{}}
-	up, down, del, skipped := 0, 0, 0, 0
+	up, down, del, skipped, waited := 0, 0, 0, 0, 0
 
 	for name := range names {
 		ls, hasLocal := local[name]
@@ -691,6 +749,15 @@ func (a *App) syncOnce(verbose bool) {
 				next.Files[name] = ss
 			}
 			skipped++
+			continue
+		}
+		if pendingBlocked(name, askNew, rules, mastered) {
+			// «сначала спрашивать»: папка ждёт решения и пока не скачивается
+			if hasState {
+				next.Files[name] = ss
+			}
+			skipped++
+			waited++
 			continue
 		}
 		// carry переносит прежнее состояние, когда файл сейчас не трогаем.
@@ -918,8 +985,8 @@ func (a *App) syncOnce(verbose bool) {
 	a.count = len(next.Files)
 	a.mu.Unlock()
 	if verbose {
-		a.log(fmt.Sprintf("синк: сервер %s, локальных %d, изменений %d, вверх %d, вниз %d, удалено %d, пропущено по режимам %d",
-			base, len(local), len(changes), up, down, del, skipped))
+		a.log(fmt.Sprintf("синк: сервер %s, локальных %d, изменений %d, вверх %d, вниз %d, удалено %d, пропущено по режимам %d, ждут решения %d",
+			base, len(local), len(changes), up, down, del, skipped, waited))
 	}
 }
 
@@ -980,6 +1047,34 @@ func fetchChanges(base, token string, since int64) (int64, []manifestFile, error
 		return 0, nil, err
 	}
 	return payload.Version, payload.Changes, nil
+}
+
+// fetchManifest запрашивает полный список файлов пользователя (без содержимого).
+func fetchManifest(base, token string) (int64, []manifestFile, error) {
+	req, err := http.NewRequest("GET", strings.TrimRight(base, "/")+"/manifest", nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	authHeader(req, token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return 0, nil, fmt.Errorf("неверный или отозванный токен")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, nil, fmt.Errorf("статус %d", resp.StatusCode)
+	}
+	var payload struct {
+		Version int64          `json:"version"`
+		Files   []manifestFile `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return 0, nil, err
+	}
+	return payload.Version, payload.Files, nil
 }
 
 func uploadFile(base, dir, name, token string) (string, int64, int64, error) {
@@ -1387,6 +1482,7 @@ func (a *App) AddFolderRule(path, mode string) error {
 	a.mu.Unlock()
 	a.persistConfig()
 	a.log("папка «" + clean + "»: режим — " + folderModeTitle(mode))
+	a.markManifestResync()
 	go a.syncOnce(false)
 	return nil
 }
@@ -1410,6 +1506,7 @@ func (a *App) SetFolderRuleMode(path, mode string) error {
 	a.mu.Unlock()
 	a.persistConfig()
 	a.log("папка «" + clean + "»: режим — " + folderModeTitle(mode))
+	a.markManifestResync()
 	go a.syncOnce(false)
 	return nil
 }
@@ -1430,8 +1527,195 @@ func (a *App) RemoveFolderRule(path string) error {
 	a.mu.Unlock()
 	a.persistConfig()
 	a.log("папка «" + clean + "»: правило убрано — снова в обе стороны")
+	a.markManifestResync()
 	go a.syncOnce(false)
 	return nil
+}
+
+// markManifestResync ставит пометку «перечитать полный манифест»: так после
+// смены правил клиент сразу подтягивает всё, что теперь разрешено.
+func (a *App) markManifestResync() {
+	a.mu.Lock()
+	a.needManifest = true
+	a.mu.Unlock()
+}
+
+// AutoNewFoldersEnabled сообщает, скачиваются ли новые папки сервера автоматически.
+func (a *App) AutoNewFoldersEnabled() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.autoNewFolders
+}
+
+// SetAutoNewFolders включает/выключает автоматическое скачивание новых папок
+// сервера. Выключено — папки ждут решения на закладке «Синхронизация».
+func (a *App) SetAutoNewFolders(on bool) error {
+	a.mu.Lock()
+	a.autoNewFolders = on
+	a.mu.Unlock()
+	a.persistConfig()
+	if on {
+		a.log("новые папки сервера будут скачиваться автоматически")
+	} else {
+		a.log("новые папки сервера ждут решения на закладке «Синхронизация»")
+	}
+	a.markManifestResync()
+	go a.syncOnce(false)
+	return nil
+}
+
+// ResyncServer перечитывает полный список файлов сервера и запускает синхронизацию.
+func (a *App) ResyncServer() {
+	a.markManifestResync()
+	go a.syncOnce(true)
+}
+
+// ServerFolderNode — папка на сервере (для закладки «Синхронизация»).
+type ServerFolderNode struct {
+	Path    string `json:"path"`
+	Files   int    `json:"files"`
+	Bytes   int64  `json:"bytes"`
+	Local   bool   `json:"local"`
+	Rule    string `json:"rule"`
+	Mode    string `json:"mode"`
+	Pending bool   `json:"pending"`
+}
+
+// ServerFolders отдаёт интерфейсу дерево папок сервера со статусами.
+// Полный манифест запрашивается по требованию (при открытии закладки), без
+// фонового опроса.
+func (a *App) ServerFolders() ([]ServerFolderNode, error) {
+	a.mu.Lock()
+	dir := a.localDir
+	tok := a.token
+	askNew := !a.autoNewFolders
+	list := append([]FolderRule(nil), a.folderRules...)
+	base := fmt.Sprintf("http://%s:%d", a.host, a.port)
+	a.mu.Unlock()
+	if dir == "" {
+		return nil, fmt.Errorf("не задана папка синхронизации")
+	}
+	_, files, err := fetchManifest(base, tok)
+	if err != nil {
+		return nil, err
+	}
+	rules := parseFolderRules(list)
+	st := loadState(dir)
+	mastered := masteredTop(dir, st.Files)
+
+	type agg struct {
+		files int
+		bytes int64
+	}
+	m := map[string]*agg{}
+	for _, f := range files {
+		if _, ok := sanitizeRel(f.Name); !ok {
+			continue
+		}
+		parts := strings.Split(f.Name, "/")
+		if len(parts) < 2 {
+			continue
+		}
+		for i := 1; i < len(parts); i++ {
+			p := strings.Join(parts[:i], "/")
+			if m[p] == nil {
+				m[p] = &agg{}
+			}
+			m[p].files++
+			m[p].bytes += f.Size
+		}
+	}
+	out := make([]ServerFolderNode, 0, len(m))
+	for p, s := range m {
+		node := ServerFolderNode{Path: p, Files: s.files, Bytes: s.bytes}
+		if fi, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil && fi.IsDir() {
+			node.Local = true
+		} else if hasStatePrefix(st, p) {
+			node.Local = true
+		}
+		if r, ok := rules.explicit(p); ok {
+			node.Rule = r
+		}
+		node.Mode = rules.modeFor(p)
+		top := p
+		if i := strings.Index(p, "/"); i > 0 {
+			top = p[:i]
+		}
+		node.Pending = askNew && !rules.covered(p) && !node.Local && !mastered[strings.ToLower(top)]
+		out = append(out, node)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// hasStatePrefix сообщает, есть ли в состоянии записи о файлах внутри папки.
+func hasStatePrefix(st clientState, prefix string) bool {
+	p := strings.ToLower(prefix) + "/"
+	for k := range st.Files {
+		if strings.HasPrefix(strings.ToLower(filepath.ToSlash(k)), p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClearLocalCopy удаляет локальные файлы папки (данные остаются на сервере)
+// и забывает её состояние, чтобы синхронизация не сочла файлы удалёнными на сервере.
+func (a *App) ClearLocalCopy(rel string) (int, error) {
+	clean, ok := normalizeRulePath(rel)
+	if !ok {
+		return 0, fmt.Errorf("недопустимый путь папки")
+	}
+	a.mu.Lock()
+	dir := a.localDir
+	a.mu.Unlock()
+	if dir == "" {
+		return 0, fmt.Errorf("не задана папка синхронизации")
+	}
+	root := filepath.Clean(filepath.Join(dir, filepath.FromSlash(clean)))
+	if root == filepath.Clean(dir) || !strings.HasPrefix(root, filepath.Clean(dir)+string(filepath.Separator)) {
+		return 0, fmt.Errorf("недопустимый путь папки")
+	}
+	n := 0
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != root && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		if os.Remove(p) == nil {
+			n++
+		}
+		return nil
+	})
+	st := loadState(dir)
+	prefix := strings.ToLower(clean) + "/"
+	removed := 0
+	for k := range st.Files {
+		if strings.HasPrefix(strings.ToLower(filepath.ToSlash(k)), prefix) {
+			delete(st.Files, k)
+			removed++
+		}
+	}
+	if removed > 0 {
+		saveState(dir, st)
+	}
+	cur := root
+	for cur != filepath.Clean(dir) && strings.HasPrefix(cur, filepath.Clean(dir)+string(filepath.Separator)) {
+		if err := os.Remove(cur); err != nil {
+			break
+		}
+		cur = filepath.Dir(cur)
+	}
+	a.log(fmt.Sprintf("убрана локальная копия папки «%s»: файлов %d", clean, n))
+	return n, nil
 }
 
 // blockSize — размер блока для дельта-передачи (4 МиБ).

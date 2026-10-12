@@ -14,6 +14,11 @@ var (
 	trayMenuStatus  *systray.MenuItem
 	trayMenuSummary *systray.MenuItem
 	trayMenuToggle  *systray.MenuItem
+
+	// последние выведенные подписи — SetTitle вызываем только при изменении
+	trayLastStatus  string
+	trayLastSummary string
+	trayLastToggle  string
 )
 
 const trayAppTitle = "POSCloud · Клиент"
@@ -108,18 +113,27 @@ func (a *App) updateTrayMenu() {
 	count, last, errMsg := a.count, a.lastSync, a.errMsg
 	a.mu.Unlock()
 
-	trayMenuStatus.SetTitle("Статус: " + syncStateLabel(running, online, errMsg))
+	if s := "Статус: " + syncStateLabel(running, online, errMsg); s != trayLastStatus {
+		trayLastStatus = s
+		trayMenuStatus.SetTitle(s)
+	}
 
 	summary := fmt.Sprintf("Локальных файлов: %d", count)
 	if last != "" {
 		summary += " · последний обмен " + last
 	}
-	trayMenuSummary.SetTitle(summary)
+	if summary != trayLastSummary {
+		trayLastSummary = summary
+		trayMenuSummary.SetTitle(summary)
+	}
 
+	toggle := "Продолжить синхронизацию"
 	if running {
-		trayMenuToggle.SetTitle("Приостановить синхронизацию")
-	} else {
-		trayMenuToggle.SetTitle("Продолжить синхронизацию")
+		toggle = "Приостановить синхронизацию"
+	}
+	if toggle != trayLastToggle {
+		trayLastToggle = toggle
+		trayMenuToggle.SetTitle(toggle)
 	}
 }
 

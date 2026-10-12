@@ -99,3 +99,51 @@ func TestParseFolderRulesDropsInvalid(t *testing.T) {
 		t.Fatalf("последний дубль должен побеждать: %+v", r.rules[0])
 	}
 }
+
+func TestFolderRulesCovered(t *testing.T) {
+	r := parseFolderRules([]FolderRule{
+		{Path: "Фото", Mode: folderBoth},
+		{Path: "Музыка/Рок", Mode: folderUp},
+	})
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"Фото", true},
+		{"Фото/снимок.jpg", true},
+		{"Фото/2024/снимок.jpg", true},
+		{"Музыка", false},
+		{"Музыка/Рок", true},
+		{"Музыка/Рок/песня.mp3", true},
+		{"Музыка/Джаз/песня.mp3", false},
+		{"Заметки/текст.txt", false},
+	}
+	for _, c := range cases {
+		if got := r.covered(c.path); got != c.want {
+			t.Errorf("covered(%q) = %v, ожидалось %v", c.path, got, c.want)
+		}
+	}
+}
+
+func TestPendingBlocked(t *testing.T) {
+	r := parseFolderRules([]FolderRule{{Path: "Фото", Mode: folderBoth}})
+	mastered := map[string]bool{"документы": true}
+	if pendingBlocked("Документы/отчёт.docx", true, r, mastered) {
+		t.Fatal("освоенная папка не должна ждать решения (регистр не важен)")
+	}
+	if !pendingBlocked("Новая/файл.txt", true, r, mastered) {
+		t.Fatal("незнакомая папка должна ждать решения")
+	}
+	if !pendingBlocked("Новая/вложенная/файл.txt", true, r, mastered) {
+		t.Fatal("вложенный файл незнакомой папки тоже ждёт решения")
+	}
+	if pendingBlocked("Фото/снимок.jpg", true, r, mastered) {
+		t.Fatal("папка с правилом не ждёт решения")
+	}
+	if pendingBlocked("заметка.txt", true, r, mastered) {
+		t.Fatal("файл в корне не ждёт решения")
+	}
+	if pendingBlocked("Новая/файл.txt", false, r, mastered) {
+		t.Fatal("при выключенном режиме «спрашивать» ожиданий нет")
+	}
+}

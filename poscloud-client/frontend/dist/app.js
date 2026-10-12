@@ -6,7 +6,7 @@ let autostartLoaded = false;
 let autoRunLoaded = false;
 let shotsLoaded = false;
 let editAfterLoaded = false;
-let folderRulesLoaded = false;
+let syncLoaded = false;
 
 async function call(method, ...args) {
   try {
@@ -31,7 +31,7 @@ function activateTab(id) {
   document.querySelectorAll(".pane").forEach((x) => x.classList.toggle("active", x.id === id));
   if (id === "tab-log") refreshLogs();
   if (id === "tab-files") refreshFiles();
-  if (id === "tab-folders") renderFolderRules();
+  if (id === "tab-sync") renderSync();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => activateTab(t.dataset.tab)));
 
@@ -274,7 +274,7 @@ $("cliIgnoreClear").addEventListener("click", async () => {
 });
 $("cliIgnoreCheck").addEventListener("click", async () => { await refreshIgnoreStats(); });
 
-/* ---------- папки: режимы синхронизации ---------- */
+/* ---------- синхронизация: папки сервера и правила ---------- */
 const folderModes = [
   { id: "both", title: "В обе стороны" },
   { id: "up", title: "Только отправлять" },
@@ -283,46 +283,112 @@ const folderModes = [
 ];
 let folderPickerRel = "";
 
-async function renderFolderRules() {
-  const rules = (await call("ListFolderRules")) || [];
-  const box = $("folderRulesList");
+function syncStatusOf(n) {
+  if (n.pending) return { text: "Ждёт решения", cls: "pend" };
+  if (n.mode === "off") return { text: "Не синхронизировать", cls: "offf" };
+  if (n.mode === "up") return { text: "Только отправлять", cls: "" };
+  if (n.mode === "down") return { text: "Только получать", cls: "" };
+  if (n.local) return { text: "Синхронизируется", cls: "okk" };
+  return { text: "Будет скачана", cls: "" };
+}
+
+async function renderSync() {
+  const box = $("syncList");
   if (!box) return;
+  const [tree, rules] = await Promise.all([call("ServerFolders"), call("ListFolderRules")]);
+  const rows = [];
+  const serverPaths = new Set();
+  if (Array.isArray(tree)) {
+    tree.forEach((n) => {
+      serverPaths.add(String(n.path).toLowerCase());
+      rows.push({ path: n.path, files: n.files, bytes: n.bytes, local: !!n.local, rule: n.rule || "", mode: n.mode, pending: !!n.pending });
+    });
+  }
+  (rules || []).forEach((r) => {
+    if (!serverPaths.has(String(r.path).toLowerCase())) {
+      rows.push({ path: r.path, files: 0, bytes: 0, local: false, rule: r.mode, mode: r.mode, pending: false, onlyRule: true });
+    }
+  });
   box.innerHTML = "";
-  if (!rules.length) {
-    box.innerHTML = '<div class="empty">нет правил — все подпапки синхронизируются в обе стороны</div>';
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">' + (Array.isArray(tree) ? "на сервере пока нет папок" : "не удалось получить список с сервера (нет связи?)") + "</div>";
     return;
   }
-  rules.forEach((r) => {
+  rows.forEach((n) => {
     const row = document.createElement("div");
     row.className = "rule-row";
+    const depth = n.path.split("/").length;
     const nm = document.createElement("span");
     nm.className = "rule-path";
-    nm.textContent = r.path;
+    nm.style.marginLeft = ((depth - 1) * 12) + "px";
+    nm.textContent = "▸ " + n.path.split("/").pop();
+    nm.title = n.path;
+    const meta = document.createElement("span");
+    meta.className = "sync-meta";
+    meta.textContent = n.onlyRule ? "правило" : n.files + " ф. · " + fmtSize(n.bytes);
+    const stt = syncStatusOf(n);
+    const badge = document.createElement("span");
+    badge.className = "sync-status " + stt.cls;
+    badge.textContent = stt.text;
+    row.appendChild(nm);
+    row.appendChild(meta);
+    row.appendChild(badge);
+    if (n.pending) {
+      const dl = document.createElement("button");
+      dl.className = "btn small primary";
+      dl.textContent = "Скачать";
+      dl.addEventListener("click", async () => {
+        await call("AddFolderRule", n.path, "both");
+        flash("папка «" + n.path + "» будет скачана", true);
+        await renderSync();
+      });
+      row.appendChild(dl);
+    }
     const sel = document.createElement("select");
     sel.className = "rule-mode";
     folderModes.forEach((m) => {
       const o = document.createElement("option");
       o.value = m.id;
       o.textContent = m.title;
-      if (m.id === r.mode) o.selected = true;
+      if (m.id === (n.rule || n.mode)) o.selected = true;
       sel.appendChild(o);
     });
     sel.addEventListener("change", async () => {
-      await call("SetFolderRuleMode", r.path, sel.value);
+      const val = sel.value;
+      await call("AddFolderRule", n.path, val);
+      if (val === "off" && n.local) {
+        if (confirm("Удалить локальную копию папки «" + n.path + "», чтобы освободить место?\n\nДанные на сервере останутся.")) {
+          await call("ClearLocalCopy", n.path);
+        }
+      }
       flash("режим папки сохранён", true);
-      await renderFolderRules();
+      await renderSync();
     });
-    const del = document.createElement("button");
-    del.className = "del";
-    del.textContent = "Убрать";
-    del.addEventListener("click", async () => {
-      await call("RemoveFolderRule", r.path);
-      flash("правило убрано — папка снова в обе стороны", true);
-      await renderFolderRules();
-    });
-    row.appendChild(nm);
     row.appendChild(sel);
-    row.appendChild(del);
+    if (n.rule) {
+      const rst = document.createElement("button");
+      rst.className = "del";
+      rst.textContent = "Сбросить";
+      rst.title = "убрать правило";
+      rst.addEventListener("click", async () => {
+        await call("RemoveFolderRule", n.path);
+        await renderSync();
+      });
+      row.appendChild(rst);
+    }
+    if (n.local && n.mode === "off") {
+      const clr = document.createElement("button");
+      clr.className = "del";
+      clr.textContent = "Убрать копию";
+      clr.title = "удалить локальную копию папки";
+      clr.addEventListener("click", async () => {
+        if (!confirm("Удалить локальную копию папки «" + n.path + "»?\n\nДанные на сервере останутся.")) return;
+        await call("ClearLocalCopy", n.path);
+        flash("локальная копия удалена", true);
+        await renderSync();
+      });
+      row.appendChild(clr);
+    }
     box.appendChild(row);
   });
 }
@@ -353,8 +419,8 @@ async function renderFolderPicker() {
       }
       await call("AddFolderRule", it.path, "both");
       $("folderPicker").hidden = true;
-      flash("папка добавлена — выберите режим", true);
-      await renderFolderRules();
+      flash("папка добавлена — выберите режим в списке", true);
+      await renderSync();
     });
     row.appendChild(nm);
     row.appendChild(add);
@@ -374,6 +440,16 @@ $("folderPickerUp").addEventListener("click", async () => {
   parts.pop();
   folderPickerRel = parts.join("/");
   await renderFolderPicker();
+});
+$("syncRefresh").addEventListener("click", async () => {
+  await call("ResyncServer");
+  flash("запрошен список с сервера и синхронизация", true);
+  await renderSync();
+});
+$("autoNewFolders").addEventListener("change", async (e) => {
+  await call("SetAutoNewFolders", e.target.checked);
+  flash(e.target.checked ? "новые папки будут скачиваться автоматически" : "новые папки будут ждать решения", true);
+  await renderSync();
 });
 
 /* ---------- снимки экрана ---------- */
@@ -843,6 +919,8 @@ $("cliTest").addEventListener("click", async () => {
 async function refreshFiles() { renderFiles((await call("LocalFiles")) || []); }
 
 async function refresh() {
+  if (document.hidden) return;
+  if (await call("WindowHidden")) return;
   const [st, files, logs, trs] = await Promise.all([call("GetClientState"), call("LocalFiles"), call("GetLogs"), call("GetTransfers")]);
   renderClient(st); renderFiles(files, trs || []); renderLogs(logs);
   $("pulse").className = "pulse" + (st && st.running ? " on" : "");
@@ -876,9 +954,9 @@ async function refresh() {
     const ea = await call("EditAfterShotEnabled");
     if (typeof ea === "boolean") { $("editAfterShot").checked = ea; editAfterLoaded = true; }
   }
-  if (!folderRulesLoaded) {
-    const fr = await call("ListFolderRules");
-    if (Array.isArray(fr)) { folderRulesLoaded = true; await renderFolderRules(); }
+  if (!syncLoaded) {
+    const an = await call("AutoNewFoldersEnabled");
+    if (typeof an === "boolean") { $("autoNewFolders").checked = an; syncLoaded = true; }
   }
   // захват, начатый из трея или горячей клавишей: выбор области или редактор
   if ($("shotOverlay").hidden && $("editOverlay").hidden) {
@@ -890,4 +968,8 @@ async function refresh() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => { refresh(); setInterval(refresh, 500); });
+window.addEventListener("DOMContentLoaded", () => {
+  refresh();
+  setInterval(() => { if (!document.hidden) refresh(); }, 1000);
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });

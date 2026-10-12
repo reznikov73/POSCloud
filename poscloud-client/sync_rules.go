@@ -120,3 +120,43 @@ func (r folderRules) canDownload(rel string) bool {
 func (r folderRules) isOff(rel string) bool {
 	return r.modeFor(rel) == folderOff
 }
+
+// covered сообщает, накрыт ли путь хоть каким-нибудь правилом (сам путь или любой родитель).
+func (r folderRules) covered(rel string) bool {
+	name := strings.ToLower(rel)
+	for _, rule := range r.rules {
+		rp := strings.ToLower(rule.Path)
+		if name == rp || strings.HasPrefix(name, rp+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// explicit возвращает режим правила, заданного ровно для этого пути.
+func (r folderRules) explicit(rel string) (string, bool) {
+	for _, rule := range r.rules {
+		if strings.EqualFold(rule.Path, rel) {
+			return rule.Mode, true
+		}
+	}
+	return "", false
+}
+
+// pendingBlocked сообщает, нужно ли отложить скачивание файла: включён режим
+// «сначала спрашивать», на путь нет ни одного правила и верхнеуровневая папка
+// ещё не освоена на этом ПК. Файлы в корне не откладываются.
+// mastered — множество освоенных верхнеуровневых папок (в нижнем регистре).
+func pendingBlocked(rel string, ask bool, r folderRules, mastered map[string]bool) bool {
+	if !ask {
+		return false
+	}
+	i := strings.Index(rel, "/")
+	if i <= 0 {
+		return false
+	}
+	if r.covered(rel) {
+		return false
+	}
+	return !mastered[strings.ToLower(rel[:i])]
+}

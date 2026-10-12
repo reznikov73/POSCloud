@@ -33,7 +33,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="tab-client">Клиент</button>
     <button class="tab" data-tab="tab-ignore">Исключения</button>
-    <button class="tab" data-tab="tab-folders">Папки</button>
+    <button class="tab" data-tab="tab-sync">Синхронизация</button>
     <button class="tab" data-tab="tab-shots">Снимки</button>
     <button class="tab" data-tab="tab-files">Файлы</button>
     <button class="tab" data-tab="tab-log">Журнал</button>
@@ -124,16 +124,18 @@
     </div>
   </div>
 
-  <!-- ===== ПАПКИ ===== -->
-  <div class="pane" id="tab-folders">
+  <!-- ===== СИНХРОНИЗАЦИЯ ===== -->
+  <div class="pane" id="tab-sync">
     <div class="grid">
       <div class="card">
-        <div class="card-title">Режимы папок</div>
-        <div class="hint-muted">Для подпапок основной папки можно выбрать режим: в обе стороны (по умолчанию), только отправлять на сервер, только получать с сервера или не синхронизировать вовсе. Правила действуют на этом компьютере.</div>
-        <div class="folder-rules" id="folderRulesList"></div>
-        <div class="row-btns">
-          <button class="btn ghost" id="folderAdd">Добавить папку…</button>
+        <div class="card-title">Синхронизация папок</div>
+        <div class="hint-muted">Папки с сервера видны здесь сразу. Новые папки не скачиваются, пока вы не выберете для них режим (или не включите автоматическое скачивание). Правила действуют только на этом компьютере.</div>
+        <label class="autostart"><input type="checkbox" id="autoNewFolders"/><span>Скачивать новые папки сервера автоматически</span></label>
+        <div class="row-btns" style="margin-top:6px">
+          <button class="btn ghost" id="syncRefresh">Обновить с сервера</button>
+          <button class="btn ghost" id="folderAdd">Добавить локальную папку…</button>
         </div>
+        <div class="folder-rules" id="syncList"></div>
         <div class="picker" id="folderPicker" hidden>
           <div class="picker-head">
             <span class="picker-path" id="folderPickerPath">корень папки синхронизации</span>
@@ -144,7 +146,7 @@
           </div>
           <div class="picker-list" id="folderPickerList"></div>
         </div>
-        <div class="hint-muted">«Только отправлять» удобно для папок-источников (например, сканы на рабочем ПК): изменения этого устройства уходят на сервер, чужие — не применяются. «Только получать» — зеркало сервера: локальные правки не выгружаются, а случайно удалённый файл скачается заново.</div>
+        <div class="hint-muted">«Ждёт решения» — папка есть на сервере и пока не скачивается: выберите режим справа или нажмите «Скачать». «Убрать копию» удаляет локальные файлы папки, данные на сервере остаются.</div>
       </div>
     </div>
   </div>

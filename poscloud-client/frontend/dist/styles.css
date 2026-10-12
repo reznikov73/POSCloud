@@ -181,3 +181,8 @@ table.files td:last-child{text-align:right;width:1%;white-space:nowrap}
 .rule-path{flex:1;font-size:11.5px;font-weight:600;word-break:break-all}
 .rule-mode{flex:0 0 170px;font-size:11.5px;padding:3px 6px;border:1px solid var(--field-line);border-radius:5px;background:#fff;color:var(--txt);outline:none}
 .rule-mode:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.14)}
+.sync-status{flex:0 0 auto;font-size:10.5px;color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:1px 7px;background:#fff;white-space:nowrap}
+.sync-status.pend{border-color:rgba(221,91,0,.4);color:var(--warn);background:rgba(221,91,0,.05)}
+.sync-status.offf{color:var(--faint)}
+.sync-status.okk{border-color:rgba(26,174,57,.35);color:var(--ok);background:rgba(26,174,57,.05)}
+.sync-meta{color:var(--faint);font-size:10.5px;white-space:nowrap}
