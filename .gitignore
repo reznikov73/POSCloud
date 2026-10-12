@@ -1,4 +1,4 @@
-# Build outputs
+# Сборка
 build/bin/
 **/build/bin/
 *.exe
@@ -9,7 +9,7 @@ build/bin/
 *~
 *.exe~
 
-# Runtime data / logs
+# Рабочие данные и журналы
 pubClient/
 pubServer/
 *.log
@@ -22,21 +22,8 @@ users.json
 .poscloud-state.json
 .poscloud-cache/
 
-# Служебное состояние инструментов разработки (к проекту не относится)
-.gigacode_vsc/
-.opencode/
-.autoclaw/
-.cluster/
-.agents/
-
-# Файлы «домашнего» воркспейса агента (шаблон, не часть POSCloud)
-AGENTS.md
-SOUL.md
-TOOLS.md
-IDENTITY.md
-USER.md
-HEARTBEAT.md
-MEMORY.md
+# Результат сборки установщика
+installer/out/
 
 # OS / editor
 Thumbs.db
