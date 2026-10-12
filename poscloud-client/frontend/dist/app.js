@@ -6,6 +6,7 @@ let autostartLoaded = false;
 let autoRunLoaded = false;
 let shotsLoaded = false;
 let editAfterLoaded = false;
+let folderRulesLoaded = false;
 
 async function call(method, ...args) {
   try {
@@ -30,6 +31,7 @@ function activateTab(id) {
   document.querySelectorAll(".pane").forEach((x) => x.classList.toggle("active", x.id === id));
   if (id === "tab-log") refreshLogs();
   if (id === "tab-files") refreshFiles();
+  if (id === "tab-folders") renderFolderRules();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => activateTab(t.dataset.tab)));
 
@@ -271,6 +273,108 @@ $("cliIgnoreClear").addEventListener("click", async () => {
   await refreshIgnoreStats();
 });
 $("cliIgnoreCheck").addEventListener("click", async () => { await refreshIgnoreStats(); });
+
+/* ---------- папки: режимы синхронизации ---------- */
+const folderModes = [
+  { id: "both", title: "В обе стороны" },
+  { id: "up", title: "Только отправлять" },
+  { id: "down", title: "Только получать" },
+  { id: "off", title: "Не синхронизировать" },
+];
+let folderPickerRel = "";
+
+async function renderFolderRules() {
+  const rules = (await call("ListFolderRules")) || [];
+  const box = $("folderRulesList");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!rules.length) {
+    box.innerHTML = '<div class="empty">нет правил — все подпапки синхронизируются в обе стороны</div>';
+    return;
+  }
+  rules.forEach((r) => {
+    const row = document.createElement("div");
+    row.className = "rule-row";
+    const nm = document.createElement("span");
+    nm.className = "rule-path";
+    nm.textContent = r.path;
+    const sel = document.createElement("select");
+    sel.className = "rule-mode";
+    folderModes.forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.id;
+      o.textContent = m.title;
+      if (m.id === r.mode) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", async () => {
+      await call("SetFolderRuleMode", r.path, sel.value);
+      flash("режим папки сохранён", true);
+      await renderFolderRules();
+    });
+    const del = document.createElement("button");
+    del.className = "del";
+    del.textContent = "Убрать";
+    del.addEventListener("click", async () => {
+      await call("RemoveFolderRule", r.path);
+      flash("правило убрано — папка снова в обе стороны", true);
+      await renderFolderRules();
+    });
+    row.appendChild(nm);
+    row.appendChild(sel);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+async function renderFolderPicker() {
+  const all = (await call("ListSyncEntries", folderPickerRel)) || [];
+  const items = all.filter((x) => x.isDir);
+  $("folderPickerPath").textContent = folderPickerRel ? folderPickerRel : "корень папки синхронизации";
+  const box = $("folderPickerList");
+  box.innerHTML = "";
+  if (!items.length) { box.innerHTML = '<div class="empty">нет подпапок</div>'; return; }
+  items.forEach((it) => {
+    const row = document.createElement("div");
+    row.className = "picker-row";
+    const nm = document.createElement("span");
+    nm.className = "picker-name dir";
+    nm.textContent = "▸ " + it.name;
+    nm.title = "открыть папку";
+    nm.addEventListener("click", async () => { folderPickerRel = it.path; await renderFolderPicker(); });
+    const add = document.createElement("button");
+    add.className = "btn small";
+    add.textContent = "Выбрать";
+    add.addEventListener("click", async () => {
+      const rules = (await call("ListFolderRules")) || [];
+      if (rules.some((x) => String(x.path).toLowerCase() === it.path.toLowerCase())) {
+        flash("эта папка уже есть в правилах", false);
+        return;
+      }
+      await call("AddFolderRule", it.path, "both");
+      $("folderPicker").hidden = true;
+      flash("папка добавлена — выберите режим", true);
+      await renderFolderRules();
+    });
+    row.appendChild(nm);
+    row.appendChild(add);
+    box.appendChild(row);
+  });
+}
+
+$("folderAdd").addEventListener("click", async () => {
+  folderPickerRel = "";
+  $("folderPicker").hidden = false;
+  await renderFolderPicker();
+});
+$("folderPickerClose").addEventListener("click", () => { $("folderPicker").hidden = true; });
+$("folderPickerUp").addEventListener("click", async () => {
+  if (!folderPickerRel) return;
+  const parts = folderPickerRel.split("/");
+  parts.pop();
+  folderPickerRel = parts.join("/");
+  await renderFolderPicker();
+});
 
 /* ---------- снимки экрана ---------- */
 let shotCapture = null;   // начатый выбор области
@@ -771,6 +875,10 @@ async function refresh() {
   if (!editAfterLoaded) {
     const ea = await call("EditAfterShotEnabled");
     if (typeof ea === "boolean") { $("editAfterShot").checked = ea; editAfterLoaded = true; }
+  }
+  if (!folderRulesLoaded) {
+    const fr = await call("ListFolderRules");
+    if (Array.isArray(fr)) { folderRulesLoaded = true; await renderFolderRules(); }
   }
   // захват, начатый из трея или горячей клавишей: выбор области или редактор
   if ($("shotOverlay").hidden && $("editOverlay").hidden) {

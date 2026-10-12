@@ -85,6 +85,7 @@ type App struct {
 	editAfterShot bool // открывать редактор после снимка
 	autoRun       bool // начинать синхронизацию сразу при открытии программы
 	hotkeys       HotkeyConfig
+	folderRules   []FolderRule // режимы подпапок (выборочная синхронизация)
 	stopCh        chan struct{}
 	lastSync      string
 	errMsg        string
@@ -210,6 +211,8 @@ type savedConfig struct {
 	Hotkeys *HotkeyConfig `json:"hotkeys,omitempty"`
 	// nil — редактор после снимка выключен (по умолчанию сразу сохраняем)
 	EditAfterShot *bool `json:"editAfterShot,omitempty"`
+	// nil — правила папок не задавались (все подпапки синхронизируются в обе стороны)
+	FolderRules []FolderRule `json:"folderRules,omitempty"`
 }
 
 func (a *App) loadConfig() {
@@ -246,13 +249,14 @@ func (a *App) loadConfig() {
 		if c.EditAfterShot != nil {
 			a.editAfterShot = *c.EditAfterShot
 		}
+		a.folderRules = c.FolderRules
 	}
 }
 
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys, EditAfterShot: &a.editAfterShot}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys, EditAfterShot: &a.editAfterShot, FolderRules: a.folderRules}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 
@@ -446,7 +450,7 @@ func fileSize(path string) int64 {
 
 // localScan возвращает карту «имя → состояние» по локальной папке.
 // Если файл не менялся (совпадают размер и время), хэш берётся из состояния без пересчёта.
-func localScan(dir string, st clientState) map[string]stateFile {
+func localScan(dir string, st clientState, rules folderRules) map[string]stateFile {
 	out := map[string]stateFile{}
 	ign := loadIgnore(dir)
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -462,7 +466,7 @@ func localScan(dir string, st clientState) map[string]stateFile {
 			if p == dir {
 				return nil
 			}
-			if strings.HasPrefix(d.Name(), ".") || ign.match(key) {
+			if strings.HasPrefix(d.Name(), ".") || ign.match(key) || rules.isOff(key) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -624,12 +628,14 @@ func (a *App) syncOnce(verbose bool) {
 	a.mu.Lock()
 	dir := a.localDir
 	tok := a.token
+	list := append([]FolderRule(nil), a.folderRules...)
 	a.mu.Unlock()
 	if dir == "" {
 		return
 	}
 	_ = os.MkdirAll(dir, 0755)
 	base := a.baseURL()
+	rules := parseFolderRules(list)
 
 	st := loadState(dir)
 
@@ -654,7 +660,7 @@ func (a *App) syncOnce(verbose bool) {
 		}
 		srv[c.Name] = c
 	}
-	local := localScan(dir, st)
+	local := localScan(dir, st, rules)
 
 	names := map[string]bool{}
 	for n := range local {
@@ -671,16 +677,40 @@ func (a *App) syncOnce(verbose bool) {
 	}
 
 	next := clientState{ServerVersion: st.ServerVersion, Files: map[string]stateFile{}}
-	up, down, del := 0, 0, 0
+	up, down, del, skipped := 0, 0, 0, 0
 
 	for name := range names {
 		ls, hasLocal := local[name]
 		ss, hasState := st.Files[name]
 		cs, hasSrv := srv[name]
 
+		mode := rules.modeFor(name)
+		if mode == folderOff {
+			// папка отключена: файл не трогаем, прежнее состояние бережём на случай включения
+			if hasState {
+				next.Files[name] = ss
+			}
+			skipped++
+			continue
+		}
+		// carry переносит прежнее состояние, когда файл сейчас не трогаем.
+		carry := func() {
+			if hasState {
+				next.Files[name] = ss
+			}
+		}
+		allowUp := mode == folderBoth || mode == folderUp
+		allowDown := mode == folderBoth || mode == folderDown
+
 		switch {
 		// --- сервер удалил файл (tombstone) ---
 		case hasSrv && cs.Deleted:
+			if !allowDown {
+				// «только отправлять»: удаления с сервера не применяем
+				carry()
+				skipped++
+				continue
+			}
 			if hasLocal {
 				if hasState && ls.Hash == ss.Hash {
 					_ = os.Remove(localPath(dir, name))
@@ -690,9 +720,11 @@ func (a *App) syncOnce(verbose bool) {
 				} else {
 					cf := conflictName(name)
 					_ = os.Rename(localPath(dir, name), localPath(dir, cf))
-					if h, v, mt, err := uploadFile(base, dir, cf, tok); err == nil {
-						next.Files[cf] = stateFile{Hash: h, Size: fileSize(localPath(dir, cf)), MTime: mt, Version: v}
-						up++
+					if mode == folderBoth {
+						if h, v, mt, err := uploadFile(base, dir, cf, tok); err == nil {
+							next.Files[cf] = stateFile{Hash: h, Size: fileSize(localPath(dir, cf)), MTime: mt, Version: v}
+							up++
+						}
 					}
 					a.log("конфликт (удаление vs правка): " + name + " -> " + cf)
 				}
@@ -700,58 +732,131 @@ func (a *App) syncOnce(verbose bool) {
 
 		// --- у сервера есть файл ---
 		case hasSrv && !cs.Deleted:
-			if !hasLocal {
+			switch {
+			case !hasLocal:
+				if !allowDown {
+					// «только отправлять»: вниз не качаем; если файл был и удалён у нас — удаляем и на сервере
+					if hasState {
+						if err := deleteRemote(base, name, tok); err == nil {
+							del++
+							a.log("вверх удаление: " + name)
+						} else {
+							carry()
+						}
+					}
+					skipped++
+					continue
+				}
 				if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
 					next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 					down++
 					a.log("вниз: " + name)
+				} else {
+					carry()
 				}
-			} else if ls.Hash == cs.Hash {
+			case ls.Hash == cs.Hash:
 				next.Files[name] = stateFile{Hash: ls.Hash, Size: ls.Size, MTime: ls.MTime, Version: cs.Version}
-			} else if !hasState {
-				// новый клиент: локальная и серверная версии расходятся - делаем конфликтную копию,
-				// чтобы не затереть серверную версию
-				cf := conflictName(name)
-				if data, err := os.ReadFile(localPath(dir, name)); err == nil {
-					_ = os.WriteFile(localPath(dir, cf), data, 0644)
-					if h, v, mt, err := uploadFile(base, dir, cf, tok); err == nil {
-						next.Files[cf] = stateFile{Hash: h, Size: fileSize(localPath(dir, cf)), MTime: mt, Version: v}
+			case !hasState:
+				// первый синк: локальная и серверная версии расходятся
+				switch mode {
+				case folderUp:
+					// «только отправлять»: источник — это устройство, выгружаем локальную версию
+					if h, v, mt, err := uploadFile(base, dir, name, tok); err == nil {
+						next.Files[name] = stateFile{Hash: h, Size: fileSize(localPath(dir, name)), MTime: mt, Version: v}
 						up++
+						a.log("вверх: " + name)
 					}
+				case folderDown:
+					// «только получать»: локальные правки не выгружаем, но бережём копией
+					cf := conflictName(name)
+					if data, err := os.ReadFile(localPath(dir, name)); err == nil {
+						_ = os.WriteFile(localPath(dir, cf), data, 0644)
+					}
+					if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
+						next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
+						down++
+					}
+					a.log("конфликт (первый синк, получающая папка): " + name + " -> " + cf)
+				default:
+					// в обе стороны: делаем конфликтную копию, чтобы не затереть серверную версию
+					cf := conflictName(name)
+					if data, err := os.ReadFile(localPath(dir, name)); err == nil {
+						_ = os.WriteFile(localPath(dir, cf), data, 0644)
+						if h, v, mt, err := uploadFile(base, dir, cf, tok); err == nil {
+							next.Files[cf] = stateFile{Hash: h, Size: fileSize(localPath(dir, cf)), MTime: mt, Version: v}
+							up++
+						}
+					}
+					if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
+						next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
+						down++
+					}
+					a.log("конфликт (первый синк): " + name + " -> " + cf)
 				}
-				if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
-					next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
-					down++
+			case hasState && ls.Hash == ss.Hash:
+				// локально без изменений, сервер новее
+				if allowDown {
+					if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
+						next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
+						down++
+						a.log("вниз: " + name)
+					} else {
+						carry()
+					}
+				} else {
+					// «только отправлять»: новую серверную версию не принимаем
+					carry()
+					skipped++
 				}
-				a.log("конфликт (первый синк): " + name + " -> " + cf)
-			} else if hasState && ls.Hash == ss.Hash {
-				// локально без изменений, сервер новее -> скачиваем
-				if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
-					next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
-					down++
-					a.log("вниз: " + name)
-				}
-			} else if hasState && cs.Version > ss.Version {
-				// обе стороны изменили -> конфликт
-				cf := conflictName(name)
-				if data, err := os.ReadFile(localPath(dir, name)); err == nil {
-					_ = os.WriteFile(localPath(dir, cf), data, 0644)
-					if h, v, mt, err := uploadFile(base, dir, cf, tok); err == nil {
-						next.Files[cf] = stateFile{Hash: h, Size: fileSize(localPath(dir, cf)), MTime: mt, Version: v}
+			case hasState && cs.Version > ss.Version:
+				// обе стороны изменили
+				switch mode {
+				case folderUp:
+					// «только отправлять»: побеждает локальная версия
+					if h, v, mt, err := uploadFile(base, dir, name, tok); err == nil {
+						next.Files[name] = stateFile{Hash: h, Size: fileSize(localPath(dir, name)), MTime: mt, Version: v}
 						up++
+						a.log("вверх (приоритет устройства): " + name)
 					}
+				case folderDown:
+					// «только получать»: ставим серверную версию, локальные правки сохраняем копией
+					cf := conflictName(name)
+					_ = os.Rename(localPath(dir, name), localPath(dir, cf))
+					if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
+						next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
+						down++
+					}
+					a.log("конфликт (получающая папка): " + name + " -> " + cf)
+				default:
+					// в обе стороны: конфликтная копия + серверная версия
+					cf := conflictName(name)
+					if data, err := os.ReadFile(localPath(dir, name)); err == nil {
+						_ = os.WriteFile(localPath(dir, cf), data, 0644)
+						if h, v, mt, err := uploadFile(base, dir, cf, tok); err == nil {
+							next.Files[cf] = stateFile{Hash: h, Size: fileSize(localPath(dir, cf)), MTime: mt, Version: v}
+							up++
+						}
+					}
+					if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
+						next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
+						down++
+					}
+					a.log("конфликт (правки): " + name + " -> " + cf)
 				}
-				if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
-					next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
-					down++
-				}
-				a.log("конфликт (правки): " + name + " -> " + cf)
-			} else {
+			default:
 				// локально изменено, сервер не менял -> выгружаем
-				if h, v, mt, err := uploadFile(base, dir, name, tok); err == nil {
-					next.Files[name] = stateFile{Hash: h, Size: fileSize(localPath(dir, name)), MTime: mt, Version: v}
-					up++
-					a.log("вверх: " + name)
+				if allowUp {
+					if h, v, mt, err := uploadFile(base, dir, name, tok); err == nil {
+						next.Files[name] = stateFile{Hash: h, Size: fileSize(localPath(dir, name)), MTime: mt, Version: v}
+						up++
+						a.log("вверх: " + name)
+					} else {
+						carry()
+					}
+				} else {
+					// «только получать»: локальные изменения не выгружаем
+					carry()
+					skipped++
 				}
 			}
 
@@ -760,17 +865,41 @@ func (a *App) syncOnce(verbose bool) {
 			if hasLocal {
 				if hasState && ls.Hash == ss.Hash {
 					next.Files[name] = stateFile{Hash: ls.Hash, Size: ls.Size, MTime: ls.MTime, Version: ss.Version}
-				} else if h, v, mt, err := uploadFile(base, dir, name, tok); err == nil {
-					next.Files[name] = stateFile{Hash: h, Size: fileSize(localPath(dir, name)), MTime: mt, Version: v}
-					up++
-					a.log("вверх: " + name)
+				} else if allowUp {
+					if h, v, mt, err := uploadFile(base, dir, name, tok); err == nil {
+						next.Files[name] = stateFile{Hash: h, Size: fileSize(localPath(dir, name)), MTime: mt, Version: v}
+						up++
+						a.log("вверх: " + name)
+					} else {
+						carry()
+					}
+				} else {
+					// «только получать»: новые и изменённые локальные файлы не выгружаем
+					carry()
+					skipped++
 				}
 			} else if hasState {
-				// локально удалён, сервер не менял -> удаляем на сервере (tombstone)
-				if err := deleteRemote(base, name, tok); err == nil {
-					del++
-					a.log("вверх удаление: " + name)
-					pruneEmptyDirs(dir, localPath(dir, name))
+				if allowUp {
+					// локально удалён, сервер не менял -> удаляем на сервере (tombstone)
+					if err := deleteRemote(base, name, tok); err == nil {
+						del++
+						a.log("вверх удаление: " + name)
+						pruneEmptyDirs(dir, localPath(dir, name))
+					} else {
+						carry()
+					}
+				} else {
+					// «только получать»: локальное удаление не уходит на сервер — файл возвращается
+					if err := downloadFile(base, dir, name, ss.MTime, tok); err == nil {
+						next.Files[name] = ss
+						down++
+						a.log("вниз (восстановление): " + name)
+					} else if strings.Contains(err.Error(), "404") {
+						// файла на сервере уже нет — считаем, что удаление состоялось
+						del++
+					} else {
+						carry()
+					}
 				}
 			}
 		}
@@ -789,8 +918,8 @@ func (a *App) syncOnce(verbose bool) {
 	a.count = len(next.Files)
 	a.mu.Unlock()
 	if verbose {
-		a.log(fmt.Sprintf("синк: сервер %s, локальных %d, изменений %d, вверх %d, вниз %d, удалено %d",
-			base, len(local), len(changes), up, down, del))
+		a.log(fmt.Sprintf("синк: сервер %s, локальных %d, изменений %d, вверх %d, вниз %d, удалено %d, пропущено по режимам %d",
+			base, len(local), len(changes), up, down, del, skipped))
 	}
 }
 
@@ -1043,6 +1172,12 @@ func (a *App) watchLoop(dir string, stop chan struct{}) {
 
 			}
 
+			if rel, rerr := filepath.Rel(dir, ev.Name); rerr == nil && a.folderRulesSnapshot().isOff(filepath.ToSlash(rel)) {
+
+				continue // папка отключена от синхронизации
+
+			}
+
 			if timer != nil {
 
 				timer.Stop()
@@ -1201,6 +1336,100 @@ func (a *App) SaveIgnore(text string) error {
 			return err
 		}
 	}
+	go a.syncOnce(false)
+	return nil
+}
+
+// ---------- режимы папок (выборочная синхронизация) ----------
+
+// folderRuleIndexLocked ищет правило по пути без учёта регистра. Вызывать под a.mu.
+func (a *App) folderRuleIndexLocked(p string) int {
+	low := strings.ToLower(p)
+	for i, r := range a.folderRules {
+		if strings.ToLower(strings.Trim(r.Path, "/")) == low {
+			return i
+		}
+	}
+	return -1
+}
+
+func (a *App) folderRulesSnapshot() folderRules {
+	a.mu.Lock()
+	list := append([]FolderRule(nil), a.folderRules...)
+	a.mu.Unlock()
+	return parseFolderRules(list)
+}
+
+// ListFolderRules возвращает правила папок (для интерфейса).
+func (a *App) ListFolderRules() []FolderRule {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]FolderRule, 0, len(a.folderRules))
+	out = append(out, a.folderRules...)
+	return out
+}
+
+// AddFolderRule добавляет правило для подпапки; если правило уже есть — меняет режим.
+func (a *App) AddFolderRule(path, mode string) error {
+	clean, ok := normalizeRulePath(path)
+	if !ok {
+		return fmt.Errorf("недопустимый путь папки")
+	}
+	if !validFolderMode(mode) {
+		return fmt.Errorf("недопустимый режим")
+	}
+	a.mu.Lock()
+	if i := a.folderRuleIndexLocked(clean); i >= 0 {
+		a.folderRules[i].Mode = mode
+	} else {
+		a.folderRules = append(a.folderRules, FolderRule{Path: clean, Mode: mode})
+	}
+	a.mu.Unlock()
+	a.persistConfig()
+	a.log("папка «" + clean + "»: режим — " + folderModeTitle(mode))
+	go a.syncOnce(false)
+	return nil
+}
+
+// SetFolderRuleMode меняет режим существующего правила.
+func (a *App) SetFolderRuleMode(path, mode string) error {
+	clean, ok := normalizeRulePath(path)
+	if !ok {
+		return fmt.Errorf("недопустимый путь папки")
+	}
+	if !validFolderMode(mode) {
+		return fmt.Errorf("недопустимый режим")
+	}
+	a.mu.Lock()
+	i := a.folderRuleIndexLocked(clean)
+	if i < 0 {
+		a.mu.Unlock()
+		return fmt.Errorf("правило для папки не найдено")
+	}
+	a.folderRules[i].Mode = mode
+	a.mu.Unlock()
+	a.persistConfig()
+	a.log("папка «" + clean + "»: режим — " + folderModeTitle(mode))
+	go a.syncOnce(false)
+	return nil
+}
+
+// RemoveFolderRule убирает правило: папка снова синхронизируется в обе стороны.
+func (a *App) RemoveFolderRule(path string) error {
+	clean, ok := normalizeRulePath(path)
+	if !ok {
+		return fmt.Errorf("недопустимый путь папки")
+	}
+	a.mu.Lock()
+	i := a.folderRuleIndexLocked(clean)
+	if i < 0 {
+		a.mu.Unlock()
+		return fmt.Errorf("правило для папки не найдено")
+	}
+	a.folderRules = append(a.folderRules[:i], a.folderRules[i+1:]...)
+	a.mu.Unlock()
+	a.persistConfig()
+	a.log("папка «" + clean + "»: правило убрано — снова в обе стороны")
 	go a.syncOnce(false)
 	return nil
 }

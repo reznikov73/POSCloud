@@ -33,6 +33,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="tab-client">Клиент</button>
     <button class="tab" data-tab="tab-ignore">Исключения</button>
+    <button class="tab" data-tab="tab-folders">Папки</button>
     <button class="tab" data-tab="tab-shots">Снимки</button>
     <button class="tab" data-tab="tab-files">Файлы</button>
     <button class="tab" data-tab="tab-log">Журнал</button>
@@ -119,6 +120,31 @@
 
         <div class="hint-muted" id="cliIgnoreStats"></div>
         <div class="hint-muted">Файл .poscloudignore в корне папки синхронизации. Игнорируемое не синхронизируется и не удаляется на сервере.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ПАПКИ ===== -->
+  <div class="pane" id="tab-folders">
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Режимы папок</div>
+        <div class="hint-muted">Для подпапок основной папки можно выбрать режим: в обе стороны (по умолчанию), только отправлять на сервер, только получать с сервера или не синхронизировать вовсе. Правила действуют на этом компьютере.</div>
+        <div class="folder-rules" id="folderRulesList"></div>
+        <div class="row-btns">
+          <button class="btn ghost" id="folderAdd">Добавить папку…</button>
+        </div>
+        <div class="picker" id="folderPicker" hidden>
+          <div class="picker-head">
+            <span class="picker-path" id="folderPickerPath">корень папки синхронизации</span>
+            <span class="picker-actions">
+              <button class="btn small" id="folderPickerUp">↑ вверх</button>
+              <button class="btn small" id="folderPickerClose">Закрыть</button>
+            </span>
+          </div>
+          <div class="picker-list" id="folderPickerList"></div>
+        </div>
+        <div class="hint-muted">«Только отправлять» удобно для папок-источников (например, сканы на рабочем ПК): изменения этого устройства уходят на сервер, чужие — не применяются. «Только получать» — зеркало сервера: локальные правки не выгружаются, а случайно удалённый файл скачается заново.</div>
       </div>
     </div>
   </div>
