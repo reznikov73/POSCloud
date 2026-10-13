@@ -503,6 +503,9 @@ func (a *App) StartSync(host string, port int, localDir string, interval int, to
 		a.log("старт синхронизации: " + dir)
 		go a.watchLoop(dir, stop)
 		go a.eventsLoop(stop)
+		// Первая сверка после запуска — полная: состояние догоняет сервер и
+		// само восстанавливается, если локальные записи почему-то разошлись.
+		a.markManifestResync()
 		a.syncOnce(true)
 		tk := time.NewTicker(time.Duration(interval) * time.Second)
 		defer tk.Stop()
