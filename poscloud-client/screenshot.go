@@ -445,7 +445,7 @@ func (a *App) saveShot(img image.Image) (string, error) {
 	}
 
 	a.log("снимок экрана сохранён: " + path)
-	go a.syncOnce(false)
+	go a.syn.SyncOnce(false)
 	a.notifyShot(path, copied)
 	return path, nil
 }

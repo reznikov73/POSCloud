@@ -13,9 +13,9 @@ import (
 	"testing"
 )
 
-// TestDeleteServerFolder проверяет «Удалить с сервера»: удаляются только файлы
-// выбранной папки, локальная копия и состояние чистятся, правила убираются
-// вместе с вложенными, чужие правила и файлы остаются.
+// TestDeleteServerFolder проверяет «Удалить с сервера» (через движок): удаляются
+// только файлы выбранной папки, локальная копия и состояние чистятся, правила
+// убираются вместе с вложенными, чужие правила и файлы остаются.
 func TestDeleteServerFolder(t *testing.T) {
 	var mu sync.Mutex
 	var deleted []string
@@ -62,11 +62,17 @@ func TestDeleteServerFolder(t *testing.T) {
 	a.host = u.Hostname()
 	a.port = port
 	a.token = "pcs_test"
-	a.folderRules = []FolderRule{
-		{Path: "Тест", Mode: folderOff},
-		{Path: "Тест/Подпапка", Mode: folderUp},
-		{Path: "Тест2", Mode: folderDown},
-	}
+	a.syn = newSyncer(syncConfig{
+		Host:  a.host,
+		Port:  port,
+		Dir:   dir,
+		Token: "pcs_test",
+		Rules: []FolderRule{
+			{Path: "Тест", Mode: folderOff},
+			{Path: "Тест/Подпапка", Mode: folderUp},
+			{Path: "Тест2", Mode: folderDown},
+		},
+	}, nil, nil)
 
 	n, err := a.DeleteServerFolder("Тест")
 	if err != nil {
@@ -93,7 +99,8 @@ func TestDeleteServerFolder(t *testing.T) {
 	if _, ok := st2.Files["Тест2/в.txt"]; !ok {
 		t.Fatalf("состояние «Тест2/» не должно было очищаться")
 	}
-	if len(a.folderRules) != 1 || a.folderRules[0].Path != "Тест2" {
-		t.Fatalf("правила после удаления: %+v", a.folderRules)
+	rules := a.syn.ListRules()
+	if len(rules) != 1 || rules[0].Path != "Тест2" {
+		t.Fatalf("правила после удаления: %+v", rules)
 	}
 }

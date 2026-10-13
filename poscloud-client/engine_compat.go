@@ -16,6 +16,9 @@ type clientState = eng.State
 type stateFile = eng.StateFile
 type manifestFile = eng.ManifestFile
 type ignoreList = eng.IgnoreList
+type syncConfig = eng.Config
+type syncer = eng.Syncer
+type ServerFolderNode = eng.ServerFolderNode
 
 const (
 	folderBoth = eng.FolderBoth
@@ -89,3 +92,18 @@ func deleteRemote(base, name, token string) error { return eng.DeleteRemote(base
 func mkdirRemote(base, name, token string) (int64, error) { return eng.MkdirRemote(base, name, token) }
 
 func authHeader(req *http.Request, token string) { eng.AuthHeader(req, token) }
+
+// newSyncer создаёт движок синхронизации с колбеками клиента.
+func newSyncer(cfg syncConfig, logf func(string), save func(syncConfig)) *syncer {
+	if logf == nil {
+		logf = func(string) {}
+	}
+	if save == nil {
+		save = func(syncConfig) {}
+	}
+	return eng.NewSyncer(cfg, logf, func(c syncConfig) { save(c) })
+}
+
+func testConnection(host string, port int, token string) string {
+	return eng.TestConnection(host, port, token)
+}

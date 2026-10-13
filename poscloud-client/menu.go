@@ -109,9 +109,10 @@ func (a *App) updateTrayMenu() {
 		return
 	}
 	a.mu.Lock()
-	running, online := a.syncRun, a.online
-	count, last, errMsg := a.count, a.lastSync, a.errMsg
+	running := a.syncRun
 	a.mu.Unlock()
+	stt := a.syn.Status()
+	online, count, last, errMsg := stt.Online, stt.Count, stt.LastSync, stt.ErrMsg
 
 	if s := "Статус: " + syncStateLabel(running, online, errMsg); s != trayLastStatus {
 		trayLastStatus = s
