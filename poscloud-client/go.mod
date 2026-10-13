@@ -37,6 +37,9 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
+	poscloud-engine v0.0.0
 )
 
 // replace github.com/wailsapp/wails/v2 v2.16.0 => C:\Users\rez\go\pkg\mod
+
+replace poscloud-engine => ../engine

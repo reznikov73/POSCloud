@@ -529,7 +529,7 @@ func localScan(dir string, st clientState, rules folderRules) map[string]stateFi
 			if p == dir {
 				return nil
 			}
-			if strings.HasPrefix(d.Name(), ".") || ign.match(key) || rules.isOff(key) {
+			if strings.HasPrefix(d.Name(), ".") || ign.match(key) || rules.IsOff(key) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -574,7 +574,7 @@ func localDirs(dir string, rules folderRules) []string {
 			return nil
 		}
 		key := filepath.ToSlash(rel)
-		if strings.HasPrefix(d.Name(), ".") || ign.match(key) || rules.isOff(key) {
+		if strings.HasPrefix(d.Name(), ".") || ign.match(key) || rules.IsOff(key) {
 			return filepath.SkipDir
 		}
 		out = append(out, key)
@@ -743,7 +743,7 @@ func (a *App) syncOnce(verbose bool) {
 	_ = os.MkdirAll(dir, 0755)
 	base := a.baseURL()
 	rules := parseFolderRules(list)
-	rules.free = free
+	rules.Free = free
 
 	st := loadState(dir)
 	if a.migrateRuleDefaults(st) {
@@ -751,7 +751,7 @@ func (a *App) syncOnce(verbose bool) {
 		list = append([]FolderRule(nil), a.folderRules...)
 		a.mu.Unlock()
 		rules = parseFolderRules(list)
-		rules.free = free
+		rules.Free = free
 	}
 
 	srvVer, changes, err := fetchChanges(base, tok, st.ServerVersion)
@@ -832,7 +832,7 @@ func (a *App) syncOnce(verbose bool) {
 			}
 		}
 
-		mode := rules.modeForFile(name)
+		mode := rules.ModeForFile(name)
 		if mode == folderOff {
 			// папка отключена: файл не трогаем, прежнее состояние бережём на случай включения
 			if hasState {
@@ -1071,7 +1071,7 @@ func (a *App) syncOnce(verbose bool) {
 	for n := range dirNames {
 		ss, hasState := st.Files[n]
 		cs, hasSrv := srv[n]
-		mode := rules.modeFor(n)
+		mode := rules.ModeFor(n)
 		if mode == folderOff {
 			if hasState {
 				next.Files[n] = ss
@@ -1167,7 +1167,7 @@ func (a *App) syncOnce(verbose bool) {
 		if dirNames[n] || stateCoversDir(next.Files, n) {
 			continue
 		}
-		mode := rules.modeFor(n)
+		mode := rules.ModeFor(n)
 		if mode != folderBoth && mode != folderUp {
 			continue
 		}
@@ -1497,7 +1497,7 @@ func (a *App) watchLoop(dir string, stop chan struct{}) {
 
 			}
 
-			if rel, rerr := filepath.Rel(dir, ev.Name); rerr == nil && a.folderRulesSnapshot().isOff(filepath.ToSlash(rel)) {
+			if rel, rerr := filepath.Rel(dir, ev.Name); rerr == nil && a.folderRulesSnapshot().IsOff(filepath.ToSlash(rel)) {
 
 				continue // папка отключена от синхронизации
 
@@ -1922,7 +1922,7 @@ func (a *App) ServerFolders() ([]ServerFolderNode, error) {
 	free := a.rulesFree
 	a.mu.Unlock()
 	rules := parseFolderRules(list)
-	rules.free = free
+	rules.Free = free
 
 	type topRow struct {
 		name  string
@@ -2000,12 +2000,12 @@ func (a *App) ServerFolders() ([]ServerFolderNode, error) {
 		if r.loc {
 			node.LocFiles, node.LocBytes = dirStats(filepath.Join(dir, filepath.FromSlash(r.name)))
 		}
-		if m, ok := rules.explicit(r.name); ok {
+		if m, ok := rules.Explicit(r.name); ok {
 			node.Rule = m
 		}
-		node.Mode = rules.modeFor(r.name)
+		node.Mode = rules.ModeFor(r.name)
 		node.OnlyRule = ruleOnly[k] && !r.srv && !node.Local
-		node.New = !rules.covered(r.name) && !stateTops[k]
+		node.New = !rules.Covered(r.name) && !stateTops[k]
 		out = append(out, node)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
