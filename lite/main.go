@@ -5,8 +5,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -34,7 +34,12 @@ const (
 	idLog       = 1008
 	idSettings  = 1009
 
-	idSEdit   = 3001
+	idSHost   = 3006
+	idSPort   = 3007
+	idSDir    = 3008
+	idSToken  = 3009
+	idSInt    = 3010
+	idSBrowse = 3011
 	idSCheck  = 3002
 	idSTest   = 3003
 	idSSave   = 3004
@@ -45,6 +50,11 @@ const (
 	idMenuLog      = 2003
 	idMenuExit     = 2009
 
+	idTrayOpen   = 4001
+	idTrayToggle = 4002
+	idTrayLog    = 4003
+	idTrayExit   = 4004
+
 	timerStatus = 1
 	wmFolders   = wmApp + 1
 )
@@ -53,19 +63,25 @@ var (
 	gCfg liteConfig
 	gSyn *engine.Syncer
 
-	hwndMain uintptr
-	hStatus  uintptr
-	hList    uintptr
-	hMode    uintptr
-	hFree    uintptr
-	hDelete  uintptr
-	hRule    uintptr
-	hFreeChk uintptr
-	gFont    uintptr
+	hwndMain  uintptr
+	hTitle    uintptr
+	hStatus   uintptr
+	hList     uintptr
+	hMode     uintptr
+	hFree     uintptr
+	hDelete   uintptr
+	hRule     uintptr
+	hFreeChk  uintptr
+	gFont     uintptr
+	gFontBold uintptr
 
 	hwndSettings uintptr
-	hSetEdit     uintptr
-	hSetCheck    uintptr
+	hEdHost      uintptr
+	hEdPort      uintptr
+	hEdDir       uintptr
+	hEdToken     uintptr
+	hEdInt       uintptr
+	hChkAuto     uintptr
 
 	foldersMu  sync.Mutex
 	folders    []engine.ServerFolderNode
@@ -96,7 +112,7 @@ func fmtSize(n int64) string {
 func modeLabel(m string) string {
 	for _, fm := range folderModes {
 		if fm.id == m {
-			return strings.ToLower(fm.title)
+			return fm.title
 		}
 	}
 	return m
@@ -105,28 +121,20 @@ func modeLabel(m string) string {
 func statusText(n engine.ServerFolderNode) string {
 	switch {
 	case n.OnlyRule:
-		return "правило без папки"
+		return "Правило без папки"
 	case n.New:
-		return "новая — выберите режим"
+		return "Новая — выберите режим"
 	case n.Mode == "off":
 		if n.Local {
-			return "есть на этом ПК (пауза)"
+			return "Есть на этом ПК (пауза)"
 		}
-		return "не синхронизируется"
+		return "Не синхронизируется"
 	case n.Local:
-		return "есть на этом ПК"
+		return "Есть на этом ПК"
 	case n.Mode == "both" || n.Mode == "down":
-		return "будет скачана"
+		return "Будет скачана"
 	}
-	return "нет на этом ПК"
-}
-
-func rowText(n engine.ServerFolderNode) string {
-	meta := "папка"
-	if n.Files > 0 {
-		meta = fmt.Sprintf("%d ф. · %s", n.Files, fmtSize(n.Bytes))
-	}
-	return fmt.Sprintf("%s  ·  %s  ·  %s  ·  %s", n.Path, meta, statusText(n), modeLabel(n.Mode))
+	return "Нет на этом ПК"
 }
 
 func setBtnEnabled(h uintptr, on bool) {
@@ -135,6 +143,24 @@ func setBtnEnabled(h uintptr, on bool) {
 		v = 1
 	}
 	procEnableWindow.Call(h, v)
+}
+
+func boolPtr(b bool) uintptr {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func ruleFreeEnabled() bool {
+	if gSyn == nil {
+		return false
+	}
+	return gSyn.RulesFreeEnabled()
+}
+
+func synConfigured() bool {
+	return strings.TrimSpace(gCfg.Token) != "" && strings.TrimSpace(gCfg.Dir) != ""
 }
 
 // ---------- список папок ----------
@@ -162,18 +188,22 @@ func requestFolders() {
 	}()
 }
 
-func selectedIndex() int {
-	r := send(hList, lbGetCurSel, 0, 0)
-	if r == ^uintptr(0) { // LB_ERR
+func selectedIndexLocked() int {
+	r := send(hList, lvmGetNextItem, ^uintptr(0), lvniSelected)
+	if int32(r) < 0 {
 		return -1
 	}
-	foldersMu.Lock()
-	defer foldersMu.Unlock()
 	i := int(r)
 	if i < 0 || i >= len(folders) {
 		return -1
 	}
 	return i
+}
+
+func selectedIndex() int {
+	foldersMu.Lock()
+	defer foldersMu.Unlock()
+	return selectedIndexLocked()
 }
 
 func selectedNode() (engine.ServerFolderNode, bool) {
@@ -186,16 +216,10 @@ func selectedNode() (engine.ServerFolderNode, bool) {
 	return folders[i], true
 }
 
-func selectedIndexLocked() int {
-	r := send(hList, lbGetCurSel, 0, 0)
-	if r == ^uintptr(0) {
-		return -1
-	}
-	i := int(r)
-	if i < 0 || i >= len(folders) {
-		return -1
-	}
-	return i
+func selectRow(i int) {
+	si := lvItem{state: lvisSelected | lvisFocused, stateMask: lvisSelected | lvisFocused}
+	send(hList, lvmSetItemState, uintptr(i), uintptr(unsafe.Pointer(&si)))
+	send(hList, lvmEnsureVisible, uintptr(i), 1)
 }
 
 func updateModeControls() {
@@ -213,7 +237,6 @@ func updateModeControls() {
 		setBtnEnabled(hRule, false)
 		return
 	}
-	// выбранный режим строки
 	idx := 0
 	cur := n.Rule
 	if cur == "" {
@@ -235,21 +258,32 @@ func fillFolderList() {
 	list := append([]engine.ServerFolderNode(nil), folders...)
 	foldersMu.Unlock()
 
-	// сохранить выбранный путь
 	selPath := ""
 	if i := selectedIndex(); i >= 0 {
 		selPath = list[i].Path
 	}
-	send(hList, lbResetContent, 0, 0)
+	send(hList, lvmDeleteAllItems, 0, 0)
 	newSel := -1
 	for i, n := range list {
-		send(hList, lbAddString, 0, uintptr(unsafe.Pointer(u16(rowText(n)))))
+		meta := "папка"
+		if n.Files > 0 {
+			meta = fmt.Sprintf("%d ф. · %s", n.Files, fmtSize(n.Bytes))
+		}
+		it := lvItem{mask: lvifText, iItem: int32(i), iSubItem: 0, pszText: u16(n.Path)}
+		send(hList, lvmInsertItemW, 0, uintptr(unsafe.Pointer(&it)))
+		setSub := func(sub int32, text string) {
+			si := lvItem{iSubItem: sub, pszText: u16(text)}
+			send(hList, lvmSetItemTextW, uintptr(i), uintptr(unsafe.Pointer(&si)))
+		}
+		setSub(1, meta)
+		setSub(2, statusText(n))
+		setSub(3, modeLabel(n.Mode))
 		if selPath != "" && n.Path == selPath {
 			newSel = i
 		}
 	}
 	if newSel >= 0 {
-		send(hList, lbSetCurSel, uintptr(newSel), 0)
+		selectRow(newSel)
 	}
 	updateModeControls()
 }
@@ -346,33 +380,83 @@ func doModeChange() {
 
 var mainWndProcCb = syscall.NewCallback(mainWndProc)
 
+func showMainWindow() {
+	procShowWindow.Call(hwndMain, swRestore)
+	procShowWindow.Call(hwndMain, swShow)
+	procSetForegroundWindow.Call(hwndMain)
+}
+
+func showTrayMenu() {
+	m := menuCreatePopup()
+	toggle := "Приостановить синхронизацию"
+	if !gSyn.Running() {
+		toggle = "Продолжить синхронизацию"
+	}
+	menuAppend(m, idTrayOpen, "Открыть окно")
+	menuAppend(m, idTrayToggle, toggle)
+	menuAppend(m, idTrayLog, "Открыть журнал")
+	menuAppend(m, idTrayExit, "Выход")
+	switch trackPopup(m, hwndMain) {
+	case idTrayOpen:
+		showMainWindow()
+	case idTrayToggle:
+		if gSyn.Running() {
+			gSyn.Stop()
+			logf("синхронизация приостановлена (из трея)")
+		} else if synConfigured() {
+			gSyn.Run()
+			logf("синхронизация возобновлена (из трея)")
+		}
+		updateStatusLine()
+	case idTrayLog:
+		shellOpen(logFile)
+	case idTrayExit:
+		procDestroyWindow.Call(hwndMain)
+	}
+}
+
 func mainWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case wmCreate:
 		hwndMain = hwnd
 		gFont = createFont(16)
-		hStatus = createWindow("STATIC", "запуск…", wsChild|wsVisible|wsClipSiblings, 12, 10, 756, 20, hwnd, 0)
-		hList = createWindow("LISTBOX", "", wsChild|wsVisible|wsTabStop|wsBorder|wsVScroll|wsClipSiblings|lbsNotify|lbsNoIntegralHeight, 12, 34, 756, 286, hwnd, idList)
-		stLabel := createWindow("STATIC", "Режим:", wsChild|wsVisible|wsClipSiblings, 12, 331, 46, 20, hwnd, 0)
-		hMode = createWindow("COMBOBOX", "", wsChild|wsVisible|wsTabStop|cbsDropDownList|wsVScroll, 62, 328, 180, 200, hwnd, idMode)
+		gFontBold = createFontBold(18)
+		hTitle = createWindow("STATIC", "Синхронизация папок", wsChild|wsVisible|wsClipSiblings, 12, 8, 500, 26, hwnd, 0)
+		hStatus = createWindow("STATIC", "запуск…", wsChild|wsVisible|wsClipSiblings, 12, 38, 756, 20, hwnd, 0)
+		hList = createWindow("SysListView32", "", wsChild|wsVisible|wsTabStop|wsBorder|wsClipSiblings|uint32(lvsReport|lvsSingleSel|lvsShowSelAlways|lvsNoSortHeader), 12, 62, 756, 258, hwnd, idList)
+		ext := uintptr(lvsExGridLines | lvsExFullRowSelect | lvsExDoubleBuffer)
+		send(hList, lvmSetExtendedListViewStyle, ext, ext)
+		col := func(i int32, title string, w int32) {
+			c := lvColumn{mask: lvcfFmt | lvcfWidth | lvcfText | lvcfSubItem, fmt: lvcfmtLeft, cx: w, pszText: u16(title), iSubItem: i}
+			send(hList, lvmInsertColumnW, uintptr(i), uintptr(unsafe.Pointer(&c)))
+		}
+		col(0, "Папка", 270)
+		col(1, "Состав", 136)
+		col(2, "Статус", 192)
+		col(3, "Режим", 152)
+
+		lblMode := createWindow("STATIC", "Режим:", wsChild|wsVisible|wsClipSiblings, 12, 333, 46, 20, hwnd, 0)
+		hMode = createWindow("COMBOBOX", "", wsChild|wsVisible|wsTabStop|cbsDropDownList|wsVScroll, 62, 330, 180, 200, hwnd, idMode)
 		for _, fm := range folderModes {
 			send(hMode, cbAddString, 0, uintptr(unsafe.Pointer(u16(fm.title))))
 		}
-		btnRefresh := createWindow("BUTTON", "Обновить", wsChild|wsVisible|wsTabStop|bsPushButton, 248, 328, 86, 27, hwnd, idRefresh)
-		hFree = createWindow("BUTTON", "Освободить место", wsChild|wsVisible|wsTabStop|bsPushButton, 340, 328, 138, 27, hwnd, idFree)
-		hDelete = createWindow("BUTTON", "Удалить с сервера", wsChild|wsVisible|wsTabStop|bsPushButton, 484, 328, 148, 27, hwnd, idDelete)
-		hRule = createWindow("BUTTON", "Убрать правило", wsChild|wsVisible|wsTabStop|bsPushButton, 638, 328, 116, 27, hwnd, idRule)
-		hFreeChk = createWindow("BUTTON", "Без правил — синхронизировать всё", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 12, 366, 420, 24, hwnd, idRulesFree)
-		btnLog := createWindow("BUTTON", "Журнал", wsChild|wsVisible|wsTabStop|bsPushButton, 560, 364, 96, 27, hwnd, idLog)
-		btnSet := createWindow("BUTTON", "Настройки…", wsChild|wsVisible|wsTabStop|bsPushButton, 664, 364, 104, 27, hwnd, idSettings)
-		hint := createWindow("STATIC", "Список показывает папки первого уровня: у каждой — состав, состояние и режим. Вложенные папки и файлы следуют режиму своей папки.\r\nНовая папка ничего не передаёт, пока ей не выбран режим. Закрытие окна не останавливает синхронизацию — запустите программу снова, чтобы вернуть окно.",
-			wsChild|wsVisible|wsClipSiblings, 12, 402, 756, 64, hwnd, 0)
-		for _, c := range []uintptr{hStatus, hList, stLabel, hMode, btnRefresh, hFree, hDelete, hRule, hFreeChk, btnLog, btnSet, hint} {
+		btnRefresh := createWindow("BUTTON", "Обновить", wsChild|wsVisible|wsTabStop|bsPushButton, 248, 330, 86, 27, hwnd, idRefresh)
+		hFree = createWindow("BUTTON", "Освободить место", wsChild|wsVisible|wsTabStop|bsPushButton, 340, 330, 138, 27, hwnd, idFree)
+		hDelete = createWindow("BUTTON", "Удалить с сервера", wsChild|wsVisible|wsTabStop|bsPushButton, 484, 330, 148, 27, hwnd, idDelete)
+		hRule = createWindow("BUTTON", "Убрать правило", wsChild|wsVisible|wsTabStop|bsPushButton, 638, 330, 116, 27, hwnd, idRule)
+		hFreeChk = createWindow("BUTTON", "Без правил — синхронизировать всё", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 12, 368, 420, 24, hwnd, idRulesFree)
+		btnLog := createWindow("BUTTON", "Журнал", wsChild|wsVisible|wsTabStop|bsPushButton, 560, 366, 96, 27, hwnd, idLog)
+		btnSet := createWindow("BUTTON", "Настройки…", wsChild|wsVisible|wsTabStop|bsPushButton, 664, 366, 104, 27, hwnd, idSettings)
+		hint := createWindow("STATIC", "Список показывает папки первого уровня; всё вложенное следует её режиму.\r\nНовая папка ничего не передаёт, пока не выбран режим.\r\nКнопка «Х» сворачивает программу в трей — синхронизация продолжается.",
+			wsChild|wsVisible|wsClipSiblings, 12, 400, 756, 70, hwnd, 0)
+		for _, c := range []uintptr{hStatus, hList, lblMode, hMode, btnRefresh, hFree, hDelete, hRule, hFreeChk, btnLog, btnSet, hint} {
 			send(c, wmSetFont, gFont, 1)
 		}
+		send(hTitle, wmSetFont, gFontBold, 1)
 		send(hFreeChk, 0x00F1 /*BM_SETCHECK*/, boolPtr(ruleFreeEnabled()), 0)
 		updateModeControls()
 		procSetTimer.Call(hwnd, timerStatus, 1000, 0)
+		trayAdd(hwnd, loadAppIcon(), "POSCloud Lite — синхронизация")
 		updateStatusLine()
 		if synConfigured() {
 			requestFolders()
@@ -380,8 +464,8 @@ func mainWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmTimer:
 		updateStatusLine()
-		if wParam == timerStatus {
-			if int(time.Now().Unix())%10 == 0 && synConfigured() {
+		if synConfigured() {
+			if int(time.Now().Unix())%10 == 0 {
 				requestFolders()
 			}
 		}
@@ -389,16 +473,24 @@ func mainWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	case wmFolders:
 		fillFolderList()
 		return 0
+	case wmNotify:
+		hdr := (*nmhdr)(unsafe.Pointer(lParam))
+		if hdr.idFrom == idList && hdr.code == lvnItemChanged {
+			updateModeControls()
+		}
+		return 0
+	case wmTray:
+		switch lParam {
+		case wmLButtonDblClk:
+			showMainWindow()
+		case wmRButtonUp:
+			showTrayMenu()
+		}
+		return 0
 	case wmCommand:
-		id := uintptr(wParam & 0xFFFF)
-		notify := uintptr(wParam >> 16)
-		switch id {
-		case idList:
-			if notify == lbnSelChange {
-				updateModeControls()
-			}
+		switch wParam & 0xFFFF {
 		case idMode:
-			if notify == cbnSelChange {
+			if wParam>>16 == cbnSelChange {
 				doModeChange()
 			}
 		case idRefresh:
@@ -417,49 +509,28 @@ func mainWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 				}
 				requestFolders()
 			}()
-		case idLog:
+		case idLog, idMenuLog:
 			shellOpen(logFile)
-		case idSettings:
-			openSettingsWindow()
-		case idMenuSettings:
+		case idSettings, idMenuSettings:
 			openSettingsWindow()
 		case idMenuReload:
 			reloadConfig()
-		case idMenuLog:
-			shellOpen(logFile)
 		case idMenuExit:
 			procDestroyWindow.Call(hwnd)
 		}
 		return 0
 	case wmClose:
 		procShowWindow.Call(hwnd, swHide)
-		logf("окно скрыто — синхронизация продолжается в фоне (запустите программу снова, чтобы вернуть окно)")
+		logf("окно свёрнуто в трей — синхронизация продолжается (двойной клик по значку или запуск программы возвращает окно)")
 		return 0
 	case wmDestroy:
 		procKillTimer.Call(hwnd, timerStatus)
+		trayDelete(hwnd)
 		procPostQuitMessage.Call(0)
 		return 0
 	}
 	r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
 	return r
-}
-
-func boolPtr(b bool) uintptr {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-func ruleFreeEnabled() bool {
-	if gSyn == nil {
-		return false
-	}
-	return gSyn.RulesFreeEnabled()
-}
-
-func synConfigured() bool {
-	return strings.TrimSpace(gCfg.Token) != "" && strings.TrimSpace(gCfg.Dir) != ""
 }
 
 func updateStatusLine() {
@@ -529,7 +600,7 @@ func openSettingsWindow() {
 		uintptr(unsafe.Pointer(u16(settingsClassName))),
 		uintptr(unsafe.Pointer(u16("Настройки — "+appTitle))),
 		uintptr(wsCaption|wsSysMenu|wsVisible|wsClipChildren),
-		200, 150, 640, 460,
+		200, 150, 720, 330,
 		0, 0, getModuleHandle(), 0)
 }
 
@@ -537,55 +608,75 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case wmCreate:
 		hwndSettings = hwnd
-		if gFont == 0 {
-			gFont = createFont(16)
-		}
-		lbl := createWindow("STATIC", "Файл: "+configPath(), wsChild|wsVisible|wsClipSiblings, 12, 10, 610, 20, hwnd, 0)
-		lbl2 := createWindow("STATIC", "Поля: host, port, dir, token, interval. После правки нажмите «Сохранить».", wsChild|wsVisible|wsClipSiblings, 12, 30, 610, 20, hwnd, 0)
-		hSetEdit = createWindow("EDIT", configText(gCfg), wsChild|wsVisible|wsTabStop|wsBorder|wsVScroll|esMultiline|esAutoVScroll|esWantReturn, 12, 54, 610, 300, hwnd, idSEdit)
-		hSetCheck = createWindow("BUTTON", "Запускать при входе в Windows", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 12, 368, 300, 24, hwnd, idSCheck)
-		send(hSetCheck, 0x00F1, boolPtr(autostartEnabled()), 0)
-		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 316, 366, 120, 27, hwnd, idSTest)
-		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 480, 366, 100, 27, hwnd, idSSave)
-		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 586, 366, 90, 27, hwnd, idSCancel)
-		for _, c := range []uintptr{lbl, lbl2, hSetEdit, hSetCheck, btnTest, btnSave, btnCancel} {
+		lab := func(text string, x, y, w, h int32) {
+			c := createWindow("STATIC", text, wsChild|wsVisible|wsClipSiblings, x, y, w, h, hwnd, 0)
 			send(c, wmSetFont, gFont, 1)
 		}
+		edit := func(text string, x, y, w, h int32, id uintptr) uintptr {
+			c := createWindow("EDIT", text, wsChild|wsVisible|wsTabStop|wsBorder|wsClipSiblings, x, y, w, h, hwnd, id)
+			send(c, wmSetFont, gFont, 1)
+			return c
+		}
+		lab("Сервер:", 12, 16, 80, 20)
+		hEdHost = edit(gCfg.Host, 96, 14, 300, 24, idSHost)
+		lab(":", 402, 16, 10, 20)
+		hEdPort = edit(fmt.Sprintf("%d", gCfg.Port), 414, 14, 70, 24, idSPort)
+		lab("Папка синхронизации:", 12, 50, 168, 20)
+		hEdDir = edit(gCfg.Dir, 186, 48, 386, 24, idSDir)
+		btnBrowse := createWindow("BUTTON", "Обзор…", wsChild|wsVisible|wsTabStop|bsPushButton, 580, 48, 110, 24, hwnd, idSBrowse)
+		lab("Токен доступа:", 12, 84, 120, 20)
+		hEdToken = edit(gCfg.Token, 138, 82, 552, 24, idSToken)
+		lab("Интервал, сек:", 12, 118, 110, 20)
+		hEdInt = edit(fmt.Sprintf("%d", gCfg.Interval), 128, 116, 70, 24, idSInt)
+		lab("как часто проверять изменения", 206, 118, 340, 20)
+		hChkAuto = createWindow("BUTTON", "Запускать при входе в Windows", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 12, 152, 320, 24, hwnd, idSCheck)
+		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 370, 200, 130, 28, hwnd, idSTest)
+		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 508, 200, 92, 28, hwnd, idSSave)
+		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 608, 200, 84, 28, hwnd, idSCancel)
+		for _, c := range []uintptr{btnBrowse, hChkAuto, btnTest, btnSave, btnCancel} {
+			send(c, wmSetFont, gFont, 1)
+		}
+		send(hChkAuto, 0x00F1, boolPtr(autostartEnabled()), 0)
 		return 0
 	case wmCommand:
-		id := uintptr(wParam & 0xFFFF)
-		switch id {
+		switch wParam & 0xFFFF {
+		case idSBrowse:
+			if p := browseFolder(hwnd, "Папка синхронизации"); p != "" {
+				setText(hEdDir, p)
+			}
 		case idSCheck:
-			on := send(hSetCheck, 0x00F0, 0, 0) == 1
+			on := send(hChkAuto, 0x00F0, 0, 0) == 1
 			if err := setAutostart(on); err != nil {
 				logf("автозапуск: %v", err)
 				messageBox(hwnd, "Не удалось изменить автозапуск:\n"+err.Error(), appTitle, mbOk|mbIconExclamation)
-				send(hSetCheck, 0x00F1, boolPtr(autostartEnabled()), 0)
+				send(hChkAuto, 0x00F1, boolPtr(autostartEnabled()), 0)
 			} else {
 				gCfg.Autostart = on
 				_ = saveConfig(gCfg)
 				logf("автозапуск при входе: %v", on)
 			}
 		case idSTest:
-			var probe liteConfig
-			if err := json.Unmarshal([]byte(getText(hSetEdit)), &probe); err != nil {
-				messageBox(hwnd, "JSON не разобран:\n"+err.Error(), appTitle, mbOk|mbIconExclamation)
-				return 0
-			}
-			res := engine.TestConnection(probe.Host, probe.Port, probe.Token)
+			port, _ := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
+			res := engine.TestConnection(strings.TrimSpace(getText(hEdHost)), port, strings.TrimSpace(getText(hEdToken)))
 			messageBox(hwnd, res, appTitle, mbOk|mbIconInfo)
 		case idSSave:
-			var next liteConfig
-			if err := json.Unmarshal([]byte(getText(hSetEdit)), &next); err != nil {
-				messageBox(hwnd, "JSON не разобран:\n"+err.Error(), appTitle, mbOk|mbIconExclamation)
+			port, err1 := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
+			if err1 != nil || port <= 0 || port > 65535 {
+				messageBox(hwnd, "Проверьте порт сервера — нужно число от 1 до 65535.", appTitle, mbOk|mbIconExclamation)
 				return 0
 			}
-			if next.Interval <= 0 {
-				next.Interval = 3
+			itv, err2 := strconv.Atoi(strings.TrimSpace(getText(hEdInt)))
+			if err2 != nil || itv <= 0 {
+				itv = 3
 			}
-			next.Autostart = send(hSetCheck, 0x00F0, 0, 0) == 1
-			wasRunning := gSyn.Running()
-			if wasRunning {
+			next := gCfg // правила и «без правил» сохраняются как есть
+			next.Host = strings.TrimSpace(getText(hEdHost))
+			next.Port = port
+			next.Dir = strings.TrimSpace(getText(hEdDir))
+			next.Token = strings.TrimSpace(getText(hEdToken))
+			next.Interval = itv
+			next.Autostart = send(hChkAuto, 0x00F0, 0, 0) == 1
+			if gSyn.Running() {
 				gSyn.Stop()
 			}
 			gCfg = next
@@ -610,7 +701,7 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmDestroy:
 		hwndSettings = 0
-		hSetEdit = 0
+		hEdHost, hEdPort, hEdDir, hEdToken, hEdInt, hChkAuto = 0, 0, 0, 0, 0, 0
 		return 0
 	}
 	r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
@@ -622,6 +713,7 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 func main() {
 	initLog()
 	logf("POSCloud Lite запускается (каталог: %s)", exeDir())
+	procCoInitializeEx.Call(0, coinitApartmentThreaded)
 
 	if !acquireSingleInstance(appMutexName) {
 		if !showExistingInstance(mainClassName) {
