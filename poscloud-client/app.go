@@ -1002,9 +1002,14 @@ func (a *App) syncOnce(verbose bool) {
 						carry()
 					}
 				} else {
-					// «только получать»: локальные изменения не выгружаем
-					carry()
-					skipped++
+					// «только получать»: локальные правки возвращаем к серверной версии
+					if err := downloadFile(base, dir, name, cs.MTime, tok); err == nil {
+						next.Files[name] = stateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
+						down++
+						a.log("вниз (восстановление): " + name)
+					} else {
+						carry()
+					}
 				}
 			}
 
@@ -1021,8 +1026,17 @@ func (a *App) syncOnce(verbose bool) {
 					} else {
 						carry()
 					}
+				} else if hasState {
+					// «только получать»: изменённый файл возвращаем к серверной версии
+					if err := downloadFile(base, dir, name, ss.MTime, tok); err == nil {
+						next.Files[name] = ss
+						down++
+						a.log("вниз (восстановление): " + name)
+					} else {
+						carry()
+					}
 				} else {
-					// «только получать»: новые и изменённые локальные файлы не выгружаем
+					// «только получать»: новый локальный файл не выгружаем — оставляем как есть
 					carry()
 					skipped++
 				}
