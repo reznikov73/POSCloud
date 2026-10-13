@@ -1,12 +1,21 @@
 package main
 
-// Тонкий слой совместимости: правила папок живут в общем движке poscloud-engine,
-// чтобы тот же код использовала и служебная сборка для старых Windows.
+// Тонкий слой совместимости: код синхронизации живёт в общем движке
+// poscloud-engine, чтобы тот же набор использовала и служебная сборка
+// для старых Windows.
 
-import eng "poscloud-engine"
+import (
+	"net/http"
+
+	eng "poscloud-engine"
+)
 
 type FolderRule = eng.FolderRule
 type folderRules = eng.Rules
+type clientState = eng.State
+type stateFile = eng.StateFile
+type manifestFile = eng.ManifestFile
+type ignoreList = eng.IgnoreList
 
 const (
 	folderBoth = eng.FolderBoth
@@ -22,3 +31,61 @@ func folderModeTitle(m string) string { return eng.FolderModeTitle(m) }
 func normalizeRulePath(p string) (string, bool) { return eng.NormalizeRulePath(p) }
 
 func parseFolderRules(list []FolderRule) folderRules { return eng.ParseRules(list) }
+
+func sanitizeRel(p string) (string, bool) { return eng.SanitizeRel(p) }
+
+func statePath(dir string) string { return eng.StatePath(dir) }
+
+func loadState(dir string) clientState { return eng.LoadState(dir) }
+
+func saveState(dir string, s clientState) { eng.SaveState(dir, s) }
+
+func hashPath(path string) (string, error) { return eng.HashPath(path) }
+
+func fileSize(path string) int64 { return eng.FileSize(path) }
+
+func localPath(dir, name string) string { return eng.LocalPath(dir, name) }
+
+func stateCoversDir(files map[string]stateFile, dir string) bool {
+	return eng.StateCoversDir(files, dir)
+}
+
+func conflictName(name string) string { return eng.ConflictName(name) }
+
+func pruneEmptyDirs(root, filePath string) { eng.PruneEmptyDirs(root, filePath) }
+
+func dirStats(root string) (int, int64) { return eng.DirStats(root) }
+
+func hasStatePrefix(st clientState, prefix string) bool { return eng.HasStatePrefix(st, prefix) }
+
+func localScan(dir string, st clientState, rules folderRules) map[string]stateFile {
+	return eng.LocalScan(dir, st, rules)
+}
+
+func localDirs(dir string, rules folderRules) []string { return eng.LocalDirs(dir, rules) }
+
+func loadIgnore(dir string) ignoreList { return eng.LoadIgnore(dir) }
+
+func parseIgnoreText(text string) ignoreList { return eng.ParseIgnoreText(text) }
+
+func fetchChanges(base, token string, since int64) (int64, []manifestFile, error) {
+	return eng.FetchChanges(base, token, since)
+}
+
+func fetchManifest(base, token string) (int64, []manifestFile, error) {
+	return eng.FetchManifest(base, token)
+}
+
+func uploadFile(base, dir, name, token string) (string, int64, int64, error) {
+	return eng.UploadFile(base, dir, name, token)
+}
+
+func downloadFile(base, dir, name string, mtime int64, token string) error {
+	return eng.DownloadFile(base, dir, name, mtime, token)
+}
+
+func deleteRemote(base, name, token string) error { return eng.DeleteRemote(base, name, token) }
+
+func mkdirRemote(base, name, token string) (int64, error) { return eng.MkdirRemote(base, name, token) }
+
+func authHeader(req *http.Request, token string) { eng.AuthHeader(req, token) }

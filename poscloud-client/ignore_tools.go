@@ -350,12 +350,12 @@ func indexOfLine(lines []string, want string) int {
 
 // pathIgnored сообщает, исключён ли файл: сам путь или любой его родительский каталог.
 func pathIgnored(key string, ign ignoreList) bool {
-	if ign.match(key) {
+	if ign.Match(key) {
 		return true
 	}
 	parts := strings.Split(key, "/")
 	for i := 1; i < len(parts); i++ {
-		if ign.match(strings.Join(parts[:i], "/")) {
+		if ign.Match(strings.Join(parts[:i], "/")) {
 			return true
 		}
 	}
