@@ -44,6 +44,9 @@ type Syncer struct {
 	save         func(Config) // вызывается, когда движок меняет настройки (правила) — владелец сохраняет их
 	needManifest bool
 
+	running bool
+	stop    chan struct{}
+
 	lastSync string
 	count    int
 	online   bool

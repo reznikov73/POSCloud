@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +15,6 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -57,7 +54,6 @@ type App struct {
 	editAfterShot bool // открывать редактор после снимка
 	autoRun       bool // начинать синхронизацию сразу при открытии программы
 	hotkeys       HotkeyConfig
-	stopCh        chan struct{}
 
 	logs     []string
 	logFile  *os.File
@@ -277,13 +273,7 @@ func (a *App) SaveSettings(host string, port int, localDir string, interval int,
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	a.mu.Lock()
-	stop := a.stopCh
-	a.stopCh = nil
-	a.mu.Unlock()
-	if stop != nil {
-		close(stop)
-	}
+	a.syn.Stop()
 }
 
 func (a *App) log(s string) {
@@ -469,51 +459,20 @@ func (a *App) StartSync(host string, port int, localDir string, interval int, to
 		interval = 3
 	}
 	a.interval = interval
-	a.stopCh = make(chan struct{})
-	stop := a.stopCh
-	dir := a.localDir
 	a.syncRun = true
 	a.mu.Unlock()
 
 	a.syn.Update(a.syncConfig())
-
-	_ = os.MkdirAll(dir, 0755)
-
-	_ = os.RemoveAll(filepath.Join(dir, ".poscloud-cache"))
-
-	go func() {
-		a.log("старт синхронизации: " + dir)
-		go a.watchLoop(dir, stop)
-		go a.eventsLoop(stop)
-		// Первая сверка после запуска — полная: состояние догоняет сервер и
-		// само восстанавливается, если локальные записи почему-то разошлись.
-		a.syn.MarkManifestResync()
-		a.syn.SyncOnce(true)
-		tk := time.NewTicker(time.Duration(interval) * time.Second)
-		defer tk.Stop()
-		for {
-			select {
-			case <-stop:
-				a.log("синхронизация остановлена")
-				return
-			case <-tk.C:
-				a.syn.SyncOnce(false)
-			}
-		}
-	}()
+	a.syn.Run()
 	a.persistConfig()
 	return a.GetClientState()
 }
 
 func (a *App) StopSync() ClientState {
 	a.mu.Lock()
-	stop := a.stopCh
-	a.stopCh = nil
 	a.syncRun = false
 	a.mu.Unlock()
-	if stop != nil {
-		close(stop)
-	}
+	a.syn.Stop()
 	return a.GetClientState()
 }
 
@@ -539,104 +498,6 @@ func (a *App) DeleteLocalFile(name string) error {
 		return fmt.Errorf("недопустимое имя")
 	}
 	return os.Remove(localPath(dir, clean))
-}
-
-// watchLoop следит за изменениями в папке синхронизации и запускает цикл синхронизации
-// с задержкой (debounce). Останавливается при закрытии stop. Если watcher создать не
-// удалось — просто выходим: синхронизация продолжит работать по таймеру.
-func (a *App) watchLoop(dir string, stop chan struct{}) {
-
-	w, err := fsnotify.NewWatcher()
-
-	if err != nil {
-
-		a.log("слежение недоступно: " + err.Error() + " (работаем по таймеру)")
-
-		return
-
-	}
-
-	if err := w.Add(dir); err != nil {
-
-		a.log("не удалось следить за папкой: " + err.Error() + " (работаем по таймеру)")
-
-		_ = w.Close()
-
-		return
-
-	}
-
-	a.log("слежение за изменениями включено: " + dir)
-
-	var timer *time.Timer
-
-	defer func() {
-
-		if timer != nil {
-
-			timer.Stop()
-
-		}
-
-		_ = w.Close()
-
-	}()
-
-	for {
-
-		select {
-
-		case <-stop:
-
-			return
-
-		case ev, ok := <-w.Events:
-
-			if !ok {
-
-				return
-
-			}
-
-			if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
-
-				continue
-
-			}
-
-			if strings.HasPrefix(filepath.Base(ev.Name), ".") {
-
-				continue // служебные и временные файлы пропускаем
-
-			}
-
-			if rel, rerr := filepath.Rel(dir, ev.Name); rerr == nil && a.syn.Rules().IsOff(filepath.ToSlash(rel)) {
-
-				continue // папка отключена от синхронизации
-
-			}
-
-			if timer != nil {
-
-				timer.Stop()
-
-			}
-
-			timer = time.AfterFunc(500*time.Millisecond, func() { a.syn.SyncOnce(false) })
-
-		case err, ok := <-w.Errors:
-
-			if !ok {
-
-				return
-
-			}
-
-			a.log("ошибка слежения: " + err.Error())
-
-		}
-
-	}
 }
 
 // GetIgnore возвращает текущее содержимое .poscloudignore (пустая строка, если файла нет).
@@ -711,67 +572,6 @@ func (a *App) ClearLocalCopy(rel string) (int, error) { return a.syn.ClearLocalC
 func (a *App) DeleteServerFolder(rel string) (int, error) { return a.syn.DeleteServerFolder(rel) }
 
 // eventsLoop держит подключение к /events и запускает синхронизацию по событию.
-func (a *App) eventsLoop(stop chan struct{}) {
-	for {
-		select {
-		case <-stop:
-			return
-		default:
-		}
-		a.mu.Lock()
-		base := fmt.Sprintf("http://%s:%d", a.host, a.port)
-		tok := a.token
-		a.mu.Unlock()
-		runEventsOnce(base, tok, stop, func() { a.syn.SyncOnce(false) })
-		select {
-		case <-stop:
-			return
-		case <-time.After(3 * time.Second):
-		}
-	}
-}
-
-// runEventsOnce читает поток /events до обрыва и вызывает onEvent на каждое событие.
-func runEventsOnce(base, token string, stop chan struct{}, onEvent func()) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		select {
-		case <-stop:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(base, "/")+"/events", nil)
-	if err != nil {
-		return
-	}
-	authHeader(req, token)
-	cl := &http.Client{}
-	resp, err := cl.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return
-	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		var ev struct {
-			Version int64 `json:"version"`
-		}
-		if json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &ev) == nil {
-			onEvent()
-		}
-	}
-}
-
 // AutostartEnabled сообщает, включён ли автозапуск при входе в Windows.
 // AutoRunEnabled сообщает, начинается ли синхронизация сразу при открытии программы.
 func (a *App) AutoRunEnabled() bool {
