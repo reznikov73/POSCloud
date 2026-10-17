@@ -41,6 +41,7 @@ type clientFlags struct {
 	interval  int
 	token     string
 	autostart bool
+	hidden    bool
 }
 
 // bindClientFlags объявляет флаги запуска. Пустая строка и 0 означают
@@ -54,6 +55,7 @@ func bindClientFlags(fs *flag.FlagSet) *clientFlags {
 	fs.IntVar(&f.interval, "interval", 0, "интервал опроса, сек (0 = из сохранённых настроек)")
 	fs.StringVar(&f.token, "token", "", "токен доступа к серверу (получить на сервере)")
 	fs.BoolVar(&f.autostart, "autostart", true, "запускать синхронизацию сразу при старте программы (-autostart=false — не запускать)")
+	fs.BoolVar(&f.hidden, "hidden", false, "запускать скрыто в трее (окно не показывать)")
 	return f
 }
 
@@ -95,6 +97,8 @@ func main() {
 		MinWidth:         820,
 		MinHeight:        560,
 		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 22, A: 1},
+		// -hidden используется автозапуском: старт в трее, без окна настроек.
+		StartHidden: f.hidden,
 		// правый клик в полях ввода: копировать/вставить/вырезать/выделить всё
 		EnableDefaultContextMenu: true,
 		AssetServer:              &assetserver.Options{Assets: assets},

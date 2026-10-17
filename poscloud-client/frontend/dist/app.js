@@ -629,7 +629,7 @@ function editWidth() { return parseInt($("editWidth").value, 10) || 4; }
 
 function setEditTool(tool) {
   editTool = tool;
-  [["editArrow", "arrow"], ["editBlur", "blur"], ["editText", "text"]].forEach(([id, t]) => {
+  [["editArrow", "arrow"], ["editBlur", "blur"], ["editText", "text"], ["editCrop", "crop"]].forEach(([id, t]) => {
     $(id).classList.toggle("primary", t === tool);
   });
 }
@@ -644,7 +644,7 @@ function editCanvasPoint(e) {
   return { x: (e.clientX - r.left) * kx, y: (e.clientY - r.top) * ky };
 }
 
-let editOriginal = null; // снимок без правок — для кнопки «Вернуть исходный»
+let editOriginal = null; // снимок без правок: { w, h, data } — для кнопки «Вернуть исходный»
 
 function updateEditButtons() {
   $("editUndo").disabled = editUndoStack.length === 0;
@@ -654,7 +654,12 @@ function updateEditButtons() {
 function undoEditStep() {
   const prev = editUndoStack.pop();
   if (prev) {
-    editCtx().putImageData(prev, 0, 0);
+    const c = editCanvas();
+    if (c.width !== prev.w || c.height !== prev.h) {
+      c.width = prev.w;
+      c.height = prev.h;
+    }
+    editCtx().putImageData(prev.data, 0, 0);
     $("editHint").textContent = "Шаг отменён";
   } else {
     $("editHint").textContent = "Отменять больше нечего";
@@ -665,7 +670,7 @@ function undoEditStep() {
 function editPushUndo() {
   const c = editCanvas();
   try {
-    editUndoStack.push(editCtx().getImageData(0, 0, c.width, c.height));
+    editUndoStack.push({ w: c.width, h: c.height, data: editCtx().getImageData(0, 0, c.width, c.height) });
   } catch (e) { /* очень большой снимок — просто без отмены шагов */ }
   if (editUndoStack.length > 6) editUndoStack.shift();
   updateEditButtons();
@@ -698,6 +703,37 @@ function drawEditorBlurBox(ctx, x0, y0, x1, y1) {
   ctx.setLineDash([6, 4]);
   ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
   ctx.restore();
+}
+
+function drawEditorCropBox(ctx, x0, y0, x1, y1) {
+  ctx.save();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+  ctx.restore();
+}
+
+function applyEditorCrop(x0, y0, x1, y1) {
+  const c = editCanvas();
+  const x = Math.max(0, Math.min(c.width - 1, Math.floor(Math.min(x0, x1))));
+  const y = Math.max(0, Math.min(c.height - 1, Math.floor(Math.min(y0, y1))));
+  const w = Math.min(c.width - x, Math.max(0, Math.floor(Math.abs(x1 - x0))));
+  const h = Math.min(c.height - y, Math.max(0, Math.floor(Math.abs(y1 - y0))));
+  if (w < 4 || h < 4) {
+    $("editHint").textContent = "Область для обрезки слишком мала";
+    return;
+  }
+  editPushUndo();
+  const tmp = document.createElement("canvas");
+  tmp.width = w;
+  tmp.height = h;
+  tmp.getContext("2d").drawImage(c, x, y, w, h, 0, 0, w, h);
+  c.width = w;
+  c.height = h;
+  editCtx().drawImage(tmp, 0, 0);
+  setEditTool("arrow");
+  $("editHint").textContent = "Обрезано: " + w + "×" + h + ". Ctrl+Z — отменить";
 }
 
 function applyEditorBlur(ctx, x0, y0, x1, y1) {
@@ -749,7 +785,7 @@ async function openEditor(cap) {
     });
     const ctx = editCtx();
     ctx.drawImage(img, 0, 0, c.width, c.height);
-    editOriginal = ctx.getImageData(0, 0, c.width, c.height);
+    editOriginal = { w: c.width, h: c.height, data: ctx.getImageData(0, 0, c.width, c.height) };
   } catch (e) {
     editOriginal = null;
     flash("не удалось открыть снимок в редакторе", false);
@@ -782,6 +818,10 @@ $("editText").addEventListener("click", () => {
   setEditTool("text");
   $("editHint").textContent = "Инструмент: текст — впишите подпись и щёлкните по снимку";
 });
+$("editCrop").addEventListener("click", () => {
+  setEditTool("crop");
+  $("editHint").textContent = "Обрезать: выделите мышью область — она сразу применится";
+});
 
 $("editCanvas").addEventListener("mousedown", (e) => {
   if (!editCapture) return;
@@ -796,6 +836,11 @@ $("editCanvas").addEventListener("mousedown", (e) => {
     drawEditorText(editCtx(), p.x, p.y, text);
     return;
   }
+  if (editTool === "crop") {
+    editBase = editCtx().getImageData(0, 0, editCanvas().width, editCanvas().height);
+    editDragFrom = p;
+    return;
+  }
   editPushUndo();
   editBase = editCtx().getImageData(0, 0, editCanvas().width, editCanvas().height);
   editDragFrom = p;
@@ -808,6 +853,7 @@ window.addEventListener("mousemove", (e) => {
   ctx.putImageData(editBase, 0, 0);
   if (editTool === "arrow") drawEditorArrow(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
   else if (editTool === "blur") drawEditorBlurBox(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
+  else if (editTool === "crop") drawEditorCropBox(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
 });
 
 window.addEventListener("mouseup", (e) => {
@@ -815,7 +861,8 @@ window.addEventListener("mouseup", (e) => {
   const p = editCanvasPoint(e);
   const ctx = editCtx();
   ctx.putImageData(editBase, 0, 0);
-  if (editTool === "arrow") drawEditorArrow(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
+  if (editTool === "crop") applyEditorCrop(editDragFrom.x, editDragFrom.y, p.x, p.y);
+  else if (editTool === "arrow") drawEditorArrow(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
   else if (editTool === "blur") applyEditorBlur(ctx, editDragFrom.x, editDragFrom.y, p.x, p.y);
   editDragFrom = null;
   editBase = null;
@@ -826,7 +873,12 @@ $("editUndo").addEventListener("click", undoEditStep);
 $("editReset").addEventListener("click", () => {
   if (!editOriginal) return;
   editPushUndo(); // чтобы и сброс можно было отменить
-  editCtx().putImageData(editOriginal, 0, 0);
+  const c = editCanvas();
+  if (c.width !== editOriginal.w || c.height !== editOriginal.h) {
+    c.width = editOriginal.w;
+    c.height = editOriginal.h;
+  }
+  editCtx().putImageData(editOriginal.data, 0, 0);
   $("editHint").textContent = "Все правки сняты — их можно вернуть кнопкой «Отменить шаг»";
 });
 

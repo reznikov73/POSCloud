@@ -403,6 +403,34 @@ func (a *App) trayShowWindow() {
 	}
 }
 
+// showWindowForShot показывает окно для сценария снимка и запоминает,
+// было ли оно скрыто: после завершения окно нужно вернуть в трей.
+func (a *App) showWindowForShot() {
+	if a.ctx == nil {
+		return
+	}
+	a.mu.Lock()
+	if !a.shotUIActive {
+		a.shotUIActive = true
+		a.shotWasHidden = !isWindowVisible(findAppWindow())
+	}
+	a.mu.Unlock()
+	runtime.WindowShow(a.ctx)
+}
+
+// endShotFlow завершает сценарий снимка и при необходимости прячет окно
+// обратно в трей (hide=false оставляет окно, например при ошибке сохранения).
+func (a *App) endShotFlow(hide bool) {
+	a.mu.Lock()
+	restore := a.shotUIActive && a.shotWasHidden
+	a.shotUIActive = false
+	a.shotWasHidden = false
+	a.mu.Unlock()
+	if hide && restore && a.ctx != nil {
+		runtime.WindowHide(a.ctx)
+	}
+}
+
 // trayQuitting — признак, что выход запрошен из трея (чтобы OnBeforeClose не блокировал закрытие).
 var trayQuitting atomic.Bool
 

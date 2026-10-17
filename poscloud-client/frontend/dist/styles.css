@@ -155,7 +155,7 @@ table.files td:last-child{text-align:right;width:1%;white-space:nowrap}
 .shot-overlay[hidden]{display:none}
 .shot-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px 8px;flex-wrap:wrap}
 .shot-hint{color:#e8e6e3;font-size:12px}
-.shot-actions{display:flex;gap:6px}
+.shot-actions{display:flex;gap:6px;flex-wrap:wrap;row-gap:6px}
 .shot-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:crosshair;user-select:none;-webkit-user-select:none}
 .shot-stage img{max-width:100%;max-height:100%;display:block}
 .shot-sel{position:fixed;border:2px solid #0075de;background:rgba(0,117,222,.18);pointer-events:none;z-index:101}

@@ -536,7 +536,7 @@ func (a *App) StartRegionCapture() (RegionCapture, error) {
 	pendingShot = cap
 	pendingShotMu.Unlock()
 
-	a.trayShowWindow() // окно нужно, чтобы выделить область
+	a.showWindowForShot() // окно нужно, чтобы выделить область; после — вернём в трей
 	return RegionCapture{ID: cap.id, Mode: "region", Width: b.Dx(), Height: b.Dy(), Preview: dataURL}, nil
 }
 
@@ -571,9 +571,16 @@ func (a *App) FinishRegionCapture(id string, x, y, w, h float64) (string, error)
 	b := cap.img.Bounds()
 	rect, ok := cropRect(b.Dx(), b.Dy(), x, y, w, h)
 	if !ok {
+		a.endShotFlow(false) // окно оставляем, чтобы пользователь увидел сообщение
 		return "", fmt.Errorf("область слишком мала")
 	}
-	return a.saveShot(cropRGBA(cap.img, rect))
+	path, err := a.saveShot(cropRGBA(cap.img, rect))
+	if err != nil {
+		a.endShotFlow(false)
+		return "", err
+	}
+	a.endShotFlow(true)
+	return path, nil
 }
 
 // CancelRegionCapture отменяет выбор области.
@@ -583,6 +590,7 @@ func (a *App) CancelRegionCapture(id string) {
 		pendingShot = nil
 	}
 	pendingShotMu.Unlock()
+	a.endShotFlow(true)
 }
 
 // BeginRegionEdit вырезает выбранную область и отдаёт её в редактор.
@@ -615,7 +623,7 @@ func (a *App) storeForEdit(id string, img *image.RGBA) (RegionCapture, error) {
 	pendingShot = &screenCapture{id: id, mode: "edit", img: img, preview: dataURL}
 	pendingShotMu.Unlock()
 
-	a.trayShowWindow()
+	a.showWindowForShot()
 	return RegionCapture{ID: id, Mode: "edit", Width: b.Dx(), Height: b.Dy(), Preview: dataURL}, nil
 }
 
@@ -623,6 +631,7 @@ func (a *App) storeForEdit(id string, img *image.RGBA) (RegionCapture, error) {
 func (a *App) SaveEditedShot(id, dataURL string) (string, error) {
 	img, err := decodeDataURL(dataURL)
 	if err != nil {
+		a.endShotFlow(false)
 		return "", err
 	}
 	pendingShotMu.Lock()
@@ -630,7 +639,13 @@ func (a *App) SaveEditedShot(id, dataURL string) (string, error) {
 		pendingShot = nil
 	}
 	pendingShotMu.Unlock()
-	return a.saveShot(img)
+	path, err := a.saveShot(img)
+	if err != nil {
+		a.endShotFlow(false)
+		return "", err
+	}
+	a.endShotFlow(true)
+	return path, nil
 }
 
 // decodeDataURL разбирает «data:image/png;base64,…» в изображение.

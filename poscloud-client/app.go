@@ -52,6 +52,8 @@ type App struct {
 	token         string
 	shotSync      bool // сохранять снимки экрана в папку синхронизации
 	editAfterShot bool // открывать редактор после снимка
+	shotUIActive  bool // сценарий снимка идёт: окно могло быть показано для выбора/редактора
+	shotWasHidden bool // окно было скрыто до начала сценария снимка
 	autoRun       bool // начинать синхронизацию сразу при открытии программы
 	hotkeys       HotkeyConfig
 
@@ -96,6 +98,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.startHotkeys()
 	a.log("Клиент POSCloud инициализирован")
+	a.migrateAutostartEntry()
 	if a.autoRun {
 		a.startOnLaunch()
 	}
@@ -611,10 +614,51 @@ func (a *App) SetAutostart(enabled bool) error {
 		if err != nil {
 			return err
 		}
-		return k.SetStringValue("POSCloud Client", "\""+exe+"\" -autostart")
+		return k.SetStringValue("POSCloud Client", autostartCommand(exe))
 	}
 	_ = k.DeleteValue("POSCloud Client")
 	return nil
+}
+
+// autostartCommand собирает команду автозапуска: при входе в Windows клиент
+// стартует скрыто в трее и сразу начинает синхронизацию.
+func autostartCommand(exe string) string {
+	return "\"" + exe + "\" -autostart -hidden"
+}
+
+// autostartNeedsUpdate сообщает, что старая запись автозапуска указывает на
+// этот exe, но ещё не содержит -hidden (запись предыдущей версии).
+func autostartNeedsUpdate(value, exe string) bool {
+	if value == "" || exe == "" {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(value), strings.ToLower(exe)) {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(value), "-hidden")
+}
+
+// migrateAutostartEntry обновляет запись автозапуска, созданную старой версией:
+// иначе после входа в Windows главное окно продолжило бы открываться.
+func (a *App) migrateAutostartEntry() {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		return
+	}
+	defer k.Close()
+	value, _, err := k.GetStringValue("POSCloud Client")
+	if err != nil {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if autostartNeedsUpdate(value, exe) {
+		if err := k.SetStringValue("POSCloud Client", autostartCommand(exe)); err == nil {
+			a.log("автозапуск обновлён: программа будет стартовать в трее без окна")
+		}
+	}
 }
 
 // --- прогресс передач (для интерфейса) ---
