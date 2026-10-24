@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,10 +33,10 @@ func (s *Syncer) Run() {
 	_ = os.MkdirAll(dir, 0755)
 	_ = os.RemoveAll(filepath.Join(dir, ".poscloud-cache"))
 
-	go func() {
+	s.safeGo("run", func() {
 		s.log("старт синхронизации: " + dir)
-		go s.watchLoop(dir, stop)
-		go s.eventsLoop(stop)
+		s.safeGo("watch", func() { s.watchLoop(dir, stop) })
+		s.safeGo("events", func() { s.eventsLoop(stop) })
 		// Первая сверка после запуска — полная: состояние догоняет сервер и
 		// само восстанавливается, если локальные записи почему-то разошлись.
 		s.MarkManifestResync()
@@ -56,7 +55,7 @@ func (s *Syncer) Run() {
 				s.SyncOnce(false)
 			}
 		}
-	}()
+	})
 }
 
 // Stop останавливает цикл синхронизации.
@@ -138,7 +137,7 @@ func (s *Syncer) eventsLoop(stop chan struct{}) {
 		default:
 		}
 		s.mu.Lock()
-		base := fmt.Sprintf("http://%s:%d", s.cfg.Host, s.cfg.Port)
+		base := BaseURL(s.cfg.Host, s.cfg.Port, s.cfg.TLS)
 		tok := s.cfg.Token
 		s.mu.Unlock()
 		s.runEventsOnce(base, tok, stop)
@@ -154,13 +153,13 @@ func (s *Syncer) eventsLoop(stop chan struct{}) {
 func (s *Syncer) runEventsOnce(base, token string, stop chan struct{}) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() {
+	s.safeGo("events-cancel", func() {
 		select {
 		case <-stop:
 			cancel()
 		case <-ctx.Done():
 		}
-	}()
+	})
 	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(base, "/")+"/events", nil)
 	if err != nil {
 		return

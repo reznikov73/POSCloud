@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ import (
 type Config struct {
 	Host                 string       `json:"host"`
 	Port                 int          `json:"port"`
+	TLS                  bool         `json:"tls,omitempty"`
+	TLSFingerprint       string       `json:"tlsFingerprint,omitempty"`
 	Dir                  string       `json:"dir"`
 	Interval             int          `json:"interval"`
 	Token                string       `json:"token"`
@@ -48,15 +51,60 @@ type Syncer struct {
 	running bool
 	stop    chan struct{}
 
-	lastSync   string
-	count      int
-	online     bool
-	errMsg     string
-	authFailed bool // токен уже отвергнут; не дублируем запись в журнал каждый цикл
+	lastSync    string
+	count       int
+	online      bool
+	errMsg      string
+	authFailed  bool // токен уже отвергнут; не дублируем запись в журнал каждый цикл
+	authRetryAt time.Time
+	authBackoff time.Duration
+
+	crashf func(string) // дополнительный приёмник стеков паник (crash.log клиента)
 }
 
 // NewSyncer создаёт движок синхронизации. logf может быть nil (журнал не ведётся),
 // save может быть nil (настройки не сохраняются при изменении движком).
+// SetCrashLogger задаёт дополнительный приёмник для стеков паник.
+func (s *Syncer) SetCrashLogger(fn func(string)) {
+	s.mu.Lock()
+	s.crashf = fn
+	s.mu.Unlock()
+}
+
+// safeGo запускает горутину с recover: паника в фоне не убивает процесс молча.
+func (s *Syncer) safeGo(where string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				msg := fmt.Sprintf("panic в %s: %v\n%s", where, r, stack)
+				s.log(msg)
+				s.mu.Lock()
+				crashf := s.crashf
+				s.mu.Unlock()
+				if crashf != nil {
+					crashf(msg)
+				}
+			}
+		}()
+		fn()
+	}()
+}
+
+// ResetAuthBackoff снимает паузу после 401: вызывается при смене токена
+// или кнопкой «Проверить токен».
+func (s *Syncer) ResetAuthBackoff() {
+	s.mu.Lock()
+	s.authRetryAt = time.Time{}
+	s.authBackoff = 0
+	s.mu.Unlock()
+}
+
+// goSync запускает SyncOnce в защищённой горутине.
+func (s *Syncer) goSync(verbose bool) {
+	s.safeGo("sync", func() { s.SyncOnce(verbose) })
+}
+
 func NewSyncer(cfg Config, logf func(string), save func(Config)) *Syncer {
 	if logf == nil {
 		logf = func(string) {}
@@ -159,7 +207,7 @@ func (s *Syncer) AddRule(path, mode string) error {
 	s.saveNow()
 	s.log("папка «" + clean + "»: режим — " + FolderModeTitle(mode))
 	s.MarkManifestResync()
-	go s.SyncOnce(false)
+	s.goSync(false)
 	return nil
 }
 
@@ -183,7 +231,7 @@ func (s *Syncer) SetRuleMode(path, mode string) error {
 	s.saveNow()
 	s.log("папка «" + clean + "»: режим — " + FolderModeTitle(mode))
 	s.MarkManifestResync()
-	go s.SyncOnce(false)
+	s.goSync(false)
 	return nil
 }
 
@@ -204,7 +252,7 @@ func (s *Syncer) RemoveRule(path string) error {
 	s.saveNow()
 	s.log("папка «" + clean + "»: правило убрано")
 	s.MarkManifestResync()
-	go s.SyncOnce(false)
+	s.goSync(false)
 	return nil
 }
 
@@ -236,7 +284,7 @@ func (s *Syncer) MarkManifestResync() {
 // Resync перечитывает полный список файлов сервера и запускает синхронизацию.
 func (s *Syncer) Resync() {
 	s.MarkManifestResync()
-	go s.SyncOnce(true)
+	s.goSync(true)
 }
 
 // RulesFreeEnabled сообщает, включён ли режим «без правил».
@@ -259,7 +307,7 @@ func (s *Syncer) SetRulesFree(on bool) error {
 		s.log("режим без правил выключен: действуют правила папок")
 	}
 	s.MarkManifestResync()
-	go s.SyncOnce(false)
+	s.goSync(false)
 	return nil
 }
 
@@ -335,9 +383,13 @@ func (s *Syncer) SyncOnce(verbose bool) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	s.mu.Lock()
+	if !s.authRetryAt.IsZero() && time.Now().Before(s.authRetryAt) {
+		s.mu.Unlock()
+		return
+	}
 	dir := s.cfg.Dir
 	tok := s.cfg.Token
-	host, port := s.cfg.Host, s.cfg.Port
+	host, port, secure := s.cfg.Host, s.cfg.Port, s.cfg.TLS
 	list := append([]FolderRule(nil), s.cfg.Rules...)
 	free := s.cfg.RulesFree
 	needMF := s.needManifest
@@ -347,7 +399,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 		return
 	}
 	_ = os.MkdirAll(dir, 0755)
-	base := fmt.Sprintf("http://%s:%d", host, port)
+	base := BaseURL(host, port, secure)
 	rules := ParseRules(list)
 	rules.Free = free
 
@@ -368,9 +420,20 @@ func (s *Syncer) SyncOnce(verbose bool) {
 			s.online = false
 			first := !s.authFailed
 			s.authFailed = true
+			backoff := s.authBackoff
+			if backoff == 0 {
+				backoff = 30 * time.Second
+			} else {
+				backoff *= 2
+				if backoff > 5*time.Minute {
+					backoff = 5 * time.Minute
+				}
+			}
+			s.authBackoff = backoff
+			s.authRetryAt = time.Now().Add(backoff)
 			s.mu.Unlock()
 			if first {
-				s.log("токен отозван: получите новый токен на сервере (" + base + ")")
+				s.log(fmt.Sprintf("токен отозван: следующий запрос через %s; получите новый токен на сервере (%s)", backoff, base))
 			}
 			return
 		}
@@ -386,6 +449,8 @@ func (s *Syncer) SyncOnce(verbose bool) {
 	s.errMsg = ""
 	s.online = true
 	s.authFailed = false
+	s.authBackoff = 0
+	s.authRetryAt = time.Time{}
 	s.mu.Unlock()
 
 	srv := map[string]ManifestFile{}
@@ -838,7 +903,7 @@ func (s *Syncer) ServerFolders() ([]ServerFolderNode, error) {
 	s.mu.Lock()
 	dir := s.cfg.Dir
 	tok := s.cfg.Token
-	base := fmt.Sprintf("http://%s:%d", s.cfg.Host, s.cfg.Port)
+	base := BaseURL(s.cfg.Host, s.cfg.Port, s.cfg.TLS)
 	s.mu.Unlock()
 	if dir == "" {
 		return nil, fmt.Errorf("не задана папка синхронизации")
@@ -1021,7 +1086,7 @@ func (s *Syncer) DeleteServerFolder(rel string) (int, error) {
 	}
 	s.mu.Lock()
 	tok := s.cfg.Token
-	base := fmt.Sprintf("http://%s:%d", s.cfg.Host, s.cfg.Port)
+	base := BaseURL(s.cfg.Host, s.cfg.Port, s.cfg.TLS)
 	s.mu.Unlock()
 	if tok == "" {
 		return 0, fmt.Errorf("не задан токен доступа")
@@ -1069,9 +1134,9 @@ func (s *Syncer) DeleteServerFolder(rel string) (int, error) {
 }
 
 // TestConnection проверяет связь и токен, возвращает текст для интерфейса.
-func TestConnection(host string, port int, token string) string {
-	cl := &http.Client{Timeout: 4 * time.Second}
-	req, err := http.NewRequest("GET", fmt.Sprintf("http://%s:%d/whoami", host, port), nil)
+func TestConnection(host string, port int, token string, secure bool) string {
+	cl := &http.Client{Timeout: 4 * time.Second, Transport: getHTTPClient().Transport}
+	req, err := http.NewRequest("GET", BaseURL(host, port, secure)+"/whoami", nil)
 	if err != nil {
 		return "Ошибка: " + err.Error()
 	}

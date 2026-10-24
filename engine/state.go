@@ -32,26 +32,72 @@ type State struct {
 func StatePath(dir string) string { return filepath.Join(dir, ".poscloud-state.json") }
 
 // LoadState читает состояние; отсутствующий или битый файл — пустое состояние.
+// Если основной файл повреждён, пробуем резервную копию .bak.
 func LoadState(dir string) State {
 	s := State{Files: map[string]StateFile{}}
-	data, err := os.ReadFile(StatePath(dir))
-	if err != nil {
-		return s
-	}
-	var ss State
-	if json.Unmarshal(data, &ss) == nil {
-		s = ss
-		if s.Files == nil {
-			s.Files = map[string]StateFile{}
+	for _, p := range []string{StatePath(dir), StatePath(dir) + ".bak"} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var ss State
+		if json.Unmarshal(data, &ss) == nil {
+			if ss.Files == nil {
+				ss.Files = map[string]StateFile{}
+			}
+			return ss
 		}
 	}
 	return s
 }
 
-// SaveState записывает состояние.
+// SaveState записывает состояние атомарно и сохраняет предыдущую версию в .bak.
 func SaveState(dir string, s State) {
 	b, _ := json.MarshalIndent(s, "", "  ")
-	_ = os.WriteFile(StatePath(dir), b, 0644)
+	p := StatePath(dir)
+	if old, err := os.ReadFile(p); err == nil && len(old) > 0 && json.Valid(old) {
+		_ = writeFileAtomic(p+".bak", old, 0644)
+	}
+	_ = writeFileAtomic(p, b, 0644)
+}
+
+// writeFileAtomic пишет файл через временный файл и переименование,
+// чтобы внезапное завершение процесса не оставило наполовину записанный JSON.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 // HashPath считает sha256 файла.

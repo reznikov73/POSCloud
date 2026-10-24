@@ -118,7 +118,7 @@ func fetchBlockList(base, name, token string) ([]string, int64, error) {
 		return nil, 0, err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -145,7 +145,7 @@ func putBlock(base, name, hash string, data []byte, token string) error {
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func getBlock(base, name, hash, token string) ([]byte, error) {
 		return nil, err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func commitBlocks(base, name string, size, mtime int64, blocks []string, token s
 	}
 	req.Header.Set("Content-Type", "application/json")
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return "", 0, 0, nil, err
 	}

@@ -566,6 +566,9 @@ func reloadConfig() {
 		gSyn.Stop()
 	}
 	gCfg = loadConfig()
+	if err := engine.ConfigureTLS(gCfg.TLSFingerprint); err != nil {
+		logf("TLS: %v", err)
+	}
 	gSyn.Update(gCfg.Config)
 	if wasRunning && synConfigured() {
 		gSyn.Run()
@@ -657,7 +660,8 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			}
 		case idSTest:
 			port, _ := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
-			res := engine.TestConnection(strings.TrimSpace(getText(hEdHost)), port, strings.TrimSpace(getText(hEdToken)))
+			_ = engine.ConfigureTLS(gCfg.TLSFingerprint)
+			res := engine.TestConnection(strings.TrimSpace(getText(hEdHost)), port, strings.TrimSpace(getText(hEdToken)), gCfg.TLS)
 			messageBox(hwnd, res, appTitle, mbOk|mbIconInfo)
 		case idSSave:
 			port, err1 := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
@@ -723,6 +727,9 @@ func main() {
 	}
 
 	gCfg = loadConfig()
+	if err := engine.ConfigureTLS(gCfg.TLSFingerprint); err != nil {
+		logf("TLS: %v", err)
+	}
 	gSyn = engine.NewSyncer(gCfg.Config, func(s string) { logf("%s", s) }, func(c engine.Config) {
 		gCfg.Config = c
 		_ = saveConfig(gCfg)

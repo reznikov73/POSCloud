@@ -1,6 +1,11 @@
 package engine
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -53,7 +59,60 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-var httpClient = &http.Client{Timeout: 60 * time.Second}
+var (
+	httpClient   = &http.Client{Timeout: 60 * time.Second}
+	httpClientMu sync.RWMutex
+)
+
+func getHTTPClient() *http.Client {
+	httpClientMu.RLock()
+	defer httpClientMu.RUnlock()
+	return httpClient
+}
+
+// BaseURL собирает адрес сервера с учётом TLS.
+func BaseURL(host string, port int, secure bool) string {
+	scheme := "http"
+	if secure {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}
+
+// ConfigureTLS включает проверку самоподписанного сертификата по отпечатку
+// SHA-256. Пустой отпечаток — обычный системный набор доверенных корней.
+func ConfigureTLS(fingerprint string) error {
+	fp := strings.ToLower(strings.TrimSpace(fingerprint))
+	fp = strings.NewReplacer(":", "", " ", "", "-", "").Replace(fp)
+	if fp == "" {
+		httpClientMu.Lock()
+		httpClient = &http.Client{Timeout: 60 * time.Second}
+		httpClientMu.Unlock()
+		return nil
+	}
+	raw, err := hex.DecodeString(fp)
+	if err != nil || len(raw) != sha256.Size {
+		return fmt.Errorf("отпечаток сертификата должен быть 64 hex-символа")
+	}
+	tc := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, // проверяем не DNS, а точный отпечаток сертификата
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("сервер не прислал сертификат")
+			}
+			sum := sha256.Sum256(rawCerts[0])
+			if subtle.ConstantTimeCompare(sum[:], raw) != 1 {
+				return fmt.Errorf("отпечаток сертификата не совпадает")
+			}
+			return nil
+		},
+	}
+	httpClientMu.Lock()
+	httpClient = &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{TLSClientConfig: tc}}
+	httpClientMu.Unlock()
+	return nil
+}
 
 // ErrUnauthorized — сервер отверг токен (401). Отдельная ошибка нужна,
 // чтобы клиент не путал это с потерей сети.
@@ -79,7 +138,7 @@ func FetchChanges(base, token string, since int64) (int64, []ManifestFile, error
 		return 0, nil, err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -107,7 +166,7 @@ func FetchManifest(base, token string) (int64, []ManifestFile, error) {
 		return 0, nil, err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -157,7 +216,7 @@ func UploadFile(base, dir, name, token string) (string, int64, int64, error) {
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -195,7 +254,7 @@ func DownloadFile(base, dir, name string, mtime int64, token string) error {
 		return err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -242,7 +301,7 @@ func DeleteRemote(base, name, token string) error {
 		return err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -260,7 +319,7 @@ func MkdirRemote(base, name, token string) (int64, error) {
 		return 0, err
 	}
 	AuthHeader(req, token)
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return 0, err
 	}
