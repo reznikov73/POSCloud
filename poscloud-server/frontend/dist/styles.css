@@ -99,6 +99,10 @@ table.files th{text-align:left;color:var(--muted);font-weight:600;padding:4px 7p
 table.files td{padding:3px 7px;border-bottom:1px solid var(--line-2)}
 table.files tr:last-child td{border-bottom:none}
 table.files td:last-child{text-align:right;width:1%;white-space:nowrap}
+table.files td.token-cell{white-space:nowrap}
+.token-value{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;color:#0b4d8a;letter-spacing:.5px}
+.token-missing{color:var(--faint);font-size:11px}
+.token-cell .btn{margin-left:4px}
 .empty{color:var(--muted);text-align:center;padding:10px 0 !important}
 .del{background:transparent;border:1px solid rgba(229,72,77,.35);color:#c62a2f;border-radius:5px;
   padding:2px 6px;font-size:11px;cursor:pointer;transition:.15s}

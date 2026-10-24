@@ -93,19 +93,91 @@ function renderUsers(users) {
   });
 }
 
+function showTokenBox(tok) {
+  $("tokenBox").style.display = "block";
+  $("tokenValue").textContent = tok;
+  $("tokenBox").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function tokenButton(text, cls, onClick) {
+  const b = document.createElement("button");
+  b.className = cls;
+  b.textContent = text;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
 function renderTokens(tokens) {
   const tb = $("tokenRows");
-  if (!tokens || tokens.length === 0) { tb.innerHTML = '<tr><td colspan="4" class="empty">нет токенов</td></tr>'; return; }
+  if (!tokens || tokens.length === 0) { tb.innerHTML = '<tr><td colspan="5" class="empty">нет токенов</td></tr>'; return; }
   tb.innerHTML = "";
   tokens.forEach((t) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = "<td>" + escapeHtml(t.name) + "</td><td>" + escapeHtml(t.createdAt || "-") +
-      "</td><td>" + escapeHtml(t.lastSeen || "-") +
-      '</td><td><button class="del">Отозвать</button></td>';
-    tr.querySelector(".del").addEventListener("click", async () => {
+    const name = document.createElement("td");
+    name.textContent = t.name;
+    tr.appendChild(name);
+
+    const tokTd = document.createElement("td");
+    tokTd.className = "token-cell";
+    if (t.available && t.token) {
+      const val = document.createElement("span");
+      val.className = "token-value";
+      val.textContent = "••••••••";
+      const eye = tokenButton("Показать", "btn small ghost", () => {
+        const shown = val.dataset.shown === "1";
+        val.textContent = shown ? "••••••••" : t.token;
+        val.dataset.shown = shown ? "0" : "1";
+        eye.textContent = shown ? "Показать" : "Скрыть";
+      });
+      const copy = tokenButton("Копировать", "btn small", async () => {
+        try {
+          await call("CopyToClipboard", t.token);
+          flash("Токен скопирован", true);
+        } catch (e) {
+          flash("Не удалось скопировать токен", false);
+        }
+      });
+      tokTd.append(val, eye, copy);
+    } else {
+      const val = document.createElement("span");
+      val.className = "token-missing";
+      val.textContent = "недоступен";
+      val.title = "Токен выдан до обновления: в реестре хранится только хэш";
+      const re = tokenButton("Перевыпустить", "btn small", async () => {
+        if (!confirm('Перевыпустить токен "' + t.name + '"? Старый токен перестанет работать.')) return;
+        try {
+          const tok = await call("ReissueToken", selectedUser.id, t.id);
+          if (tok) {
+            showTokenBox(tok);
+            loadUserDetails();
+            refreshUsers();
+          } else {
+            flash("Не удалось перевыпустить токен", false);
+          }
+        } catch (e) {
+          flash("Не удалось перевыпустить токен", false);
+        }
+      });
+      tokTd.append(val, re);
+    }
+    tr.appendChild(tokTd);
+
+    const created = document.createElement("td");
+    created.textContent = t.createdAt || "-";
+    tr.appendChild(created);
+
+    const seen = document.createElement("td");
+    seen.textContent = t.lastSeen || "-";
+    tr.appendChild(seen);
+
+    const act = document.createElement("td");
+    act.appendChild(tokenButton("Отозвать", "del", async () => {
       if (!confirm('Отозвать токен "' + t.name + '"?')) return;
-      await call("RevokeToken", selectedUser.id, t.id); loadUserDetails(); refreshUsers();
-    });
+      await call("RevokeToken", selectedUser.id, t.id);
+      loadUserDetails();
+      refreshUsers();
+    }));
+    tr.appendChild(act);
     tb.appendChild(tr);
   });
 }

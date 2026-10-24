@@ -86,15 +86,28 @@ func (a *App) startup(ctx context.Context) {
 	a.openLogFile()
 	go a.logPruneLoop()
 	a.loadConfig()
-	a.auth = newAuthStore(filepath.Join(a.root(), "users.json"))
-	a.auth.setLogger(a.log)
-	a.auth.startFlusher()
+	// Флаги важнее server.json; применяем их до создания authStore,
+	// потому что users.json теперь живёт в dataDir.
 	if a.flagPort > 0 {
 		a.srvPort = a.flagPort
 	}
 	if a.flagData != "" {
 		a.srvDir = a.flagData
 	}
+	usersPath := a.usersStorePath()
+	legacyPath := filepath.Join(a.root(), "users.json")
+	if usersPath != legacyPath {
+		if _, err := os.Stat(usersPath); os.IsNotExist(err) {
+			if moved, err := migrateUsersStore(legacyPath, usersPath); err == nil && moved {
+				a.log("реестр пользователей перенесён в " + usersPath)
+			}
+		} else if _, err := os.Stat(legacyPath); err == nil {
+			a.log("реестр пользователей: используется " + usersPath + ", старый файл рядом с exe игнорируется")
+		}
+	}
+	a.auth = newAuthStore(usersPath)
+	a.auth.setLogger(a.log)
+	a.auth.startFlusher()
 	// Явно переданный -autostart важнее сохранённой настройки.
 	if a.autoStartSet {
 		a.autoRun = a.autoStart
@@ -487,6 +500,39 @@ func (a *App) storageRoot() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.srvDir
+}
+
+// usersStorePath — реестр пользователей и устройств живёт в dataDir,
+// чтобы все копии сервера с общим хранилищем видели одни и те же токены.
+func (a *App) usersStorePath() string {
+	dir := strings.TrimSpace(a.storageRoot())
+	if dir == "" {
+		dir = a.root()
+	}
+	return filepath.Join(dir, "users.json")
+}
+
+// migrateUsersStore копирует старый users.json рядом с exe в dataDir,
+// если в dataDir файла ещё нет. Существующий файл не перезаписываем:
+// иначе можно вернуть уже отозванные токены.
+func migrateUsersStore(legacy, dst string) (bool, error) {
+	if filepath.Clean(legacy) == filepath.Clean(dst) {
+		return false, nil
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return false, nil
+	}
+	data, err := os.ReadFile(legacy)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // userDir возвращает каталог хранилища пользователя из контекста запроса.
@@ -1216,6 +1262,29 @@ func (a *App) IssueToken(userID, deviceName string) (string, error) {
 	return tok, nil
 }
 
+// ReissueToken перевыпускает секрет существующего устройства. Старый токен
+// перестаёт работать, новый показывается в интерфейсе один раз.
+func (a *App) ReissueToken(userID, tokenID string) (string, error) {
+	tok, err := a.auth.reissueToken(userID, tokenID)
+	if err != nil {
+		return "", err
+	}
+	a.log("токен перевыпущен для " + userID + " (" + tokenID + ")")
+	return tok, nil
+}
+
+// CopyToClipboard кладёт текст (токен) в буфер обмена.
+func (a *App) CopyToClipboard(text string) error {
+	if a.ctx == nil {
+		return fmt.Errorf("окно ещё не готово")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("нечего копировать")
+	}
+	return runtime.ClipboardSetText(a.ctx, text)
+}
+
 func (a *App) ListTokens(userID string) []TokenInfo {
 	u, ok := a.auth.get(userID)
 	if !ok {
@@ -1223,7 +1292,18 @@ func (a *App) ListTokens(userID string) []TokenInfo {
 	}
 	out := make([]TokenInfo, 0, len(u.Tokens))
 	for _, t := range u.Tokens {
-		out = append(out, TokenInfo{ID: t.ID, Name: t.Name, Enabled: t.Enabled, CreatedAt: t.CreatedAt, LastSeen: t.LastSeen})
+		token := ""
+		if t.TokenEnc != "" {
+			if v, err := unprotectToken(t.TokenEnc); err == nil {
+				token = v
+			} else {
+				a.log("токен " + t.ID + ": не удалось расшифровать: " + err.Error())
+			}
+		}
+		out = append(out, TokenInfo{
+			ID: t.ID, Name: t.Name, Enabled: t.Enabled, CreatedAt: t.CreatedAt,
+			LastSeen: t.LastSeen, Token: token, Available: token != "",
+		})
 	}
 	return out
 }

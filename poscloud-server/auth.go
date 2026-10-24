@@ -24,6 +24,7 @@ type DeviceToken struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Hash      string `json:"hash"`
+	TokenEnc  string `json:"tokenEnc,omitempty"` // токен, зашифрованный DPAPI (для показа в UI)
 	Enabled   bool   `json:"enabled"`
 	CreatedAt string `json:"createdAt"`
 	LastSeen  string `json:"lastSeen"`
@@ -59,6 +60,8 @@ type TokenInfo struct {
 	Enabled   bool   `json:"enabled"`
 	CreatedAt string `json:"createdAt"`
 	LastSeen  string `json:"lastSeen"`
+	Token     string `json:"token,omitempty"`
+	Available bool   `json:"available"` // false для старых токенов: хранится только хэш
 }
 
 type authStore struct {
@@ -403,15 +406,57 @@ func (s *authStore) issueToken(userID, deviceName string) (string, error) {
 		deviceName = "Устройство"
 	}
 	tok := genToken()
+	enc, err := protectToken(tok)
+	if err != nil {
+		return "", fmt.Errorf("не удалось защитить токен: %w", err)
+	}
 	s.users[i].Tokens = append(s.users[i].Tokens, DeviceToken{
 		ID:        genID(),
 		Name:      deviceName,
 		Hash:      hashToken(tok),
+		TokenEnc:  enc,
 		Enabled:   true,
 		CreatedAt: nowStamp(),
 	})
 	if err := s.saveLocked(); err != nil {
 		s.users[i].Tokens = s.users[i].Tokens[:len(s.users[i].Tokens)-1]
+		return "", fmt.Errorf("не удалось сохранить реестр: %w", err)
+	}
+	return tok, nil
+}
+
+// reissueToken заменяет секрет существующего устройства: старый токен
+// перестаёт работать, новый токен показывается в интерфейсе один раз.
+func (s *authStore) reissueToken(userID, tokenID string) (string, error) {
+	tok := genToken()
+	enc, err := protectToken(tok)
+	if err != nil {
+		return "", fmt.Errorf("не удалось защитить токен: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.userIndexLocked(userID)
+	if i < 0 {
+		return "", fmt.Errorf("пользователь не найден")
+	}
+	j := -1
+	for k := range s.users[i].Tokens {
+		if s.users[i].Tokens[k].ID == tokenID {
+			j = k
+			break
+		}
+	}
+	if j < 0 {
+		return "", fmt.Errorf("токен не найден")
+	}
+	before := s.users[i].Tokens[j]
+	s.users[i].Tokens[j].Hash = hashToken(tok)
+	s.users[i].Tokens[j].TokenEnc = enc
+	s.users[i].Tokens[j].Enabled = true
+	s.users[i].Tokens[j].CreatedAt = nowStamp()
+	s.users[i].Tokens[j].LastSeen = ""
+	if err := s.saveLocked(); err != nil {
+		s.users[i].Tokens[j] = before
 		return "", fmt.Errorf("не удалось сохранить реестр: %w", err)
 	}
 	return tok, nil
