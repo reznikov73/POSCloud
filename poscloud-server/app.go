@@ -687,6 +687,13 @@ func (a *App) serverMux() *http.ServeMux {
 				return
 			}
 		}
+		a.mu.Lock()
+		mmPrev := a.loadManifestCached(dir)
+		prevFile, hasPrevFile := mmPrev.Files[clean]
+		a.mu.Unlock()
+		if hasPrevFile {
+			a.snapshotExisting(dir, clean, prevFile)
+		}
 		if err := os.Rename(tn, dst); err != nil {
 			os.Remove(tn)
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
@@ -765,6 +772,15 @@ func (a *App) serverMux() *http.ServeMux {
 		if !ok {
 			writeJSON(w, 400, map[string]any{"error": "недопустимое имя"})
 			return
+		}
+		a.mu.Lock()
+		mPrevDelete := a.loadManifestCached(dir)
+		prevDelete, hasPrevDelete := mPrevDelete.Files[clean]
+		a.mu.Unlock()
+		if hasPrevDelete && !prevDelete.Deleted && !prevDelete.Dir {
+			if err := snapshotUserFile(dir, clean, "trash", prevDelete.Version, prevDelete.Size, prevDelete.MTime, prevDelete.Hash); err != nil {
+				a.log("корзина " + clean + ": " + err.Error())
+			}
 		}
 		a.mu.Lock()
 		m := a.loadManifestCached(dir)
@@ -1022,6 +1038,13 @@ func (a *App) serverMux() *http.ServeMux {
 			os.Remove(tn)
 			writeJSON(w, 500, map[string]any{"error": "не удалось собрать файл"})
 			return
+		}
+		a.mu.Lock()
+		mmPrev := a.loadManifestCached(dir)
+		prevFile, hasPrevFile := mmPrev.Files[clean]
+		a.mu.Unlock()
+		if hasPrevFile {
+			a.snapshotExisting(dir, clean, prevFile)
 		}
 		if err := os.Rename(tn, dst); err != nil {
 			os.Remove(tn)

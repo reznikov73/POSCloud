@@ -221,7 +221,7 @@ async function renderTree() {
     const wrap = document.createElement("div"); wrap.className = "tree-user";
     const head = document.createElement("div"); head.className = "tree-head";
     head.innerHTML = '<span class="name">' + escapeHtml(u.name) + ' <span class="meta">(' + escapeHtml(u.id) + ')</span></span>' +
-      '<span class="meta">' + files.length + ' файл(ов)</span>';
+      '<span class="meta">' + files.length + ' файл(ов)</span><button class="btn small ghost">Корзина</button>';
     const list = document.createElement("div"); list.className = "tree-files";
     if (expandedUsers.has(u.id)) list.classList.add("open");
     if (files.length === 0) {
@@ -235,13 +235,21 @@ async function renderTree() {
         : escapeHtml(f.name);
       const row = document.createElement("div"); row.className = "tree-file";
       row.innerHTML = '<span class="fn">' + nameHtml + '</span><span class="fs">' + fmtSize(f.size) +
-        '</span><span class="fm">' + escapeHtml(f.modified) + '</span><button class="del">Удалить</button>';
+        '</span><span class="fm">' + escapeHtml(f.modified) + '</span><button class="btn small ghost">История</button><button class="del">Удалить</button>';
+      row.querySelector(".btn").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        showHistory(u.id, f.name);
+      });
       row.querySelector(".del").addEventListener("click", async (ev) => {
         ev.stopPropagation();
         if (!confirm('Удалить "' + f.name + '" у пользователя ' + u.name + '?')) return;
         await call("DeleteUserFile", u.id, f.name); renderTree(); refreshUsers();
       });
       list.appendChild(row);
+    });
+    head.querySelector(".btn").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      showHistory(u.id, "");
     });
     head.addEventListener("click", () => {
       if (expandedUsers.has(u.id)) { expandedUsers.delete(u.id); list.classList.remove("open"); }
@@ -250,6 +258,31 @@ async function renderTree() {
     wrap.appendChild(head); wrap.appendChild(list);
     box.appendChild(wrap);
   }
+}
+
+async function showHistory(userID, name) {
+  const isTrash = !name;
+  const items = isTrash ? (await call("Trash", userID)) : (await call("History", userID, name));
+  $("historyCard").style.display = "block";
+  $("historyTitle").textContent = isTrash ? ("корзина — " + userID) : name;
+  const tb = $("historyRows");
+  tb.innerHTML = "";
+  if (!items || items.length === 0) {
+    tb.innerHTML = '<tr><td colspan="4" class="empty">' + (isTrash ? "корзина пуста" : "нет версий") + '</td></tr>';
+    return;
+  }
+  items.forEach((it) => {
+    const tr = document.createElement("tr");
+    const label = it.kind === "trash" ? "корзина" : ("v" + it.version);
+    tr.innerHTML = "<td>" + escapeHtml(label) + "</td><td>" + fmtSize(it.size) + "</td><td>" +
+      escapeHtml(it.createdAt || "-") + '</td><td><button class="btn small">Восстановить</button></td>';
+    tr.querySelector("button").addEventListener("click", async () => {
+      await call(isTrash ? "RestoreTrash" : "RestoreHistory", userID, it.id);
+      renderTree();
+      showHistory(userID, name);
+    });
+    tb.appendChild(tr);
+  });
 }
 
 /* ---------- действия ---------- */
@@ -289,6 +322,7 @@ $("srvRelease").addEventListener("click", async () => {
   renderServer(res); refresh();
   flash(res && res.error ? res.error : "процесс завершён, порт освобождён", !(res && res.error));
 });
+$("historyClose").addEventListener("click", () => { $("historyCard").style.display = "none"; });
 $("srvCopyFP").addEventListener("click", async () => {
   const st = await call("GetServerState");
   if (!st || !st.fingerprint) { flash("отпечаток ещё не создан — включите HTTPS и сохраните настройки", false); return; }
