@@ -30,6 +30,7 @@ function activateTab(id) {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === id));
   document.querySelectorAll(".pane").forEach((x) => x.classList.toggle("active", x.id === id));
   if (id === "tab-files") renderTree();
+  if (id === "tab-conflicts") renderConflicts();
   if (id === "tab-users") refreshUsers();
   if (id === "tab-log") refreshLogs();
 }
@@ -73,6 +74,7 @@ function renderServer(st) {
 
   if (!seeded) {
     $("srvPortInput").value = st.port;
+    $("srvQuotaInput").value = st.quotaGB || 0;
     $("srvDirInput").value = st.dataDir || "";
     $("srvTLS").checked = !!st.tls;
     seeded = true;
@@ -260,6 +262,28 @@ async function renderTree() {
   }
 }
 
+async function renderConflicts() {
+  const items = (await call("Conflicts")) || [];
+  const tb = $("confRows");
+  tb.innerHTML = "";
+  if (items.length === 0) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">конфликтов нет</td></tr>';
+    return;
+  }
+  items.forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td>" + escapeHtml(c.userName || c.userId) + "</td><td>" + escapeHtml(c.name) +
+      "</td><td>" + fmtSize(c.size) + "</td><td>" + escapeHtml(c.modified) +
+      '</td><td><button class="del">Удалить</button></td>';
+    tr.querySelector(".del").addEventListener("click", async () => {
+      if (!confirm('Удалить конфликтную копию "' + c.name + '"?')) return;
+      await call("DeleteUserFile", c.userId, c.name);
+      renderConflicts(); renderTree();
+    });
+    tb.appendChild(tr);
+  });
+}
+
 async function showHistory(userID, name) {
   const isTrash = !name;
   const items = isTrash ? (await call("Trash", userID)) : (await call("History", userID, name));
@@ -286,7 +310,7 @@ async function showHistory(userID, name) {
 }
 
 /* ---------- действия ---------- */
-function form() { return { port: parseInt($("srvPortInput").value, 10) || 8090, dir: $("srvDirInput").value.trim(), tls: $("srvTLS").checked }; }
+function form() { return { port: parseInt($("srvPortInput").value, 10) || 8090, dir: $("srvDirInput").value.trim(), tls: $("srvTLS").checked, quota: parseInt($("srvQuotaInput").value, 10) || 0 }; }
 function flash(msg, ok) { $("srvErr").style.color = ok ? "#1aae39" : "#e5484d"; $("srvErr").textContent = msg; }
 
 let serverRunning = false;
@@ -323,6 +347,7 @@ $("srvRelease").addEventListener("click", async () => {
   flash(res && res.error ? res.error : "процесс завершён, порт освобождён", !(res && res.error));
 });
 $("historyClose").addEventListener("click", () => { $("historyCard").style.display = "none"; });
+$("confRefresh").addEventListener("click", () => renderConflicts());
 $("srvCopyFP").addEventListener("click", async () => {
   const st = await call("GetServerState");
   if (!st || !st.fingerprint) { flash("отпечаток ещё не создан — включите HTTPS и сохраните настройки", false); return; }
@@ -330,7 +355,7 @@ $("srvCopyFP").addEventListener("click", async () => {
   flash("отпечаток скопирован", true);
 });
 $("srvSave").addEventListener("click", async () => {
-  const f = form(); const st = await call("SaveSettings", f.port, f.dir, f.tls); renderServer(st);
+  const f = form(); const st = await call("SaveSettings", f.port, f.dir, f.tls, f.quota); renderServer(st);
   if (st && !st.error) flash("настройки сохранены", true);
 });
 $("srvPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("srvDirInput").value = d; });
@@ -422,5 +447,6 @@ window.addEventListener("DOMContentLoaded", () => {
   refresh(); refreshUsers();
   setInterval(() => { if (!document.hidden) refresh(); }, 1500);
   setInterval(() => { if (!document.hidden && currentTab === "tab-files") renderTree(); }, 3000);
+  setInterval(() => { if (!document.hidden && currentTab === "tab-conflicts") renderConflicts(); }, 3000);
 });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });

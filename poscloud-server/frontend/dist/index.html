@@ -32,6 +32,7 @@
     <button class="tab active" data-tab="tab-server">Сервер</button>
     <button class="tab" data-tab="tab-users">Пользователи</button>
     <button class="tab" data-tab="tab-files">Файлы</button>
+    <button class="tab" data-tab="tab-conflicts">Конфликты</button>
     <button class="tab" data-tab="tab-log">Журнал</button>
   </div>
 
@@ -56,6 +57,7 @@
       <div class="card">
         <div class="card-title">Настройки сервера</div>
         <label class="field"><span>Порт</span><input id="srvPortInput" type="number" min="1" max="65535" value="8090"/></label>
+        <label class="field"><span>Квота на пользователя, ГБ (0 — без лимита)</span><input id="srvQuotaInput" type="number" min="0" step="1" value="0"/></label>
         <label class="field"><span>Каталог хранения файлов</span>
           <div class="inline"><input id="srvDirInput" type="text" placeholder="C:\Users\...\POSCloud\server-data"/>
           <button class="btn small" id="srvPick">…</button></div>
@@ -133,6 +135,20 @@
         <tbody id="historyRows"></tbody>
       </table>
       <div class="row-btns"><button class="btn small ghost" id="historyClose">Закрыть</button></div>
+    </div>
+  </div>
+
+  <!-- ===== КОНФЛИКТЫ ===== -->
+  <div class="pane" id="tab-conflicts">
+    <div class="card">
+      <div class="card-title">Конфликтные копии</div>
+      <div class="row-btns" style="margin-top:0">
+        <button class="btn ghost" id="confRefresh">Обновить</button>
+      </div>
+      <table class="files" style="margin-top:8px">
+        <thead><tr><th>Пользователь</th><th>Файл</th><th>Размер</th><th>Изменён</th><th></th></tr></thead>
+        <tbody id="confRows"></tbody>
+      </table>
     </div>
   </div>
 

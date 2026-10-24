@@ -35,6 +35,7 @@ type ServerState struct {
 	DataDir     string `json:"dataDir"`
 	TLS         bool   `json:"tls"`
 	Fingerprint string `json:"fingerprint"`
+	QuotaGB     int64  `json:"quotaGB"`
 	URL         string `json:"url"`
 	LocalIP     string `json:"localIP"`
 	Count       int    `json:"count"`
@@ -56,6 +57,7 @@ type App struct {
 	srvDir  string
 	srvTLS  bool
 	srvFP   string
+	quotaGB int64
 	srvErr  string
 
 	auth *authStore
@@ -153,6 +155,7 @@ type savedConfig struct {
 	Port    int    `json:"port"`
 	DataDir string `json:"dataDir"`
 	TLS     *bool  `json:"tls,omitempty"`
+	QuotaGB int64  `json:"quotaGB,omitempty"`
 	// nil — запуск при открытии программы включён по умолчанию
 	AutoRun *bool `json:"autoRun,omitempty"`
 }
@@ -173,6 +176,7 @@ func (a *App) loadConfig() {
 		if c.TLS != nil {
 			a.srvTLS = *c.TLS
 		}
+		a.quotaGB = c.QuotaGB
 		if c.AutoRun != nil {
 			a.autoRun = *c.AutoRun
 		}
@@ -182,7 +186,7 @@ func (a *App) loadConfig() {
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "server.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, TLS: &a.srvTLS, AutoRun: &a.autoRun}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, TLS: &a.srvTLS, QuotaGB: a.quotaGB, AutoRun: &a.autoRun}, "", "  ")
 	if err := atomicReplaceFile(p, b, 0644); err != nil {
 		a.log("не удалось сохранить настройки: " + err.Error())
 	}
@@ -265,7 +269,7 @@ func (a *App) compactManifests(dataDir string) {
 }
 
 // SaveSettings — сохранить настройки, не запуская сервер.
-func (a *App) SaveSettings(port int, dataDir string, tlsOn bool) ServerState {
+func (a *App) SaveSettings(port int, dataDir string, tlsOn bool, quotaGB int64) ServerState {
 	a.mu.Lock()
 	if port > 0 {
 		a.srvPort = port
@@ -273,6 +277,10 @@ func (a *App) SaveSettings(port int, dataDir string, tlsOn bool) ServerState {
 	if dataDir != "" {
 		a.srvDir = dataDir
 	}
+	if quotaGB < 0 {
+		quotaGB = 0
+	}
+	a.quotaGB = quotaGB
 	a.srvTLS = tlsOn
 	targetDir := a.srvDir
 	a.mu.Unlock()
@@ -659,6 +667,10 @@ func (a *App) serverMux() *http.ServeMux {
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
+		if err := a.checkQuota(dir, r.ContentLength); err != nil {
+			writeJSON(w, 413, map[string]any{"error": err.Error()})
+			return
+		}
 		transfers.begin(clean, "up", r.ContentLength)
 		defer transfers.end(clean)
 		tmp, err := os.CreateTemp(filepath.Dir(dst), ".up-*")
@@ -1039,6 +1051,15 @@ func (a *App) serverMux() *http.ServeMux {
 			writeJSON(w, 500, map[string]any{"error": "не удалось собрать файл"})
 			return
 		}
+		var newSize int64
+		if fi, stErr := os.Stat(tn); stErr == nil {
+			newSize = fi.Size()
+		}
+		if err := a.checkQuotaWithTemp(dir, tn, newSize); err != nil {
+			os.Remove(tn)
+			writeJSON(w, 413, map[string]any{"error": err.Error()})
+			return
+		}
 		a.mu.Lock()
 		mmPrev := a.loadManifestCached(dir)
 		prevFile, hasPrevFile := mmPrev.Files[clean]
@@ -1150,7 +1171,7 @@ func (a *App) serverMux() *http.ServeMux {
 
 func (a *App) GetServerState() ServerState {
 	a.mu.Lock()
-	st := ServerState{Running: a.srvRun, Port: a.srvPort, DataDir: a.srvDir, TLS: a.srvTLS, Fingerprint: a.srvFP, Error: a.srvErr}
+	st := ServerState{Running: a.srvRun, Port: a.srvPort, DataDir: a.srvDir, TLS: a.srvTLS, Fingerprint: a.srvFP, QuotaGB: a.quotaGB, Error: a.srvErr}
 	a.mu.Unlock()
 	if st.Port == 0 {
 		st.Port = 8090
