@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ---------- B1/B2: манифест пространства, версии, tombstones ----------
@@ -200,12 +201,19 @@ func gcBlocks(userDir string, m *Manifest) {
 	if err != nil {
 		return
 	}
+	maxAge := time.Duration(currentRetention().OrphanBlocksDays) * 24 * time.Hour
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if !used[e.Name()] {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+		if used[e.Name()] {
+			continue
 		}
+		if maxAge > 0 {
+			if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) <= maxAge {
+				continue
+			}
+		}
+		_ = os.Remove(filepath.Join(dir, e.Name()))
 	}
 }

@@ -108,8 +108,9 @@ func (a *App) snapshotExisting(userDir, clean string, prev ManifestFile) {
 	}
 }
 
-// pruneHistoryItems оставляет 10 версий/30 дней и 30 дней корзины.
+// pruneHistoryItems применяет сроки хранения из настроек сервера.
 func pruneHistoryItems(userDir string, items *[]HistoryItem) {
+	ret := currentRetention()
 	now := time.Now()
 	perName := map[string]int{}
 	kept := make([]HistoryItem, 0, len(*items))
@@ -120,7 +121,7 @@ func pruneHistoryItems(userDir string, items *[]HistoryItem) {
 		}
 		age := now.Sub(created)
 		if it.Kind == "trash" {
-			if age > 30*24*time.Hour {
+			if ret.TrashDays > 0 && age > time.Duration(ret.TrashDays)*24*time.Hour {
 				_ = os.Remove(historySnapshotPath(userDir, it.ID))
 				continue
 			}
@@ -128,7 +129,9 @@ func pruneHistoryItems(userDir string, items *[]HistoryItem) {
 			continue
 		}
 		perName[it.Name]++
-		if age > 30*24*time.Hour || perName[it.Name] > 10 {
+		tooOld := ret.VersionsDays > 0 && age > time.Duration(ret.VersionsDays)*24*time.Hour
+		tooMany := ret.VersionsCount > 0 && perName[it.Name] > ret.VersionsCount
+		if tooOld || tooMany {
 			_ = os.Remove(historySnapshotPath(userDir, it.ID))
 			continue
 		}

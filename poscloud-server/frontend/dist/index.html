@@ -58,6 +58,10 @@
         <div class="card-title">Настройки сервера</div>
         <label class="field"><span>Порт</span><input id="srvPortInput" type="number" min="1" max="65535" value="8090"/></label>
         <label class="field"><span>Квота на пользователя, ГБ (0 — без лимита)</span><input id="srvQuotaInput" type="number" min="0" step="1" value="0"/></label>
+        <label class="field"><span>Хранить версии, дней (0 — без ограничения)</span><input id="srvVersionsDays" type="number" min="0" step="1" value="30"/></label>
+        <label class="field"><span>Максимум версий на файл (0 — без ограничения)</span><input id="srvVersionsCount" type="number" min="0" step="1" value="10"/></label>
+        <label class="field"><span>Хранить корзину, дней (0 — не удалять)</span><input id="srvTrashDays" type="number" min="0" step="1" value="30"/></label>
+        <label class="field"><span>Хранить осиротевшие блоки, дней (0 — удалять сразу)</span><input id="srvOrphanDays" type="number" min="0" step="1" value="0"/></label>
         <label class="field"><span>Каталог хранения файлов</span>
           <div class="inline"><input id="srvDirInput" type="text" placeholder="C:\Users\...\POSCloud\server-data"/>
           <button class="btn small" id="srvPick">…</button></div>

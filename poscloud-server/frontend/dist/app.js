@@ -75,6 +75,10 @@ function renderServer(st) {
   if (!seeded) {
     $("srvPortInput").value = st.port;
     $("srvQuotaInput").value = st.quotaGB || 0;
+    $("srvVersionsDays").value = (st.versionsDays !== undefined ? st.versionsDays : 30);
+    $("srvVersionsCount").value = (st.versionsCount !== undefined ? st.versionsCount : 10);
+    $("srvTrashDays").value = (st.trashDays !== undefined ? st.trashDays : 30);
+    $("srvOrphanDays").value = (st.orphanDays !== undefined ? st.orphanDays : 0);
     $("srvDirInput").value = st.dataDir || "";
     $("srvTLS").checked = !!st.tls;
     seeded = true;
@@ -320,7 +324,16 @@ async function showHistory(userID, name) {
 }
 
 /* ---------- действия ---------- */
-function form() { return { port: parseInt($("srvPortInput").value, 10) || 8090, dir: $("srvDirInput").value.trim(), tls: $("srvTLS").checked, quota: parseInt($("srvQuotaInput").value, 10) || 0 }; }
+function form() { return {
+  port: parseInt($("srvPortInput").value, 10) || 8090,
+  dir: $("srvDirInput").value.trim(),
+  tls: $("srvTLS").checked,
+  quota: parseInt($("srvQuotaInput").value, 10) || 0,
+  versionsDays: parseInt($("srvVersionsDays").value, 10) || 0,
+  versionsCount: parseInt($("srvVersionsCount").value, 10) || 0,
+  trashDays: parseInt($("srvTrashDays").value, 10) || 0,
+  orphanDays: parseInt($("srvOrphanDays").value, 10) || 0,
+}; }
 function flash(msg, ok) { $("srvErr").style.color = ok ? "#1aae39" : "#e5484d"; $("srvErr").textContent = msg; }
 
 let serverRunning = false;
@@ -365,7 +378,7 @@ $("srvCopyFP").addEventListener("click", async () => {
   flash("отпечаток скопирован", true);
 });
 $("srvSave").addEventListener("click", async () => {
-  const f = form(); const st = await call("SaveSettings", f.port, f.dir, f.tls, f.quota); renderServer(st);
+  const f = form(); const st = await call("SaveSettings", f.port, f.dir, f.tls, f.quota, f.versionsDays, f.versionsCount, f.trashDays, f.orphanDays); renderServer(st);
   if (st && !st.error) flash("настройки сохранены", true);
 });
 $("srvPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("srvDirInput").value = d; });

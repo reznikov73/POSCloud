@@ -29,19 +29,23 @@ type FileItem struct {
 }
 
 type ServerState struct {
-	Running     bool   `json:"running"`
-	Port        int    `json:"port"`
-	PortFree    bool   `json:"portFree"`
-	DataDir     string `json:"dataDir"`
-	TLS         bool   `json:"tls"`
-	Fingerprint string `json:"fingerprint"`
-	QuotaGB     int64  `json:"quotaGB"`
-	URL         string `json:"url"`
-	LocalIP     string `json:"localIP"`
-	Count       int    `json:"count"`
-	Users       int    `json:"users"`
-	Error       string `json:"error"`
-	ConfigPath  string `json:"configPath"`
+	Running       bool   `json:"running"`
+	Port          int    `json:"port"`
+	PortFree      bool   `json:"portFree"`
+	DataDir       string `json:"dataDir"`
+	TLS           bool   `json:"tls"`
+	Fingerprint   string `json:"fingerprint"`
+	QuotaGB       int64  `json:"quotaGB"`
+	VersionsDays  int    `json:"versionsDays"`
+	VersionsCount int    `json:"versionsCount"`
+	TrashDays     int    `json:"trashDays"`
+	OrphanDays    int    `json:"orphanDays"`
+	URL           string `json:"url"`
+	LocalIP       string `json:"localIP"`
+	Count         int    `json:"count"`
+	Users         int    `json:"users"`
+	Error         string `json:"error"`
+	ConfigPath    string `json:"configPath"`
 }
 
 type App struct {
@@ -114,6 +118,7 @@ func (a *App) startup(ctx context.Context) {
 	a.auth = newAuthStore(usersPath)
 	a.auth.setLogger(a.log)
 	a.auth.startFlusher()
+	go a.gcLoop()
 	// Явно переданный -autostart важнее сохранённой настройки.
 	if a.autoStartSet {
 		a.autoRun = a.autoStart
@@ -152,10 +157,14 @@ func (a *App) root() string {
 }
 
 type savedConfig struct {
-	Port    int    `json:"port"`
-	DataDir string `json:"dataDir"`
-	TLS     *bool  `json:"tls,omitempty"`
-	QuotaGB int64  `json:"quotaGB,omitempty"`
+	Port          int    `json:"port"`
+	DataDir       string `json:"dataDir"`
+	TLS           *bool  `json:"tls,omitempty"`
+	QuotaGB       int64  `json:"quotaGB,omitempty"`
+	VersionsDays  *int   `json:"versionsDays,omitempty"`
+	VersionsCount *int   `json:"versionsCount,omitempty"`
+	TrashDays     *int   `json:"trashDays,omitempty"`
+	OrphanDays    *int   `json:"orphanDays,omitempty"`
 	// nil — запуск при открытии программы включён по умолчанию
 	AutoRun *bool `json:"autoRun,omitempty"`
 }
@@ -177,6 +186,20 @@ func (a *App) loadConfig() {
 			a.srvTLS = *c.TLS
 		}
 		a.quotaGB = c.QuotaGB
+		r := currentRetention()
+		if c.VersionsDays != nil {
+			r.VersionsDays = *c.VersionsDays
+		}
+		if c.VersionsCount != nil {
+			r.VersionsCount = *c.VersionsCount
+		}
+		if c.TrashDays != nil {
+			r.TrashDays = *c.TrashDays
+		}
+		if c.OrphanDays != nil {
+			r.OrphanBlocksDays = *c.OrphanDays
+		}
+		setRetention(r)
 		if c.AutoRun != nil {
 			a.autoRun = *c.AutoRun
 		}
@@ -186,7 +209,12 @@ func (a *App) loadConfig() {
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "server.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, TLS: &a.srvTLS, QuotaGB: a.quotaGB, AutoRun: &a.autoRun}, "", "  ")
+	r := currentRetention()
+	b, _ := json.MarshalIndent(savedConfig{
+		Port: a.srvPort, DataDir: a.srvDir, TLS: &a.srvTLS, QuotaGB: a.quotaGB,
+		VersionsDays: &r.VersionsDays, VersionsCount: &r.VersionsCount,
+		TrashDays: &r.TrashDays, OrphanDays: &r.OrphanBlocksDays, AutoRun: &a.autoRun,
+	}, "", "  ")
 	if err := atomicReplaceFile(p, b, 0644); err != nil {
 		a.log("не удалось сохранить настройки: " + err.Error())
 	}
@@ -269,7 +297,7 @@ func (a *App) compactManifests(dataDir string) {
 }
 
 // SaveSettings — сохранить настройки, не запуская сервер.
-func (a *App) SaveSettings(port int, dataDir string, tlsOn bool, quotaGB int64) ServerState {
+func (a *App) SaveSettings(port int, dataDir string, tlsOn bool, quotaGB int64, versionsDays, versionsCount, trashDays, orphanDays int) ServerState {
 	a.mu.Lock()
 	if port > 0 {
 		a.srvPort = port
@@ -281,6 +309,19 @@ func (a *App) SaveSettings(port int, dataDir string, tlsOn bool, quotaGB int64) 
 		quotaGB = 0
 	}
 	a.quotaGB = quotaGB
+	if versionsDays < 0 {
+		versionsDays = 0
+	}
+	if versionsCount < 0 {
+		versionsCount = 0
+	}
+	if trashDays < 0 {
+		trashDays = 0
+	}
+	if orphanDays < 0 {
+		orphanDays = 0
+	}
+	setRetention(retentionConfig{VersionsDays: versionsDays, VersionsCount: versionsCount, TrashDays: trashDays, OrphanBlocksDays: orphanDays})
 	a.srvTLS = tlsOn
 	targetDir := a.srvDir
 	a.mu.Unlock()
@@ -1171,7 +1212,9 @@ func (a *App) serverMux() *http.ServeMux {
 
 func (a *App) GetServerState() ServerState {
 	a.mu.Lock()
-	st := ServerState{Running: a.srvRun, Port: a.srvPort, DataDir: a.srvDir, TLS: a.srvTLS, Fingerprint: a.srvFP, QuotaGB: a.quotaGB, Error: a.srvErr}
+	r := currentRetention()
+	st := ServerState{Running: a.srvRun, Port: a.srvPort, DataDir: a.srvDir, TLS: a.srvTLS, Fingerprint: a.srvFP, QuotaGB: a.quotaGB,
+		VersionsDays: r.VersionsDays, VersionsCount: r.VersionsCount, TrashDays: r.TrashDays, OrphanDays: r.OrphanBlocksDays, Error: a.srvErr}
 	a.mu.Unlock()
 	if st.Port == 0 {
 		st.Port = 8090
