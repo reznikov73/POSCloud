@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            poscloud-client/go.sum
+            poscloud-server/go.sum
+
+      - name: Test engine
+        working-directory: engine
+        run: go test ./...
+
+      - name: Test client
+        working-directory: poscloud-client
+        run: go test ./...
+
+      - name: Test server
+        working-directory: poscloud-server
+        run: go test ./...
+
+      - name: Vet engine
+        working-directory: engine
+        run: go vet ./...
+
+      - name: Vet client
+        working-directory: poscloud-client
+        run: go vet ./...
+
+      - name: Vet server
+        working-directory: poscloud-server
+        run: go vet ./...
+
+      - name: Check frontend JS
+        run: |
+          node --check poscloud-client/frontend/dist/app.js
+          node --check poscloud-server/frontend/dist/app.js
+
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            poscloud-client/go.sum
+            poscloud-server/go.sum
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+
+      - name: Build client
+        working-directory: poscloud-client
+        run: wails build -m -s -skipbindings -webview2 browser
+
+      - name: Build server
+        working-directory: poscloud-server
+        run: wails build -m -s -skipbindings -webview2 browser
