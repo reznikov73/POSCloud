@@ -607,7 +607,7 @@ func openSettingsWindow() {
 		uintptr(unsafe.Pointer(u16(settingsClassName))),
 		uintptr(unsafe.Pointer(u16("Настройки — "+appTitle))),
 		uintptr(wsCaption|wsSysMenu|wsVisible|wsClipChildren),
-		200, 150, 720, 330,
+		200, 150, 820, 330,
 		0, 0, getModuleHandle(), 0)
 }
 
@@ -639,7 +639,7 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		hChkAuto = createWindow("BUTTON", "Запускать при входе в Windows", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 12, 152, 320, 24, hwnd, idSCheck)
 		hChkTLS = createWindow("BUTTON", "HTTPS (TLS)", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 360, 152, 180, 24, hwnd, idSTLS)
 		lab("Отпечаток SHA-256:", 12, 206, 120, 20)
-		hEdFingerprint = edit(gCfg.TLSFingerprint, 138, 204, 552, 24, idSFingerprint)
+		hEdFingerprint = edit(gCfg.TLSFingerprint, 138, 204, 660, 24, idSFingerprint)
 		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 370, 240, 130, 28, hwnd, idSTest)
 		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 508, 240, 92, 28, hwnd, idSSave)
 		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 608, 240, 84, 28, hwnd, idSCancel)
