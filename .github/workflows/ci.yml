@@ -72,3 +72,7 @@ jobs:
       - name: Build server
         working-directory: poscloud-server
         run: wails build -m -s -skipbindings -webview2 browser
+
+      - name: Build Lite (x64/x86, Windows 7)
+        working-directory: lite
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1

@@ -1,4 +1,4 @@
-# Сборка POSCloud Lite под Windows 7 (x64 и x86) инструментарием Go 1.20.
+# Build POSCloud Lite for Windows 7 (x64 and x86) with Go 1.20 toolchain.
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $env:GOTOOLCHAIN = 'go1.20.14'
@@ -8,4 +8,4 @@ go build -trimpath -ldflags "-s -w -H=windowsgui" -o out/POSCloud-Lite-x64.exe .
 $env:GOARCH = '386'
 go build -trimpath -ldflags "-s -w -H=windowsgui" -o out/POSCloud-Lite-x86.exe .
 Remove-Item Env:GOTOOLCHAIN, Env:GOARCH
-Write-Host 'готово: lite/out/POSCloud-Lite-x64.exe и lite/out/POSCloud-Lite-x86.exe'
+Write-Host 'done: lite/out/POSCloud-Lite-x64.exe and lite/out/POSCloud-Lite-x86.exe'
