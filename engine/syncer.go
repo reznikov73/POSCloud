@@ -136,6 +136,8 @@ func (s *Syncer) Update(cfg Config) {
 	s.mu.Lock()
 	s.cfg.Host = cfg.Host
 	s.cfg.Port = cfg.Port
+	s.cfg.TLS = cfg.TLS
+	s.cfg.TLSFingerprint = cfg.TLSFingerprint
 	s.cfg.Dir = cfg.Dir
 	s.cfg.Interval = cfg.Interval
 	s.cfg.Token = cfg.Token
