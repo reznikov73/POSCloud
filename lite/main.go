@@ -34,16 +34,18 @@ const (
 	idLog       = 1008
 	idSettings  = 1009
 
-	idSHost   = 3006
-	idSPort   = 3007
-	idSDir    = 3008
-	idSToken  = 3009
-	idSInt    = 3010
-	idSBrowse = 3011
-	idSCheck  = 3002
-	idSTest   = 3003
-	idSSave   = 3004
-	idSCancel = 3005
+	idSHost        = 3006
+	idSPort        = 3007
+	idSDir         = 3008
+	idSToken       = 3009
+	idSInt         = 3010
+	idSBrowse      = 3011
+	idSCheck       = 3002
+	idSTest        = 3003
+	idSSave        = 3004
+	idSCancel      = 3005
+	idSTLS         = 3012
+	idSFingerprint = 3013
 
 	idMenuSettings = 2001
 	idMenuReload   = 2002
@@ -75,13 +77,15 @@ var (
 	gFont     uintptr
 	gFontBold uintptr
 
-	hwndSettings uintptr
-	hEdHost      uintptr
-	hEdPort      uintptr
-	hEdDir       uintptr
-	hEdToken     uintptr
-	hEdInt       uintptr
-	hChkAuto     uintptr
+	hwndSettings   uintptr
+	hEdHost        uintptr
+	hEdPort        uintptr
+	hEdDir         uintptr
+	hEdToken       uintptr
+	hEdInt         uintptr
+	hChkAuto       uintptr
+	hChkTLS        uintptr
+	hEdFingerprint uintptr
 
 	foldersMu  sync.Mutex
 	folders    []engine.ServerFolderNode
@@ -633,13 +637,17 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		hEdInt = edit(fmt.Sprintf("%d", gCfg.Interval), 128, 116, 70, 24, idSInt)
 		lab("как часто проверять изменения", 206, 118, 340, 20)
 		hChkAuto = createWindow("BUTTON", "Запускать при входе в Windows", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 12, 152, 320, 24, hwnd, idSCheck)
-		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 370, 200, 130, 28, hwnd, idSTest)
-		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 508, 200, 92, 28, hwnd, idSSave)
-		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 608, 200, 84, 28, hwnd, idSCancel)
-		for _, c := range []uintptr{btnBrowse, hChkAuto, btnTest, btnSave, btnCancel} {
+		hChkTLS = createWindow("BUTTON", "HTTPS (TLS)", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 360, 152, 180, 24, hwnd, idSTLS)
+		lab("Отпечаток SHA-256:", 12, 206, 120, 20)
+		hEdFingerprint = edit(gCfg.TLSFingerprint, 138, 204, 552, 24, idSFingerprint)
+		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 370, 240, 130, 28, hwnd, idSTest)
+		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 508, 240, 92, 28, hwnd, idSSave)
+		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 608, 240, 84, 28, hwnd, idSCancel)
+		for _, c := range []uintptr{btnBrowse, hChkAuto, hChkTLS, btnTest, btnSave, btnCancel} {
 			send(c, wmSetFont, gFont, 1)
 		}
 		send(hChkAuto, 0x00F1, boolPtr(autostartEnabled()), 0)
+		send(hChkTLS, 0x00F1, boolPtr(gCfg.TLS), 0)
 		return 0
 	case wmCommand:
 		switch wParam & 0xFFFF {
@@ -660,8 +668,14 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			}
 		case idSTest:
 			port, _ := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
-			_ = engine.ConfigureTLS(gCfg.TLSFingerprint)
-			res := engine.TestConnection(strings.TrimSpace(getText(hEdHost)), port, strings.TrimSpace(getText(hEdToken)), gCfg.TLS)
+			tls := send(hChkTLS, 0x00F0, 0, 0) == 1
+			fp := strings.TrimSpace(getText(hEdFingerprint))
+			if tls {
+				_ = engine.ConfigureTLS(fp)
+			} else {
+				_ = engine.ConfigureTLS("")
+			}
+			res := engine.TestConnection(strings.TrimSpace(getText(hEdHost)), port, strings.TrimSpace(getText(hEdToken)), tls)
 			messageBox(hwnd, res, appTitle, mbOk|mbIconInfo)
 		case idSSave:
 			port, err1 := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
@@ -680,6 +694,13 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			next.Token = strings.TrimSpace(getText(hEdToken))
 			next.Interval = itv
 			next.Autostart = send(hChkAuto, 0x00F0, 0, 0) == 1
+			next.TLS = send(hChkTLS, 0x00F0, 0, 0) == 1
+			next.TLSFingerprint = strings.TrimSpace(getText(hEdFingerprint))
+			if next.TLS {
+				_ = engine.ConfigureTLS(next.TLSFingerprint)
+			} else {
+				_ = engine.ConfigureTLS("")
+			}
 			if gSyn.Running() {
 				gSyn.Stop()
 			}
@@ -705,7 +726,7 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmDestroy:
 		hwndSettings = 0
-		hEdHost, hEdPort, hEdDir, hEdToken, hEdInt, hChkAuto = 0, 0, 0, 0, 0, 0
+		hEdHost, hEdPort, hEdDir, hEdToken, hEdInt, hChkAuto, hChkTLS, hEdFingerprint = 0, 0, 0, 0, 0, 0, 0, 0
 		return 0
 	}
 	r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
