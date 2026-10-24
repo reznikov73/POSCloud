@@ -20,6 +20,7 @@ const PAGE_META = {
   "tab-files": { title: "Файлы", sub: "файлы пользователей и история версий" },
   "tab-conflicts": { title: "Конфликты", sub: "конфликтные копии и их разрешение" },
   "tab-log": { title: "Журнал", sub: "события сервера" },
+  "tab-maint": { title: "Обслуживание", sub: "резервные копии и восстановление" },
 };
 
 async function call(method, ...args) {
@@ -81,6 +82,26 @@ $("logOpen").addEventListener("click", () => call("OpenLogFile"));
 $("logClear").addEventListener("click", async () => { await call("ClearLogs"); renderLogs([]); });
 $("logRefresh").addEventListener("click", () => refreshLogs());
 
+/* ---------- обслуживание ---------- */
+$("backupCreate").addEventListener("click", async () => {
+  $("backupStatus").textContent = "Создаю резервную копию…";
+  const res = await call("CreateBackup");
+  if (!res) { $("backupStatus").textContent = "Не удалось создать копию."; return; }
+  if (res.error) { $("backupStatus").textContent = res.error; return; }
+  $("backupStatus").textContent = "Копия сохранена: " + (res.path || "");
+});
+$("backupRestore").addEventListener("click", async () => {
+  if (!confirm("Восстановить настройки и доступы из резервной копии? Текущие файлы будут сохранены в .restore-backup-*.")) return;
+  $("restoreStatus").textContent = "Восстанавливаю…";
+  const res = await call("RestoreBackup");
+  if (!res) { $("restoreStatus").textContent = "Не удалось восстановить копию."; return; }
+  if (res.error) { $("restoreStatus").textContent = res.error; return; }
+  seeded = false;
+  renderServer(await call("GetServerState"));
+  refreshUsers();
+  $("restoreStatus").textContent = "Восстановлено. Можно запускать сервер." + (res.safetyPath ? " Текущие файлы: " + res.safetyPath : "");
+});
+
 /* ---------- состояние сервера ---------- */
 function renderServer(st) {
   if (!st) return;
@@ -97,6 +118,8 @@ function renderServer(st) {
   $("srvAddr").title = url || "";
   $("srvCopyAddr").disabled = !url;
   $("srvPairBtn").disabled = !running || !(st.users > 0);
+  $("backupRestore").disabled = running;
+  $("backupRestore").title = running ? "Сначала остановите сервер" : "";
   $("srvTlsPill").style.display = st.tls ? "" : "none";
 
   const dot = $("srvDot");
@@ -218,6 +241,14 @@ function renderTokens(tokens) {
     tr.appendChild(seen);
 
     const act = document.createElement("td");
+    act.appendChild(tokenButton("Имя", "btn small ghost", async () => {
+      const name = prompt("Новое имя устройства:", t.name);
+      if (name === null) return;
+      if (!name.trim()) { flash("Имя устройства не может быть пустым", false); return; }
+      await call("RenameToken", selectedUser.id, t.id, name.trim());
+      loadUserDetails();
+      refreshUsers();
+    }));
     act.appendChild(tokenButton("Отозвать", "del", async () => {
       if (!confirm('Отозвать токен "' + t.name + '"?')) return;
       await call("RevokeToken", selectedUser.id, t.id);
@@ -571,7 +602,7 @@ $("pairCreate").addEventListener("click", async () => {
   const uid = $("pairUser").value;
   if (!uid) { $("pairError").textContent = "Выберите пользователя."; return; }
   $("pairCreate").disabled = true;
-  const res = await call("CreateConnectionCode", uid);
+  const res = await call("CreateConnectionCode", uid, $("pairDeviceName").value.trim());
   $("pairCreate").disabled = false;
   if (!res) { $("pairError").textContent = "Не удалось создать код."; return; }
   if (res.error) { $("pairError").style.color = "var(--crit)"; $("pairError").textContent = res.error; return; }
@@ -587,6 +618,18 @@ $("pairCopy").addEventListener("click", async () => {
   if (!code) return;
   await call("CopyToClipboard", code);
   $("pairExpiry").textContent = "Код скопирован. " + $("pairExpiry").textContent;
+});
+$("pairSaveFile").addEventListener("click", async () => {
+  const code = $("pairCode").value;
+  if (!code) return;
+  const res = await call("ExportConnectionCode", code);
+  if (!res) { $("pairError").textContent = "Не удалось сохранить файл."; return; }
+  if (res.error) {
+    if (res.error !== "сохранение отменено") { $("pairError").style.color = "var(--crit)"; $("pairError").textContent = res.error; }
+    return;
+  }
+  $("pairError").style.color = "var(--ok)";
+  $("pairError").textContent = "Файл сохранён: " + (res.path || "");
 });
 
 $("srvSave").addEventListener("click", async () => {

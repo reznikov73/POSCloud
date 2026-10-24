@@ -12,7 +12,7 @@ func TestCreateConnectionCodeRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &App{auth: s, srvRun: true, srvPort: 8099}
-	cc := a.CreateConnectionCode(u.ID)
+	cc := a.CreateConnectionCode(u.ID, "")
 	if cc.Error != "" {
 		t.Fatalf("create error: %s", cc.Error)
 	}

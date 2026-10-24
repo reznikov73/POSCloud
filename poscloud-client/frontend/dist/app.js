@@ -152,6 +152,12 @@ $("cliPaste").addEventListener("click", async () => {
   $("cliPairCode").value = String(text).trim();
   flash("Код вставлен — нажмите «Подключить»", true);
 });
+$("cliPairFile").addEventListener("click", async () => {
+  const text = await call("PickConnectionCodeFile");
+  if (!text) { flash("Файл не выбран или пуст", false); return; }
+  $("cliPairCode").value = String(text).trim();
+  flash("Код загружен — нажмите «Подключить»", true);
+});
 $("cliPair").addEventListener("click", async () => {
   const code = $("cliPairCode").value.trim();
   if (!code) { flash("Вставьте код подключения", false); return; }

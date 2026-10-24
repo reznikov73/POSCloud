@@ -56,9 +56,13 @@ func SaveState(dir string, s State) {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	p := StatePath(dir)
 	if old, err := os.ReadFile(p); err == nil && len(old) > 0 && json.Valid(old) {
-		_ = writeFileAtomic(p+".bak", old, 0644)
+		if err := writeFileAtomic(p+".bak", old, 0644); err == nil {
+			hideFile(p + ".bak")
+		}
 	}
-	_ = writeFileAtomic(p, b, 0644)
+	if err := writeFileAtomic(p, b, 0644); err == nil {
+		hideFile(p)
+	}
 }
 
 // writeFileAtomic пишет файл через временный файл и переименование,

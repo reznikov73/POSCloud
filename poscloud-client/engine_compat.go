@@ -114,6 +114,10 @@ func configureTLS(fingerprint string) error { return eng.ConfigureTLS(fingerprin
 
 func baseURL(host string, port int, secure bool) string { return eng.BaseURL(host, port, secure) }
 
+func hideFile(path string) { _ = eng.HideFile(path) }
+
+func hideStateFiles(dir string) { eng.HideStateFiles(dir) }
+
 func parseConnectionCode(raw string) (connectionInfo, error) { return eng.ParseConnectionCode(raw) }
 
 func pairConnection(base, code, deviceName string) (pairResult, error) {

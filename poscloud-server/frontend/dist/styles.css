@@ -265,7 +265,7 @@ select:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.13)}
 .modal-head .hint-muted{margin-top:0}
 .modal-body{display:flex;flex-direction:column;gap:8px}
 .field-label{display:block;color:var(--muted);font-size:11px;margin-bottom:1px}
-#pairUser{width:100%;background:#fff;border:1px solid var(--field-line);border-radius:5px;color:var(--txt);padding:6px 8px;font-size:12px}
+#pairUser,#pairDeviceName{width:100%;background:#fff;border:1px solid var(--field-line);border-radius:5px;color:var(--txt);padding:6px 8px;font-size:12px}
 .pair-code{width:100%;min-height:92px;background:#fff;border:1px solid var(--field-line);border-radius:5px;color:var(--txt);padding:7px 8px;font:11px/1.45 Consolas,"Courier New",monospace;resize:vertical;outline:none}
 .pair-code:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.13)}
 .modal-body [hidden]{display:none}
@@ -273,3 +273,10 @@ select:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.13)}
   .client-actions{justify-content:flex-start}
   .modal-card{padding:13px}
 }
+/* обслуживание: резервные копии */
+.maint-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.maint-card{min-height:150px}
+.maint-text{color:var(--muted);font-size:11.5px;line-height:1.5;margin:0 0 9px;max-width:520px}
+.maint-card .row-btns{margin-top:0}
+#backupStatus,#restoreStatus{min-height:16px;white-space:pre-wrap}
+@media (max-width:900px){.maint-grid{grid-template-columns:1fr}}

@@ -23,6 +23,7 @@
       <button class="tab" data-tab="tab-files">Файлы</button>
       <button class="tab" data-tab="tab-conflicts">Конфликты</button>
       <button class="tab" data-tab="tab-log">Журнал</button>
+      <button class="tab" data-tab="tab-maint">Обслуживание</button>
     </nav>
 
     <div class="side-status">
@@ -230,6 +231,28 @@
       </div>
     </div>
 
+    <!-- ===== ОБСЛУЖИВАНИЕ ===== -->
+    <div class="pane" id="tab-maint">
+      <div class="maint-grid">
+        <section class="card maint-card">
+          <div class="card-title">Резервная копия</div>
+          <p class="maint-text">Сохраняет настройки сервера, пользователей, токены, TLS-сертификат и ключ. Файлы пользователей и история версий в копию не входят. Не сохраняйте копию в папке синхронизации: в ней токены и TLS-ключ.</p>
+          <div class="row-btns">
+            <button class="btn primary" id="backupCreate">Создать копию</button>
+          </div>
+          <div class="hint-muted" id="backupStatus"></div>
+        </section>
+        <section class="card maint-card">
+          <div class="card-title">Восстановление</div>
+          <p class="maint-text">Сервер должен быть остановлен. Текущие настройки и доступы будут сохранены в папку <b>.restore-backup-*</b> рядом с данными.</p>
+          <div class="row-btns">
+            <button class="btn warn" id="backupRestore">Восстановить из файла</button>
+          </div>
+          <div class="hint-muted" id="restoreStatus"></div>
+        </section>
+      </div>
+    </div>
+
     <!-- ===== ЖУРНАЛ ===== -->
     <div class="pane" id="tab-log">
       <div class="card">
@@ -256,6 +279,8 @@
     <div class="modal-body">
       <label class="field-label" for="pairUser">Пользователь</label>
       <select id="pairUser"></select>
+      <label class="field-label" for="pairDeviceName">Имя устройства (необязательно)</label>
+      <input id="pairDeviceName" type="text" maxlength="80" placeholder="Например, Касса 1"/>
       <div class="row-btns">
         <button class="btn primary" id="pairCreate">Создать код</button>
       </div>
@@ -264,8 +289,10 @@
         <textarea id="pairCode" class="pair-code" readonly spellcheck="false"></textarea>
         <div class="row-btns">
           <button class="btn" id="pairCopy">Копировать код</button>
+          <button class="btn ghost" id="pairSaveFile">Сохранить в файл</button>
           <span class="hint-muted" id="pairExpiry"></span>
         </div>
+        <div class="hint-muted">Файл содержит одноразовый секрет. Не кладите его в папку синхронизации.</div>
       </div>
       <div class="hint" id="pairError"></div>
     </div>

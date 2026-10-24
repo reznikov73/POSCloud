@@ -1456,6 +1456,15 @@ func (a *App) ListTokens(userID string) []TokenInfo {
 	return out
 }
 
+// RenameToken переименовывает устройство, не меняя токен.
+func (a *App) RenameToken(userID, tokenID, name string) error {
+	if err := a.auth.renameToken(userID, tokenID, name); err != nil {
+		return err
+	}
+	a.log("устройство " + tokenID + " переименовано")
+	return nil
+}
+
 func (a *App) RevokeToken(userID, tokenID string) error {
 	if err := a.auth.revokeToken(userID, tokenID); err != nil {
 		return err

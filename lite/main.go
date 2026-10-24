@@ -572,6 +572,7 @@ func reloadConfig() {
 		gSyn.Stop()
 	}
 	gCfg = loadConfig()
+	engine.HideStateFiles(gCfg.Dir)
 	if err := engine.ConfigureTLS(gCfg.TLSFingerprint); err != nil {
 		logf("TLS: %v", err)
 	}
@@ -600,8 +601,11 @@ func applyPairCode(code string) error {
 	} else {
 		_ = engine.ConfigureTLS("")
 	}
-	hostname, _ := os.Hostname()
-	res, err := engine.Pair(engine.BaseURL(info.Host, info.Port, info.TLS), info.Code, hostname)
+	deviceName := strings.TrimSpace(info.DeviceName)
+	if deviceName == "" {
+		deviceName, _ = os.Hostname()
+	}
+	res, err := engine.Pair(engine.BaseURL(info.Host, info.Port, info.TLS), info.Code, deviceName)
 	if err != nil {
 		_ = engine.ConfigureTLS(oldFP)
 		return err
@@ -812,6 +816,7 @@ func main() {
 	}
 
 	gCfg = loadConfig()
+	engine.HideStateFiles(gCfg.Dir)
 	if err := engine.ConfigureTLS(gCfg.TLSFingerprint); err != nil {
 		logf("TLS: %v", err)
 	}

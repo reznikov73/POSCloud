@@ -115,17 +115,18 @@ func (s *authStore) dropOldestPairingLocked() {
 
 // ConnectionCode — DTO кода подключения для интерфейса сервера.
 type ConnectionCode struct {
-	Code      string `json:"code"`
-	UserID    string `json:"userID"`
-	UserName  string `json:"userName"`
-	ExpiresAt string `json:"expiresAt"`
-	ExpiresIn int    `json:"expiresIn"`
-	Error     string `json:"error,omitempty"`
+	Code       string `json:"code"`
+	UserID     string `json:"userID"`
+	UserName   string `json:"userName"`
+	DeviceName string `json:"deviceName,omitempty"`
+	ExpiresAt  string `json:"expiresAt"`
+	ExpiresIn  int    `json:"expiresIn"`
+	Error      string `json:"error,omitempty"`
 }
 
 // CreateConnectionCode создаёт код подключения для выбранного пользователя.
 // Код содержит адрес, порт, TLS-отпечаток и одноразовый секрет, но не токен.
-func (a *App) CreateConnectionCode(userID string) ConnectionCode {
+func (a *App) CreateConnectionCode(userID, deviceName string) ConnectionCode {
 	st := a.GetServerState()
 	if !st.Running {
 		return ConnectionCode{Error: "сначала запустите сервер"}
@@ -142,6 +143,13 @@ func (a *App) CreateConnectionCode(userID string) ConnectionCode {
 	q.Set("v", "1")
 	q.Set("host", host)
 	q.Set("port", fmt.Sprintf("%d", st.Port))
+	deviceName = normalizeDeviceName(deviceName)
+	if deviceName == "Устройство" {
+		deviceName = ""
+	}
+	if deviceName != "" {
+		q.Set("name", deviceName)
+	}
 	if st.TLS {
 		q.Set("tls", "1")
 		q.Set("fp", st.Fingerprint)
@@ -152,11 +160,12 @@ func (a *App) CreateConnectionCode(userID string) ConnectionCode {
 	u := url.URL{Scheme: "poscloud", Host: "connect", RawQuery: q.Encode()}
 	a.log("создан код подключения для пользователя " + info.UserName)
 	return ConnectionCode{
-		Code:      u.String(),
-		UserID:    info.UserID,
-		UserName:  info.UserName,
-		ExpiresAt: info.Expires.Format("2006-01-02 15:04:05"),
-		ExpiresIn: int(pairingTTL.Seconds()),
+		Code:       u.String(),
+		UserID:     info.UserID,
+		UserName:   info.UserName,
+		DeviceName: deviceName,
+		ExpiresAt:  info.Expires.Format("2006-01-02 15:04:05"),
+		ExpiresIn:  int(pairingTTL.Seconds()),
 	}
 }
 

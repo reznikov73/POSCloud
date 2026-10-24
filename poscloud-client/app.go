@@ -126,6 +126,7 @@ func (a *App) startup(ctx context.Context) {
 	a.safeGo("logPruneLoop", a.logPruneLoop)
 	a.loadConfig()
 	a.applyFlagOverrides()
+	a.hideServiceFiles()
 	// Явно переданный -autostart важнее сохранённой настройки.
 	if a.autoStartSet {
 		a.autoRun = a.autoStart
@@ -136,6 +137,18 @@ func (a *App) startup(ctx context.Context) {
 	if a.autoRun {
 		a.startOnLaunch()
 	}
+}
+
+// hideServiceFiles скрывает в проводнике служебные файлы папки синхронизации.
+func (a *App) hideServiceFiles() {
+	a.mu.Lock()
+	dir := a.localDir
+	a.mu.Unlock()
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	hideStateFiles(dir)
+	hideFile(filepath.Join(dir, ".poscloudignore"))
 }
 
 // startOnLaunch — автозапуск синхронизации при открытии программы.
@@ -350,8 +363,11 @@ func (a *App) PairConnection(rawCode string) ClientState {
 		_ = configureTLS("")
 	}
 
-	hostname, _ := os.Hostname()
-	res, err := pairConnection(baseURL(info.Host, info.Port, info.TLS), info.Code, hostname)
+	deviceName := strings.TrimSpace(info.DeviceName)
+	if deviceName == "" {
+		deviceName, _ = os.Hostname()
+	}
+	res, err := pairConnection(baseURL(info.Host, info.Port, info.TLS), info.Code, deviceName)
 	if err != nil {
 		restoreTLS()
 		st := a.GetClientState()
@@ -373,6 +389,33 @@ func (a *App) PairConnection(rawCode string) ClientState {
 	st := a.GetClientState()
 	st.Error = ""
 	return st
+}
+
+// PickConnectionCodeFile открывает .poscloud-connect и возвращает его содержимое.
+func (a *App) PickConnectionCodeFile() string {
+	defaultDir := ""
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		defaultDir = filepath.Join(home, "Documents")
+		if _, err := os.Stat(defaultDir); err != nil {
+			defaultDir = home
+		}
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Открыть код подключения",
+		DefaultDirectory: defaultDir,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Код подключения POSCloud (*.poscloud-connect)", Pattern: "*.poscloud-connect"},
+			{DisplayName: "Текстовые файлы (*.txt)", Pattern: "*.txt"},
+		},
+	})
+	if err != nil || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // ReadClipboard возвращает текст буфера обмена (для кнопки «Вставить»).
@@ -682,6 +725,7 @@ func (a *App) SaveIgnore(text string) error {
 		if err := os.WriteFile(p, []byte(text), 0644); err != nil {
 			return err
 		}
+		hideFile(p)
 	}
 	a.safeGo("syncIgnore", func() { a.syn.SyncOnce(false) })
 	return nil

@@ -53,6 +53,23 @@ func TestPairingIssueAndRedeem(t *testing.T) {
 	}
 }
 
+func TestRenameToken(t *testing.T) {
+	s := testAuthStore(t)
+	u, _ := s.createUser("Дом")
+	tok, _ := s.issueToken(u.ID, "Старое имя")
+	uid, tokenID, ok := s.findUserByToken(tok)
+	if !ok || uid != u.ID {
+		t.Fatal("token not found")
+	}
+	if err := s.renameToken(u.ID, tokenID, "Касса 1"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.get(u.ID)
+	if len(got.Tokens) != 1 || got.Tokens[0].Name != "Касса 1" {
+		t.Fatalf("unexpected token name: %+v", got.Tokens)
+	}
+}
+
 func TestPairingExpiry(t *testing.T) {
 	s := testAuthStore(t)
 	u, _ := s.createUser("Дом")

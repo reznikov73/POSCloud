@@ -25,6 +25,7 @@ type ConnectionInfo struct {
 	TLS         bool
 	Fingerprint string
 	Code        string
+	DeviceName  string
 }
 
 // PairResult — ответ сервера на обмен одноразового кода.
@@ -75,7 +76,11 @@ func ParseConnectionCode(raw string) (ConnectionInfo, error) {
 	if code == "" {
 		return ConnectionInfo{}, fmt.Errorf("в коде нет одноразового секрета")
 	}
-	return ConnectionInfo{Host: host, Port: port, TLS: tlsOn, Fingerprint: fp, Code: code}, nil
+	deviceName := strings.TrimSpace(q.Get("name"))
+	if r := []rune(deviceName); len(r) > 80 {
+		deviceName = string(r[:80])
+	}
+	return ConnectionInfo{Host: host, Port: port, TLS: tlsOn, Fingerprint: fp, Code: code, DeviceName: deviceName}, nil
 }
 
 // Pair обменивает одноразовый код подключения на обычный токен устройства.

@@ -405,16 +405,26 @@ func (s *authStore) issueToken(userID, deviceName string) (string, error) {
 	return s.issueTokenLocked(userID, deviceName)
 }
 
+// normalizeDeviceName приводит имя устройства к безопасному для UI виду.
+func normalizeDeviceName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Устройство"
+	}
+	r := []rune(name)
+	if len(r) > 80 {
+		name = string(r[:80])
+	}
+	return name
+}
+
 // issueTokenLocked — внутренняя версия issueToken; вызывать под s.mu.
 func (s *authStore) issueTokenLocked(userID, deviceName string) (string, error) {
 	i := s.userIndexLocked(userID)
 	if i < 0 {
 		return "", fmt.Errorf("пользователь не найден")
 	}
-	deviceName = strings.TrimSpace(deviceName)
-	if deviceName == "" {
-		deviceName = "Устройство"
-	}
+	deviceName = normalizeDeviceName(deviceName)
 	tok := genToken()
 	enc, err := protectToken(tok)
 	if err != nil {
@@ -470,6 +480,29 @@ func (s *authStore) reissueToken(userID, tokenID string) (string, error) {
 		return "", fmt.Errorf("не удалось сохранить реестр: %w", err)
 	}
 	return tok, nil
+}
+
+// renameToken переименовывает устройство, не меняя сам токен.
+func (s *authStore) renameToken(userID, tokenID, name string) error {
+	name = normalizeDeviceName(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.userIndexLocked(userID)
+	if i < 0 {
+		return fmt.Errorf("пользователь не найден")
+	}
+	for k := range s.users[i].Tokens {
+		if s.users[i].Tokens[k].ID == tokenID {
+			before := s.users[i].Tokens[k].Name
+			s.users[i].Tokens[k].Name = name
+			if err := s.saveLocked(); err != nil {
+				s.users[i].Tokens[k].Name = before
+				return fmt.Errorf("не удалось сохранить реестр: %w", err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("токен не найден")
 }
 
 func (s *authStore) revokeToken(userID, tokenID string) error {
