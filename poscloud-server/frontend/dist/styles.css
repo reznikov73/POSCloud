@@ -23,7 +23,7 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--txt);
   font:12px/1.40 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
   -webkit-font-smoothing:antialiased;overflow:hidden}
-#app{display:grid;grid-template-columns:188px minmax(0,1fr);height:100vh;min-width:980px}
+#app{display:grid;grid-template-columns:188px minmax(0,1fr);height:100vh;min-width:0}
 
 /* левый рельс */
 .sidebar{display:flex;flex-direction:column;min-height:0;background:var(--surface);
@@ -233,4 +233,24 @@ select:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.13)}
   .history-table th:nth-child(1){width:58px}
   .history-table th:nth-child(2){width:56px}
   .history-table th:nth-child(3){width:78px}
+}
+@media (max-width:1000px){
+  #app{grid-template-columns:164px minmax(0,1fr)}
+  .main{padding:10px 10px 16px}
+  .client-card{padding:9px 10px;gap:8px}
+  .client-url{font-size:13px}
+  .client-hint{font-size:9.8px}
+  .client-card .btn.small{padding:3px 6px;font-size:10px;white-space:nowrap}
+  .settings-head .hint-muted{display:none}
+  .setting-row{grid-template-columns:170px minmax(0,1fr);gap:8px}
+  .row-hint{display:none}
+  .files-layout{grid-template-columns:minmax(0,1fr) 292px}
+  .file-table col.col-size{width:68px}
+  .file-table col.col-mod{width:116px}
+  .file-table col.col-act{width:132px}
+  .file-row td{padding-left:6px;padding-right:6px}
+  .file-row .btn.small{font-size:10px;padding:3px 5px}
+  .file-row .del{font-size:10px;padding:2px 4px}
+  .toolbar-meta{font-size:10px}
+  .files-toolbar{gap:5px}
 }

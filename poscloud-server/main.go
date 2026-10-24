@@ -81,10 +81,10 @@ func main() {
 
 	err := wails.Run(&options.App{
 		Title:            appWindowTitle,
-		Width:            940,
-		Height:           720,
-		MinWidth:         820,
-		MinHeight:        560,
+		Width:            1180,
+		Height:           820,
+		MinWidth:         980,
+		MinHeight:        680,
 		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 22, A: 1},
 		// правый клик в полях ввода: копировать/вставить/вырезать/выделить всё
 		EnableDefaultContextMenu: true,
