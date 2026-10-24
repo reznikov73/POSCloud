@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -47,10 +48,11 @@ type Syncer struct {
 	running bool
 	stop    chan struct{}
 
-	lastSync string
-	count    int
-	online   bool
-	errMsg   string
+	lastSync   string
+	count      int
+	online     bool
+	errMsg     string
+	authFailed bool // токен уже отвергнут; не дублируем запись в журнал каждый цикл
 }
 
 // NewSyncer создаёт движок синхронизации. logf может быть nil (журнал не ведётся),
@@ -360,9 +362,22 @@ func (s *Syncer) SyncOnce(verbose bool) {
 
 	srvVer, changes, err := FetchChanges(base, tok, st.ServerVersion)
 	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			s.mu.Lock()
+			s.errMsg = "токен отозван"
+			s.online = false
+			first := !s.authFailed
+			s.authFailed = true
+			s.mu.Unlock()
+			if first {
+				s.log("токен отозван: получите новый токен на сервере (" + base + ")")
+			}
+			return
+		}
 		s.mu.Lock()
 		s.errMsg = "нет связи с сервером"
 		s.online = false
+		s.authFailed = false
 		s.mu.Unlock()
 		s.log("нет связи с " + base + " - " + err.Error())
 		return
@@ -370,6 +385,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 	s.mu.Lock()
 	s.errMsg = ""
 	s.online = true
+	s.authFailed = false
 	s.mu.Unlock()
 
 	srv := map[string]ManifestFile{}

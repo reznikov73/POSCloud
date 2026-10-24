@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,6 +55,10 @@ func (c *countingReader) Read(p []byte) (int, error) {
 
 var httpClient = &http.Client{Timeout: 60 * time.Second}
 
+// ErrUnauthorized — сервер отверг токен (401). Отдельная ошибка нужна,
+// чтобы клиент не путал это с потерей сети.
+var ErrUnauthorized = errors.New("неверный или отозванный токен")
+
 // AuthHeader добавляет заголовок авторизации к запросу.
 func AuthHeader(req *http.Request, token string) {
 	if token != "" {
@@ -80,7 +85,7 @@ func FetchChanges(base, token string, since int64) (int64, []ManifestFile, error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return 0, nil, fmt.Errorf("неверный или отозванный токен")
+		return 0, nil, ErrUnauthorized
 	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, nil, fmt.Errorf("статус %d", resp.StatusCode)
@@ -108,7 +113,7 @@ func FetchManifest(base, token string) (int64, []ManifestFile, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return 0, nil, fmt.Errorf("неверный или отозванный токен")
+		return 0, nil, ErrUnauthorized
 	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, nil, fmt.Errorf("статус %d", resp.StatusCode)

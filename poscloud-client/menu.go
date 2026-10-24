@@ -94,6 +94,8 @@ func syncStateLabel(running, online bool, errMsg string) string {
 	switch {
 	case !running:
 		return "остановлено"
+	case errMsg == "токен отозван":
+		return "токен отозван"
 	case errMsg != "":
 		return "нет связи с сервером"
 	case online:

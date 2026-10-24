@@ -59,7 +59,7 @@ function renderClient(st) {
   const dot = $("cliDot");
   dot.className = "dot";
   if (st.running && st.online) { dot.classList.add("on"); $("cliStatusText").textContent = "работает"; }
-  else if (st.running) { dot.classList.add("busy"); $("cliStatusText").textContent = "работает, но нет связи с сервером"; }
+  else if (st.running) { dot.classList.add("busy"); $("cliStatusText").textContent = st.error === "токен отозван" ? "токен отозван" : "работает, но нет связи с сервером"; }
   else { dot.classList.add("off"); $("cliStatusText").textContent = "остановлен"; }
 
   // Одна кнопка меняет назначение: запускает или останавливает синхронизацию.
