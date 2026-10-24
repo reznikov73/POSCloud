@@ -5,169 +5,241 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>POSCloud Server</title>
 <link rel="stylesheet" href="./styles.css"/>
-<style>
-  .pbar{height:3px;background:#232a33;border-radius:2px;margin-top:5px;overflow:hidden}
-  .pfill{height:3px;background:#2ea043;border-radius:2px}
-  .pct{font-size:11px;color:#9aa7b2;margin-top:2px}
-  input[type=checkbox]{width:auto;height:auto;min-width:0;margin:0 6px 0 0;vertical-align:-1px;accent-color:#2ea043}
-  .autostart{display:inline-flex;align-items:center;font-size:12.5px;color:#9aa7b2;margin-top:8px}
-</style>
 </head>
 <body>
 <div id="app">
-  <header class="topbar">
-    <div class="brand">
+  <aside class="sidebar">
+    <div class="side-brand">
       <div class="logo">S</div>
-      <div>
-        <div class="title">POSCloud Server</div>
-        <div class="subtitle">серверная часть: хранит файлы и отдаёт их клиентам по сети</div>
+      <div class="brand-text">
+        <div class="title">POSCloud</div>
+        <div class="subtitle">Server</div>
       </div>
     </div>
-    <div class="top-actions">
-      <span id="pulse" class="pulse"></span>
+
+    <nav class="side-nav" aria-label="Разделы">
+      <button class="tab active" data-tab="tab-server">Сервер</button>
+      <button class="tab" data-tab="tab-users">Пользователи</button>
+      <button class="tab" data-tab="tab-files">Файлы</button>
+      <button class="tab" data-tab="tab-conflicts">Конфликты</button>
+      <button class="tab" data-tab="tab-log">Журнал</button>
+    </nav>
+
+    <div class="side-status">
+      <div class="side-status-title">Сервер</div>
+      <div class="side-state"><span id="srvDot" class="dot"></span><span id="srvStatusText">остановлен</span></div>
+      <div class="kv"><span>Порт</span><b id="srvPort">8090</b></div>
+      <div class="kv"><span>Свободен</span><b id="srvPortFree">-</b></div>
+      <div class="kv"><span>Пользователей</span><b id="srvUsers">0</b></div>
     </div>
-  </header>
+  </aside>
 
-  <div class="tabs">
-    <button class="tab active" data-tab="tab-server">Сервер</button>
-    <button class="tab" data-tab="tab-users">Пользователи</button>
-    <button class="tab" data-tab="tab-files">Файлы</button>
-    <button class="tab" data-tab="tab-conflicts">Конфликты</button>
-    <button class="tab" data-tab="tab-log">Журнал</button>
-  </div>
+  <main class="main">
+    <header class="main-head">
+      <div>
+        <h1 id="pageTitle">Сервер</h1>
+        <p id="pageSub">состояние и параметры хранения</p>
+      </div>
+      <span id="pulse" class="pulse" title="Состояние сервера"></span>
+    </header>
 
-  <!-- ===== СЕРВЕР ===== -->
-  <div class="pane active" id="tab-server">
-    <div class="grid">
-      <div class="card status-card">
-        <div class="status-line">
-          <span id="srvDot" class="dot"></span>
-          <span id="srvStatusText" class="status-text">остановлен</span>
+    <!-- ===== СЕРВЕР ===== -->
+    <div class="pane active" id="tab-server">
+      <div class="client-card">
+        <div class="client-main">
+          <div class="client-label">Адрес для клиентов <span id="srvTlsPill" class="pill" style="display:none">TLS</span></div>
+          <div class="client-url" id="srvAddr">-</div>
+          <div class="client-hint">Введите этот адрес, порт и токен в клиентском приложении на другом ПК.</div>
         </div>
-        <div class="kv"><span>Порт</span><b id="srvPort">8090</b></div>
-        <div class="kv"><span>Порт свободен</span><b id="srvPortFree">-</b></div>
-        <div class="kv"><span>Активный каталог</span><b id="srvDir">-</b></div>
-        <div class="kv"><span>Пользователей</span><b id="srvUsers">0</b></div>
-        <div class="row-btns">
-          <button class="btn primary" id="srvToggle">Запустить</button>
+        <button class="btn small" id="srvCopyAddr" disabled>Копировать адрес</button>
+      </div>
+
+      <div class="server-meta">
+        <span>Активный каталог</span>
+        <b id="srvDir">-</b>
+      </div>
+
+      <div class="card settings-card">
+        <div class="settings-head">
+          <div class="card-title">Настройки сервера</div>
+          <span class="hint-muted" id="srvCfgPath"></span>
+        </div>
+
+        <section class="settings-section">
+          <div class="section-title">Подключение</div>
+          <div class="setting-row">
+            <label for="srvPortInput">Порт</label>
+            <div class="control"><input id="srvPortInput" type="number" min="1" max="65535" value="8090"/></div>
+          </div>
+          <div class="setting-row">
+            <label for="srvQuotaInput">Квота на пользователя, ГБ</label>
+            <div class="control"><input id="srvQuotaInput" type="number" min="0" step="1" value="0"/><span class="row-hint">0 — без лимита</span></div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-title">Хранение</div>
+          <div class="setting-row">
+            <label for="srvVersionsDays">Хранить версии, дней</label>
+            <div class="control"><input id="srvVersionsDays" type="number" min="0" step="1" value="30"/><span class="row-hint">0 — без ограничения</span></div>
+          </div>
+          <div class="setting-row">
+            <label for="srvVersionsCount">Максимум версий на файл</label>
+            <div class="control"><input id="srvVersionsCount" type="number" min="0" step="1" value="10"/><span class="row-hint">0 — без ограничения</span></div>
+          </div>
+          <div class="setting-row">
+            <label for="srvTrashDays">Хранить корзину, дней</label>
+            <div class="control"><input id="srvTrashDays" type="number" min="0" step="1" value="30"/><span class="row-hint">0 — не удалять</span></div>
+          </div>
+          <div class="setting-row">
+            <label for="srvOrphanDays">Осиротевшие блоки, дней</label>
+            <div class="control"><input id="srvOrphanDays" type="number" min="0" step="1" value="0"/><span class="row-hint">0 — удалять сразу</span></div>
+          </div>
+          <div class="setting-row">
+            <label for="srvDirInput">Каталог хранения файлов</label>
+            <div class="control control-inline">
+              <input id="srvDirInput" type="text" placeholder="C:\Users\...\POSCloud\server-data"/>
+              <button class="btn small" id="srvPick">…</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-title">Безопасность и запуск</div>
+          <label class="autostart"><input type="checkbox" id="srvAutoRun"/><span>Запускать сервер при открытии программы</span></label>
+          <label class="autostart"><input type="checkbox" id="srvAutostart"/><span>Запускать программу при входе в Windows</span></label>
+          <label class="autostart"><input type="checkbox" id="srvTLS"/><span>HTTPS (TLS, самоподписанный сертификат)</span></label>
+          <div class="addr-box">
+            <div class="addr-title">Отпечаток сертификата (SHA-256)</div>
+            <div class="addr-value" id="srvFingerprint">-</div>
+            <button class="btn small" id="srvCopyFP">Копировать отпечаток</button>
+            <div class="addr-hint">Включите HTTPS и укажите этот отпечаток в клиенте. После смены режима перезапустите сервер.</div>
+          </div>
+        </section>
+
+        <div class="settings-actions">
+          <button class="btn primary" id="srvSave">Сохранить настройки</button>
+          <button class="btn" id="srvToggle">Запустить</button>
           <button class="btn warn" id="srvRelease">Освободить порт</button>
+        </div>
+        <div class="hint" id="srvErr"></div>
+      </div>
+    </div>
+
+    <!-- ===== ПОЛЬЗОВАТЕЛИ ===== -->
+    <div class="pane" id="tab-users">
+      <div class="card">
+        <div class="card-title">Пользователи и токены</div>
+        <div class="row-btns" style="margin-top:0">
+          <button class="btn primary" id="usrNew">Создать пользователя</button>
+          <button class="btn ghost" id="usrRefresh">Обновить</button>
+        </div>
+        <table class="files" style="margin-top:8px">
+          <thead><tr><th>Пользователь</th><th>ID</th><th>Токенов</th><th>Файлов</th><th>Занято</th><th>Статус</th><th></th></tr></thead>
+          <tbody id="usrRows"><tr><td colspan="7" class="empty">нет пользователей</td></tr></tbody>
+        </table>
+        <div class="addr-box" id="tokenBox">
+          <div class="addr-title">Новый токен - сохраните, он показывается один раз</div>
+          <div class="addr-value" id="tokenValue">-</div>
+          <div class="addr-hint">Введите этот токен в клиенте вместе с адресом сервера.</div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">Настройки сервера</div>
-        <label class="field"><span>Порт</span><input id="srvPortInput" type="number" min="1" max="65535" value="8090"/></label>
-        <label class="field"><span>Квота на пользователя, ГБ (0 — без лимита)</span><input id="srvQuotaInput" type="number" min="0" step="1" value="0"/></label>
-        <label class="field"><span>Хранить версии, дней (0 — без ограничения)</span><input id="srvVersionsDays" type="number" min="0" step="1" value="30"/></label>
-        <label class="field"><span>Максимум версий на файл (0 — без ограничения)</span><input id="srvVersionsCount" type="number" min="0" step="1" value="10"/></label>
-        <label class="field"><span>Хранить корзину, дней (0 — не удалять)</span><input id="srvTrashDays" type="number" min="0" step="1" value="30"/></label>
-        <label class="field"><span>Хранить осиротевшие блоки, дней (0 — удалять сразу)</span><input id="srvOrphanDays" type="number" min="0" step="1" value="0"/></label>
-        <label class="field"><span>Каталог хранения файлов</span>
-          <div class="inline"><input id="srvDirInput" type="text" placeholder="C:\Users\...\POSCloud\server-data"/>
-          <button class="btn small" id="srvPick">…</button></div>
-        </label>
-        <label class="autostart"><input type="checkbox" id="srvAutoRun"/><span>Запускать сервер при открытии программы</span></label>
-        <label class="autostart"><input type="checkbox" id="srvAutostart"/><span>Запускать программу при входе в Windows</span></label>
-        <label class="autostart"><input type="checkbox" id="srvTLS"/><span>HTTPS (TLS, самоподписанный сертификат)</span></label>
-        <div class="addr-box">
-          <div class="addr-title">Отпечаток сертификата (SHA-256)</div>
-          <div class="addr-value" id="srvFingerprint">-</div>
-          <button class="btn small" id="srvCopyFP">Копировать отпечаток</button>
-          <div class="addr-hint">Включите HTTPS и укажите этот отпечаток в клиенте. После смены режима перезапустите сервер.</div>
+        <div class="card-title">Пользователь: <span id="filesUser">не выбран</span></div>
+        <div class="row-btns" id="uActions" style="margin-top:0">
+          <button class="btn" id="uToken" disabled>Новый токен</button>
+          <button class="btn" id="uToggle" disabled>Отключить</button>
+          <button class="btn warn" id="uDelete" disabled>Удалить</button>
         </div>
-        <div class="row-btns">
-          <button class="btn ghost" id="srvSave">Сохранить настройки</button>
+        <div class="subtitle" style="margin:10px 0 4px">Устройства (токены)</div>
+        <table class="files">
+          <thead><tr><th>Устройство</th><th>Токен</th><th>Создан</th><th>Последний вход</th><th></th></tr></thead>
+          <tbody id="tokenRows"><tr><td colspan="5" class="empty">-</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== ФАЙЛЫ ===== -->
+    <div class="pane" id="tab-files">
+      <div class="files-toolbar">
+        <label class="toolbar-field" for="fileUserSelect">Пользователь</label>
+        <select id="fileUserSelect"></select>
+        <span class="toolbar-meta" id="filesCount">0 файлов</span>
+        <div class="toolbar-actions">
+          <button class="btn small ghost" id="treeRefresh">Обновить</button>
+          <button class="btn small ghost" id="filesTrash">Корзина</button>
         </div>
-        <div class="addr-box">
-          <div class="addr-title">Адрес для клиентов</div>
-          <div class="addr-value" id="srvAddr">-</div>
-          <div class="addr-hint">Введите этот адрес, порт и токен в клиентском приложении на другом ПК.</div>
+      </div>
+
+      <div class="files-layout">
+        <section class="card files-card">
+          <div class="files-card-head">
+            <div>
+              <div class="card-title">Файлы</div>
+              <div class="subtitle" id="filesSub">выберите пользователя</div>
+            </div>
+          </div>
+          <div class="file-scroll" id="fileScroll">
+            <table class="files file-table">
+              <colgroup>
+                <col class="col-name"/>
+                <col class="col-size"/>
+                <col class="col-mod"/>
+                <col class="col-act"/>
+              </colgroup>
+              <thead><tr><th>Файл</th><th>Размер</th><th>Изменён</th><th></th></tr></thead>
+              <tbody id="fileRows"><tr class="empty-row"><td colspan="4" class="empty">нет данных</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="card history-card" id="historyCard">
+          <div class="history-head">
+            <div>
+              <div class="card-title">История</div>
+              <div class="history-file" id="historyTitle">—</div>
+            </div>
+            <button class="btn small ghost" id="historyClose">Очистить</button>
+          </div>
+          <div class="history-meta" id="historyMeta">Выберите файл в списке</div>
+          <div class="history-scroll" id="historyScroll">
+            <table class="files history-table">
+              <thead><tr><th>Версия</th><th>Размер</th><th>Когда</th><th></th></tr></thead>
+              <tbody id="historyRows"><tr><td colspan="4" class="empty">История появится после выбора файла</td></tr></tbody>
+            </table>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- ===== КОНФЛИКТЫ ===== -->
+    <div class="pane" id="tab-conflicts">
+      <div class="card">
+        <div class="card-title">Конфликтные копии</div>
+        <div class="row-btns" style="margin-top:0">
+          <button class="btn ghost" id="confRefresh">Обновить</button>
         </div>
-        <div class="hint-muted" id="srvCfgPath"></div>
-        <div class="hint" id="srvErr"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===== ПОЛЬЗОВАТЕЛИ ===== -->
-  <div class="pane" id="tab-users">
-    <div class="card">
-      <div class="card-title">Пользователи и токены</div>
-      <div class="row-btns" style="margin-top:0">
-        <button class="btn primary" id="usrNew">Создать пользователя</button>
-        <button class="btn ghost" id="usrRefresh">Обновить</button>
-      </div>
-      <table class="files" style="margin-top:8px">
-        <thead><tr><th>Пользователь</th><th>ID</th><th>Токенов</th><th>Файлов</th><th>Занято</th><th>Статус</th><th></th></tr></thead>
-        <tbody id="usrRows"><tr><td colspan="7" class="empty">нет пользователей</td></tr></tbody>
-      </table>
-      <div class="addr-box" id="tokenBox" style="display:none">
-        <div class="addr-title">Новый токен - сохраните, он показывается один раз</div>
-        <div class="addr-value" id="tokenValue">-</div>
-        <div class="addr-hint">Введите этот токен в клиенте вместе с адресом сервера.</div>
+        <table class="files" style="margin-top:8px">
+          <thead><tr><th>Пользователь</th><th>Файл</th><th>Размер</th><th>Изменён</th><th></th></tr></thead>
+          <tbody id="confRows"></tbody>
+        </table>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-title">Пользователь: <span id="filesUser">не выбран</span></div>
-      <div class="row-btns" id="uActions" style="margin-top:0">
-        <button class="btn" id="uToken" disabled>Новый токен</button>
-        <button class="btn" id="uToggle" disabled>Отключить</button>
-        <button class="btn warn" id="uDelete" disabled>Удалить</button>
+    <!-- ===== ЖУРНАЛ ===== -->
+    <div class="pane" id="tab-log">
+      <div class="card">
+        <div class="card-title">Журнал</div>
+        <div class="row-btns" style="margin-top:0">
+          <button class="btn small" id="logOpen">Открыть файл</button>
+          <button class="btn small" id="logClear">Очистить</button>
+          <button class="btn small ghost" id="logRefresh">Обновить</button>
+        </div>
+        <pre id="logbody"></pre>
       </div>
-      <div class="subtitle" style="margin:10px 0 4px">Устройства (токены)</div>
-      <table class="files">
-        <thead><tr><th>Устройство</th><th>Токен</th><th>Создан</th><th>Последний вход</th><th></th></tr></thead>
-        <tbody id="tokenRows"><tr><td colspan="5" class="empty">-</td></tr></tbody>
-      </table>
     </div>
-  </div>
-
-  <!-- ===== ФАЙЛЫ ===== -->
-  <div class="pane" id="tab-files">
-    <div class="card">
-      <div class="card-title">Дерево файлов</div>
-      <div class="row-btns" style="margin-top:0">
-        <button class="btn ghost" id="treeRefresh">Обновить</button>
-      </div>
-      <div id="fileTree" style="margin-top:8px"><div class="empty">нет данных</div></div>
-    </div>
-    <div class="card" id="historyCard" style="display:none">
-      <div class="card-title">История: <span id="historyTitle"></span></div>
-      <table class="files">
-        <thead><tr><th>Версия</th><th>Размер</th><th>Когда</th><th></th></tr></thead>
-        <tbody id="historyRows"></tbody>
-      </table>
-      <div class="row-btns"><button class="btn small ghost" id="historyClose">Закрыть</button></div>
-    </div>
-  </div>
-
-  <!-- ===== КОНФЛИКТЫ ===== -->
-  <div class="pane" id="tab-conflicts">
-    <div class="card">
-      <div class="card-title">Конфликтные копии</div>
-      <div class="row-btns" style="margin-top:0">
-        <button class="btn ghost" id="confRefresh">Обновить</button>
-      </div>
-      <table class="files" style="margin-top:8px">
-        <thead><tr><th>Пользователь</th><th>Файл</th><th>Размер</th><th>Изменён</th><th></th></tr></thead>
-        <tbody id="confRows"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- ===== ЖУРНАЛ ===== -->
-  <div class="pane" id="tab-log">
-    <div class="card">
-      <div class="card-title">Журнал</div>
-      <div class="row-btns" style="margin-top:0">
-        <button class="btn small" id="logOpen">Открыть файл</button>
-        <button class="btn small" id="logClear">Очистить</button>
-        <button class="btn small ghost" id="logRefresh">Обновить</button>
-      </div>
-      <pre id="logbody"></pre>
-    </div>
-  </div>
+  </main>
 </div>
 <script src="./app.js"></script>
 </body>

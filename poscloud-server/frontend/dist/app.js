@@ -1,17 +1,35 @@
 /* POSCloud Server — UI */
 const $ = (id) => document.getElementById(id);
-let seeded = false;      // поля ввода заполняются один раз
+let seeded = false;
 let autostartLoaded = false;
 let autoRunLoaded = false;
-const expandedUsers = new Set();
 let currentTab = "tab-server";
-let selectedUser = null; // {id, name, enabled}
+let selectedUser = null;       // пользователь во вкладке «Пользователи»
+let serverRunning = false;
+
+/* состояние вкладки «Файлы» */
+let filesUserID = null;
+let filesUserName = "";
+let selectedFile = null;       // {userID, name}
+let historyContext = null;     // {userID, name} — name="" означает корзину
+let usersSignature = "";
+
+const PAGE_META = {
+  "tab-server": { title: "Сервер", sub: "состояние и параметры хранения" },
+  "tab-users": { title: "Пользователи", sub: "доступы, токены и устройства" },
+  "tab-files": { title: "Файлы", sub: "файлы пользователей и история версий" },
+  "tab-conflicts": { title: "Конфликты", sub: "конфликтные копии и их разрешение" },
+  "tab-log": { title: "Журнал", sub: "события сервера" },
+};
 
 async function call(method, ...args) {
   try {
     if (!window.go || !window.go.main || !window.go.main.App) return null;
     return await window.go.main.App[method](...args);
-  } catch (e) { console.error(method, e); return null; }
+  } catch (e) {
+    console.error(method, e);
+    return null;
+  }
 }
 
 function fmtSize(b) {
@@ -23,12 +41,29 @@ function fmtSize(b) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+function fmtDate(s) {
+  if (!s) return "-";
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  return m ? (m[3] + "." + m[2] + " " + m[4] + ":" + m[5]) : s;
+}
+function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return many;
+  if (b === 1) return one;
+  if (b >= 2 && b <= 4) return few;
+  return many;
+}
+function fmtFiles(n) { return n + " " + plural(n, "файл", "файла", "файлов"); }
+function fmtVersions(n) { return n + " " + plural(n, "версия", "версии", "версий"); }
 
 /* ---------- закладки ---------- */
 function activateTab(id) {
+  if (!PAGE_META[id]) return;
   currentTab = id;
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === id));
   document.querySelectorAll(".pane").forEach((x) => x.classList.toggle("active", x.id === id));
+  $("pageTitle").textContent = PAGE_META[id].title;
+  $("pageSub").textContent = PAGE_META[id].sub;
   if (id === "tab-files") renderTree();
   if (id === "tab-conflicts") renderConflicts();
   if (id === "tab-users") refreshUsers();
@@ -53,21 +88,26 @@ function renderServer(st) {
   $("srvPortFree").textContent = st.portFree ? "да" : "нет";
   $("srvUsers").textContent = st.users || 0;
   $("srvDir").textContent = st.dataDir || "-";
-  $("srvAddr").textContent = st.running ? (st.url || "-") : "запустите сервер, чтобы увидеть адрес";
   $("srvFingerprint").textContent = st.fingerprint || "-";
   $("srvCfgPath").textContent = st.configPath ? ("Файл настроек: " + st.configPath) : "";
 
+  const running = !!st.running;
+  const url = st.url || "";
+  $("srvAddr").textContent = url || "—";
+  $("srvAddr").title = url || "";
+  $("srvCopyAddr").disabled = !url;
+  $("srvTlsPill").style.display = st.tls ? "" : "none";
+
   const dot = $("srvDot");
   dot.className = "dot";
-  if (st.running) { dot.classList.add("on"); $("srvStatusText").textContent = "работает"; }
-  else if (!st.portFree) { dot.classList.add("busy"); $("srvStatusText").textContent = "порт занят другим процессом"; }
+  if (running) { dot.classList.add("on"); $("srvStatusText").textContent = "работает"; }
+  else if (!st.portFree) { dot.classList.add("busy"); $("srvStatusText").textContent = "порт занят"; }
   else { dot.classList.add("off"); $("srvStatusText").textContent = "остановлен"; }
 
-  // Одна кнопка меняет назначение: запускает или останавливает сервер.
-  serverRunning = !!st.running;
+  serverRunning = running;
   const tg = $("srvToggle");
-  tg.textContent = st.running ? "Остановить" : "Запустить";
-  tg.className = st.running ? "btn" : "btn primary";
+  tg.textContent = running ? "Остановить" : "Запустить";
+  tg.className = running ? "btn" : "btn primary";
 
   if (st.error) { $("srvErr").style.color = "#e5484d"; $("srvErr").textContent = st.error; }
   else { $("srvErr").textContent = ""; }
@@ -88,7 +128,10 @@ function renderServer(st) {
 /* ---------- пользователи ---------- */
 function renderUsers(users) {
   const tb = $("usrRows");
-  if (!users || users.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="empty">нет пользователей - создайте первого</td></tr>'; return; }
+  if (!users || users.length === 0) {
+    tb.innerHTML = '<tr><td colspan="7" class="empty">нет пользователей - создайте первого</td></tr>';
+    return;
+  }
   tb.innerHTML = "";
   users.forEach((u) => {
     const tr = document.createElement("tr");
@@ -102,7 +145,7 @@ function renderUsers(users) {
 }
 
 function showTokenBox(tok) {
-  $("tokenBox").style.display = "block";
+  $("tokenBox").classList.add("show");
   $("tokenValue").textContent = tok;
   $("tokenBox").scrollIntoView({ behavior: "smooth", block: "center" });
 }
@@ -117,7 +160,10 @@ function tokenButton(text, cls, onClick) {
 
 function renderTokens(tokens) {
   const tb = $("tokenRows");
-  if (!tokens || tokens.length === 0) { tb.innerHTML = '<tr><td colspan="5" class="empty">нет токенов</td></tr>'; return; }
+  if (!tokens || tokens.length === 0) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">нет токенов</td></tr>';
+    return;
+  }
   tb.innerHTML = "";
   tokens.forEach((t) => {
     const tr = document.createElement("tr");
@@ -138,12 +184,8 @@ function renderTokens(tokens) {
         eye.textContent = shown ? "Показать" : "Скрыть";
       });
       const copy = tokenButton("Копировать", "btn small", async () => {
-        try {
-          await call("CopyToClipboard", t.token);
-          flash("Токен скопирован", true);
-        } catch (e) {
-          flash("Не удалось скопировать токен", false);
-        }
+        await call("CopyToClipboard", t.token);
+        flash("Токен скопирован", true);
       });
       tokTd.append(val, eye, copy);
     } else {
@@ -153,16 +195,12 @@ function renderTokens(tokens) {
       val.title = "Токен выдан до обновления: в реестре хранится только хэш";
       const re = tokenButton("Перевыпустить", "btn small", async () => {
         if (!confirm('Перевыпустить токен "' + t.name + '"? Старый токен перестанет работать.')) return;
-        try {
-          const tok = await call("ReissueToken", selectedUser.id, t.id);
-          if (tok) {
-            showTokenBox(tok);
-            loadUserDetails();
-            refreshUsers();
-          } else {
-            flash("Не удалось перевыпустить токен", false);
-          }
-        } catch (e) {
+        const tok = await call("ReissueToken", selectedUser.id, t.id);
+        if (tok) {
+          showTokenBox(tok);
+          loadUserDetails();
+          refreshUsers();
+        } else {
           flash("Не удалось перевыпустить токен", false);
         }
       });
@@ -206,66 +244,191 @@ async function loadUserDetails() {
   renderTokens(tokens || []);
 }
 
-/* ---------- дерево файлов ---------- */
-async function renderTree() {
-  if (document.hidden || await call("WindowHidden")) return;
-  const box = $("fileTree");
-  const users = (await call("ListUsers")) || [];
-  if (users.length === 0) { box.innerHTML = '<div class="empty">нет пользователей</div>'; return; }
-  const trs = (await call("GetTransfers")) || [];
-  const trMap = {};
-  trs.forEach((t) => { trMap[t.name] = t; });
-  box.innerHTML = "";
-  for (const u of users) {
-    const files = (await call("UserFiles", u.id)) || [];
-    files.sort((a, b) => {
-      const ua = trMap[a.name] ? 0 : 1;
-      const ub = trMap[b.name] ? 0 : 1;
-      if (ua !== ub) return ua - ub;
-      return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
-    });
-    const wrap = document.createElement("div"); wrap.className = "tree-user";
-    const head = document.createElement("div"); head.className = "tree-head";
-    head.innerHTML = '<span class="name">' + escapeHtml(u.name) + ' <span class="meta">(' + escapeHtml(u.id) + ')</span></span>' +
-      '<span class="meta">' + files.length + ' файл(ов)</span><button class="btn small ghost">Корзина</button>';
-    const list = document.createElement("div"); list.className = "tree-files";
-    if (expandedUsers.has(u.id)) list.classList.add("open");
-    if (files.length === 0) {
-      const e = document.createElement("div"); e.className = "tree-file"; e.innerHTML = '<span class="fn meta">пусто</span>';
-      list.appendChild(e);
-    }
-    files.forEach((f) => {
-      const t = trMap[f.name];
-      const nameHtml = t
-        ? escapeHtml(f.name) + '<div class="pbar"><div class="pfill" style="width:' + t.pct + '%"></div></div><div class="pct">' + t.pct + '% ' + (t.dir === "up" ? "↑ приём" : "↓ отдача") + "</div>"
-        : escapeHtml(f.name);
-      const row = document.createElement("div"); row.className = "tree-file";
-      row.innerHTML = '<span class="fn">' + nameHtml + '</span><span class="fs">' + fmtSize(f.size) +
-        '</span><span class="fm">' + escapeHtml(f.modified) + '</span><button class="btn small ghost">История</button><button class="del">Удалить</button>';
-      row.querySelector(".btn").addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        showHistory(u.id, f.name);
-      });
-      row.querySelector(".del").addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        if (!confirm('Удалить "' + f.name + '" у пользователя ' + u.name + '?')) return;
-        await call("DeleteUserFile", u.id, f.name); renderTree(); refreshUsers();
-      });
-      list.appendChild(row);
-    });
-    head.querySelector(".btn").addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      showHistory(u.id, "");
-    });
-    head.addEventListener("click", () => {
-      if (expandedUsers.has(u.id)) { expandedUsers.delete(u.id); list.classList.remove("open"); }
-      else { expandedUsers.add(u.id); list.classList.add("open"); }
-    });
-    wrap.appendChild(head); wrap.appendChild(list);
-    box.appendChild(wrap);
+/* ---------- файлы ---------- */
+function updateFileUserSelect(users) {
+  const sel = $("fileUserSelect");
+  if (!users || users.length === 0) {
+    filesUserID = null;
+    filesUserName = "";
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">нет пользователей</option>';
+    usersSignature = "";
+    return;
   }
+  const sig = users.map((u) => u.id + ":" + u.name).join("|");
+  if (sig !== usersSignature) {
+    sel.innerHTML = "";
+    users.forEach((u) => {
+      const o = document.createElement("option");
+      o.value = u.id;
+      o.textContent = u.name;
+      sel.appendChild(o);
+    });
+    usersSignature = sig;
+  }
+  sel.disabled = false;
+  if (!filesUserID || !users.some((u) => u.id === filesUserID)) {
+    filesUserID = users[0].id;
+    filesUserName = users[0].name;
+  } else {
+    filesUserName = (users.find((u) => u.id === filesUserID) || {}).name || filesUserName;
+  }
+  sel.value = filesUserID;
 }
 
+function markSelectedFile() {
+  document.querySelectorAll(".file-row").forEach((row) => {
+    row.classList.toggle("selected", !!selectedFile && row.dataset.name === selectedFile.name);
+  });
+}
+
+function updateFileRow(row, f, transfer) {
+  row.dataset.name = f.name;
+  row.classList.toggle("has-transfer", !!transfer);
+  const name = row.querySelector(".file-name");
+  if (name) { name.textContent = f.name; name.title = f.name; }
+  const size = row.querySelector(".file-size");
+  if (size) size.textContent = fmtSize(f.size);
+  const mod = row.querySelector(".file-mod");
+  if (mod) { mod.textContent = fmtDate(f.modified); mod.title = f.modified || ""; }
+  const pct = transfer && typeof transfer.pct === "number" ? Math.max(0, Math.min(100, transfer.pct)) : 0;
+  row.style.setProperty("--pct", pct + "%");
+  row.title = transfer ? (pct + "% " + (transfer.dir === "up" ? "приём" : "отдача")) : "";
+}
+
+function buildFileRow(f) {
+  const tr = document.createElement("tr");
+  tr.className = "file-row";
+  tr.dataset.name = f.name;
+  tr.innerHTML = '<td class="file-name-cell"><div class="file-name"></div></td>' +
+    '<td class="file-size"></td><td class="file-mod"></td>' +
+    '<td><button class="btn small ghost" data-act="history">История</button><button class="del" data-act="del">Удалить</button></td>';
+  tr.querySelector('[data-act="history"]').addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    showHistory(filesUserID, f.name);
+  });
+  tr.querySelector('[data-act="del"]').addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    if (!confirm('Удалить "' + f.name + '" у пользователя ' + filesUserName + '?')) return;
+    await call("DeleteUserFile", filesUserID, f.name);
+    if (selectedFile && selectedFile.name === f.name) clearHistory();
+    renderTree();
+    refreshUsers();
+  });
+  tr.addEventListener("click", (ev) => {
+    if (ev.target.closest("button")) return;
+    showHistory(filesUserID, f.name);
+  });
+  return tr;
+}
+
+function renderFiles(files, transfers) {
+  const box = $("fileRows");
+  const scroll = $("fileScroll");
+  const scrollTop = scroll ? scroll.scrollTop : 0;
+  const list = (files || []).slice().sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
+  const trMap = {};
+  (transfers || []).forEach((t) => { trMap[t.name] = t; });
+
+  if (list.length === 0) {
+    box.innerHTML = '<tr class="empty-row"><td colspan="4" class="empty">файлов нет</td></tr>';
+    $("filesCount").textContent = "0 файлов";
+    $("filesSub").textContent = filesUserName ? (filesUserName + " · 0 файлов") : "файлов нет";
+    clearHistory();
+    if (scroll) scroll.scrollTop = 0;
+    return;
+  }
+
+  const existing = new Map();
+  box.querySelectorAll("tr[data-name]").forEach((tr) => existing.set(tr.dataset.name, tr));
+  const names = new Set(list.map((f) => f.name));
+  existing.forEach((tr, name) => {
+    if (!names.has(name)) { tr.remove(); existing.delete(name); }
+  });
+  box.querySelectorAll(".empty-row").forEach((tr) => tr.remove());
+
+  let prev = null;
+  list.forEach((f) => {
+    let row = existing.get(f.name);
+    if (!row) {
+      row = buildFileRow(f);
+      existing.set(f.name, row);
+    }
+    updateFileRow(row, f, trMap[f.name]);
+    const expected = prev ? prev.nextSibling : box.firstChild;
+    if (row !== expected) box.insertBefore(row, expected);
+    prev = row;
+  });
+
+  const total = list.reduce((sum, f) => sum + (f.size || 0), 0);
+  $("filesCount").textContent = fmtFiles(list.length) + " · " + fmtSize(total);
+  $("filesSub").textContent = (filesUserName || "—") + " · " + fmtFiles(list.length);
+  markSelectedFile();
+  if (scroll) scroll.scrollTop = scrollTop;
+  if (selectedFile && selectedFile.userID === filesUserID && !names.has(selectedFile.name)) clearHistory();
+}
+
+async function renderTree() {
+  if (document.hidden || await call("WindowHidden")) return;
+  const users = (await call("ListUsers")) || [];
+  updateFileUserSelect(users);
+  if (users.length === 0) {
+    $("fileRows").innerHTML = '<tr class="empty-row"><td colspan="4" class="empty">нет пользователей</td></tr>';
+    $("filesCount").textContent = "0 файлов";
+    $("filesSub").textContent = "нет пользователей";
+    clearHistory();
+    return;
+  }
+  const files = (await call("UserFiles", filesUserID)) || [];
+  const transfers = (await call("GetTransfers")) || [];
+  renderFiles(files, transfers);
+}
+
+function renderHistoryRows(items, isTrash) {
+  const tb = $("historyRows");
+  tb.innerHTML = "";
+  if (!items || items.length === 0) {
+    tb.innerHTML = '<tr><td colspan="4" class="empty">' + (isTrash ? "корзина пуста" : "нет версий") + '</td></tr>';
+    return;
+  }
+  items.forEach((it) => {
+    const tr = document.createElement("tr");
+    const label = it.kind === "trash" ? "корзина" : ("v" + it.version);
+    tr.innerHTML = "<td>" + escapeHtml(label) + "</td><td>" + fmtSize(it.size) + "</td><td title=\"" +
+      escapeHtml(it.createdAt || "") + "\">" + escapeHtml(fmtDate(it.createdAt)) +
+      '</td><td><button class="btn small">Восстановить</button></td>';
+    tr.querySelector("button").addEventListener("click", async () => {
+      await call(isTrash ? "RestoreTrash" : "RestoreHistory", historyContext.userID, it.id);
+      await renderTree();
+      if (historyContext) showHistory(historyContext.userID, historyContext.name);
+      refreshUsers();
+    });
+    tb.appendChild(tr);
+  });
+}
+
+async function showHistory(userID, name) {
+  if (!userID) return;
+  const isTrash = !name;
+  historyContext = { userID, name };
+  selectedFile = isTrash ? null : { userID, name };
+  markSelectedFile();
+  const items = isTrash ? (await call("Trash", userID)) : (await call("History", userID, name));
+  $("historyTitle").textContent = isTrash ? ("Корзина · " + filesUserName) : name;
+  $("historyMeta").textContent = isTrash ? "удалённые файлы" : fmtVersions((items || []).length);
+  renderHistoryRows(items || [], isTrash);
+}
+
+function clearHistory() {
+  selectedFile = null;
+  historyContext = null;
+  markSelectedFile();
+  $("historyTitle").textContent = "—";
+  $("historyMeta").textContent = "Выберите файл в списке";
+  $("historyRows").innerHTML = '<tr><td colspan="4" class="empty">История появится после выбора файла</td></tr>';
+}
+
+/* ---------- конфликты ---------- */
 async function renderConflicts() {
   const items = (await call("Conflicts")) || [];
   const tb = $("confRows");
@@ -284,40 +447,18 @@ async function renderConflicts() {
       '<button class="del">Удалить</button></td>';
     tr.querySelector('[data-act="server"]').addEventListener("click", async () => {
       if (!confirm('Оставить серверную версию и удалить конфликтную копию "' + c.name + '"?')) return;
-      await call("ResolveConflict", c.userId, c.name, "server"); renderConflicts(); renderTree();
+      await call("ResolveConflict", c.userId, c.name, "server");
+      renderConflicts(); renderTree();
     });
     tr.querySelector('[data-act="conflict"]').addEventListener("click", async () => {
       if (!confirm('Заменить оригинал конфликтной копией "' + c.name + '"?')) return;
-      await call("ResolveConflict", c.userId, c.name, "conflict"); renderConflicts(); renderTree();
+      await call("ResolveConflict", c.userId, c.name, "conflict");
+      renderConflicts(); renderTree();
     });
     tr.querySelector(".del").addEventListener("click", async () => {
       if (!confirm('Удалить конфликтную копию "' + c.name + '"?')) return;
-      await call("DeleteUserFile", c.userId, c.name); renderConflicts(); renderTree();
-    });
-    tb.appendChild(tr);
-  });
-}
-
-async function showHistory(userID, name) {
-  const isTrash = !name;
-  const items = isTrash ? (await call("Trash", userID)) : (await call("History", userID, name));
-  $("historyCard").style.display = "block";
-  $("historyTitle").textContent = isTrash ? ("корзина — " + userID) : name;
-  const tb = $("historyRows");
-  tb.innerHTML = "";
-  if (!items || items.length === 0) {
-    tb.innerHTML = '<tr><td colspan="4" class="empty">' + (isTrash ? "корзина пуста" : "нет версий") + '</td></tr>';
-    return;
-  }
-  items.forEach((it) => {
-    const tr = document.createElement("tr");
-    const label = it.kind === "trash" ? "корзина" : ("v" + it.version);
-    tr.innerHTML = "<td>" + escapeHtml(label) + "</td><td>" + fmtSize(it.size) + "</td><td>" +
-      escapeHtml(it.createdAt || "-") + '</td><td><button class="btn small">Восстановить</button></td>';
-    tr.querySelector("button").addEventListener("click", async () => {
-      await call(isTrash ? "RestoreTrash" : "RestoreHistory", userID, it.id);
-      renderTree();
-      showHistory(userID, name);
+      await call("DeleteUserFile", c.userId, c.name);
+      renderConflicts(); renderTree();
     });
     tb.appendChild(tr);
   });
@@ -336,18 +477,19 @@ function form() { return {
 }; }
 function flash(msg, ok) { $("srvErr").style.color = ok ? "#1aae39" : "#e5484d"; $("srvErr").textContent = msg; }
 
-let serverRunning = false;
 $("srvToggle").addEventListener("click", async () => {
   if (serverRunning) { renderServer(await call("StopServer")); refresh(); return; }
-  const f = form(); renderServer(await call("StartServer", f.port, f.dir)); refresh();
+  const f = form();
+  renderServer(await call("StartServer", f.port, f.dir));
+  refresh();
 });
-// Освободить порт: свой сервер — просто остановить; чужой процесс — показать и,
-// после подтверждения, завершить именно его (по PID).
+
 $("srvRelease").addEventListener("click", async () => {
   const f = form();
   const st = await call("GetServerState");
   if (st && st.running) {
-    renderServer(await call("StopServer")); refresh();
+    renderServer(await call("StopServer"));
+    refresh();
     flash("сервер остановлен, порт освобождён", true);
     return;
   }
@@ -366,22 +508,35 @@ $("srvRelease").addEventListener("click", async () => {
   info.push("", "Завершить этот процесс?");
   if (!confirm(info.join("\n"))) { flash("отменено", false); return; }
   const res = await call("ReleasePort", f.port, h.pid);
-  renderServer(res); refresh();
+  renderServer(res);
+  refresh();
   flash(res && res.error ? res.error : "процесс завершён, порт освобождён", !(res && res.error));
 });
-$("historyClose").addEventListener("click", () => { $("historyCard").style.display = "none"; });
-$("confRefresh").addEventListener("click", () => renderConflicts());
+
+$("srvCopyAddr").addEventListener("click", async () => {
+  const st = await call("GetServerState");
+  if (!st || !st.running || !st.url) { flash("сервер не запущен — адрес недоступен", false); return; }
+  await call("CopyToClipboard", st.url);
+  flash("адрес скопирован", true);
+});
+
 $("srvCopyFP").addEventListener("click", async () => {
   const st = await call("GetServerState");
   if (!st || !st.fingerprint) { flash("отпечаток ещё не создан — включите HTTPS и сохраните настройки", false); return; }
   await call("CopyToClipboard", st.fingerprint);
   flash("отпечаток скопирован", true);
 });
+
 $("srvSave").addEventListener("click", async () => {
-  const f = form(); const st = await call("SaveSettings", f.port, f.dir, f.tls, f.quota, f.versionsDays, f.versionsCount, f.trashDays, f.orphanDays); renderServer(st);
+  const f = form();
+  const st = await call("SaveSettings", f.port, f.dir, f.tls, f.quota, f.versionsDays, f.versionsCount, f.trashDays, f.orphanDays);
+  renderServer(st);
   if (st && !st.error) flash("настройки сохранены", true);
 });
-$("srvPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("srvDirInput").value = d; });
+$("srvPick").addEventListener("click", async () => {
+  const d = await call("PickDirectory");
+  if (d) $("srvDirInput").value = d;
+});
 $("srvAutostart").addEventListener("change", async (e) => {
   await call("SetAutostart", e.target.checked);
   flash(e.target.checked ? "программа будет запускаться при входе в Windows" : "запуск программы при входе выключен", true);
@@ -391,9 +546,24 @@ $("srvAutoRun").addEventListener("change", async (e) => {
   flash(e.target.checked ? "сервер будет стартовать при открытии программы" : "сервер нужно будет запускать вручную", true);
 });
 
-$("usrRefresh").addEventListener("click", () => refreshUsers());
+/* ---------- файлы: обработчики ---------- */
 $("treeRefresh").addEventListener("click", () => renderTree());
+$("fileUserSelect").addEventListener("change", (e) => {
+  filesUserID = e.target.value || null;
+  filesUserName = e.target.options[e.target.selectedIndex].textContent;
+  selectedFile = null;
+  historyContext = null;
+  clearHistory();
+  renderTree();
+});
+$("filesTrash").addEventListener("click", () => {
+  if (!filesUserID) { flash("нет выбранного пользователя", false); return; }
+  showHistory(filesUserID, "");
+});
+$("historyClose").addEventListener("click", () => clearHistory());
 
+/* ---------- пользователи: действия ---------- */
+$("usrRefresh").addEventListener("click", () => refreshUsers());
 $("usrNew").addEventListener("click", async () => {
   const name = prompt("Имя пользователя (например, «Альберт»):", "");
   if (!name || !name.trim()) return;
@@ -405,9 +575,7 @@ $("usrNew").addEventListener("click", async () => {
   if (dev === null) { flash("пользователь создан. Токен можно выдать кнопкой «Новый токен»", true); return; }
   const tok = await call("IssueToken", u.id, (dev || "").trim() || "Устройство");
   if (tok) {
-    $("tokenBox").style.display = "block";
-    $("tokenValue").textContent = tok;
-    $("tokenBox").scrollIntoView({ behavior: "smooth", block: "center" });
+    showTokenBox(tok);
     loadUserDetails(); refreshUsers();
   } else { flash("пользователь создан, но токен выдать не удалось", false); }
 });
@@ -418,9 +586,7 @@ $("uToken").addEventListener("click", async () => {
   if (dev === null) return;
   const tok = await call("IssueToken", selectedUser.id, dev.trim());
   if (tok) {
-    $("tokenBox").style.display = "block";
-    $("tokenValue").textContent = tok;
-    $("tokenBox").scrollIntoView({ behavior: "smooth", block: "center" });
+    showTokenBox(tok);
     loadUserDetails(); refreshUsers();
   }
 });
@@ -440,7 +606,7 @@ $("uDelete").addEventListener("click", async () => {
   selectedUser = null;
   $("filesUser").textContent = "не выбран";
   $("uToken").disabled = $("uToggle").disabled = $("uDelete").disabled = true;
-  $("tokenRows").innerHTML = '<tr><td colspan="4" class="empty">-</td></tr>';
+  $("tokenRows").innerHTML = '<tr><td colspan="5" class="empty">-</td></tr>';
   refreshUsers();
 });
 
@@ -454,7 +620,8 @@ async function refresh() {
   if (document.hidden) return;
   if (await call("WindowHidden")) return;
   const [st, logs] = await Promise.all([call("GetServerState"), call("GetLogs")]);
-  renderServer(st); renderLogs(logs);
+  renderServer(st);
+  renderLogs(logs);
   $("pulse").className = "pulse" + (st && st.running ? " on" : "");
   if (!autostartLoaded) {
     const au = await call("AutostartEnabled");
@@ -467,7 +634,8 @@ async function refresh() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  refresh(); refreshUsers();
+  refresh();
+  refreshUsers();
   setInterval(() => { if (!document.hidden) refresh(); }, 1500);
   setInterval(() => { if (!document.hidden && currentTab === "tab-files") renderTree(); }, 3000);
   setInterval(() => { if (!document.hidden && currentTab === "tab-conflicts") renderConflicts(); }, 3000);
