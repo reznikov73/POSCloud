@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,7 @@ const (
 	idSCancel      = 3005
 	idSTLS         = 3012
 	idSFingerprint = 3013
+	idSPair        = 3014
 
 	idMenuSettings = 2001
 	idMenuReload   = 2002
@@ -583,6 +585,51 @@ func reloadConfig() {
 	requestFolders()
 }
 
+// applyPairCode принимает код подключения, обменивает одноразовый секрет на
+// токен и сохраняет настройки. Используется кнопкой «Код из буфера».
+func applyPairCode(code string) error {
+	info, err := engine.ParseConnectionCode(code)
+	if err != nil {
+		return err
+	}
+	oldFP := gCfg.TLSFingerprint
+	if info.TLS {
+		if err := engine.ConfigureTLS(info.Fingerprint); err != nil {
+			return err
+		}
+	} else {
+		_ = engine.ConfigureTLS("")
+	}
+	hostname, _ := os.Hostname()
+	res, err := engine.Pair(engine.BaseURL(info.Host, info.Port, info.TLS), info.Code, hostname)
+	if err != nil {
+		_ = engine.ConfigureTLS(oldFP)
+		return err
+	}
+
+	next := gCfg
+	next.Host = info.Host
+	next.Port = info.Port
+	next.TLS = info.TLS
+	next.TLSFingerprint = info.Fingerprint
+	next.Token = res.Token
+	if gSyn.Running() {
+		gSyn.Stop()
+	}
+	gCfg = next
+	gSyn.Update(gCfg.Config)
+	if err := saveConfig(gCfg); err != nil {
+		return fmt.Errorf("не удалось сохранить настройки: %w", err)
+	}
+	if synConfigured() {
+		gSyn.Run()
+	}
+	updateStatusLine()
+	requestFolders()
+	logf("подключение по коду: %s", engine.BaseURL(info.Host, info.Port, info.TLS))
+	return nil
+}
+
 // ---------- окно настроек ----------
 
 var settingsWndProcCb = syscall.NewCallback(settingsWndProc)
@@ -640,10 +687,11 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		hChkTLS = createWindow("BUTTON", "HTTPS (TLS)", wsChild|wsVisible|wsTabStop|bsAutoCheckbox|bsLeft, 360, 152, 180, 24, hwnd, idSTLS)
 		lab("Отпечаток SHA-256:", 12, 206, 120, 20)
 		hEdFingerprint = edit(gCfg.TLSFingerprint, 138, 204, 660, 24, idSFingerprint)
-		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 370, 240, 130, 28, hwnd, idSTest)
-		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 508, 240, 92, 28, hwnd, idSSave)
-		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 608, 240, 84, 28, hwnd, idSCancel)
-		for _, c := range []uintptr{btnBrowse, hChkAuto, hChkTLS, btnTest, btnSave, btnCancel} {
+		btnPaste := createWindow("BUTTON", "Код из буфера", wsChild|wsVisible|wsTabStop|bsPushButton, 12, 240, 150, 28, hwnd, idSPair)
+		btnTest := createWindow("BUTTON", "Проверить связь", wsChild|wsVisible|wsTabStop|bsPushButton, 180, 240, 130, 28, hwnd, idSTest)
+		btnSave := createWindow("BUTTON", "Сохранить", wsChild|wsVisible|wsTabStop|bsPushButton, 320, 240, 92, 28, hwnd, idSSave)
+		btnCancel := createWindow("BUTTON", "Отмена", wsChild|wsVisible|wsTabStop|bsPushButton, 420, 240, 84, 28, hwnd, idSCancel)
+		for _, c := range []uintptr{btnBrowse, hChkAuto, hChkTLS, btnPaste, btnTest, btnSave, btnCancel} {
 			send(c, wmSetFont, gFont, 1)
 		}
 		send(hChkAuto, 0x00F1, boolPtr(autostartEnabled()), 0)
@@ -666,6 +714,22 @@ func settingsWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 				_ = saveConfig(gCfg)
 				logf("автозапуск при входе: %v", on)
 			}
+		case idSPair:
+			code := strings.TrimSpace(clipboardText())
+			if code == "" {
+				messageBox(hwnd, "Буфер обмена пуст. Скопируйте код подключения в окне сервера.", appTitle, mbOk|mbIconExclamation)
+				return 0
+			}
+			if err := applyPairCode(code); err != nil {
+				messageBox(hwnd, "Не удалось подключиться по коду:\n"+err.Error(), appTitle, mbOk|mbIconExclamation)
+				return 0
+			}
+			setText(hEdHost, gCfg.Host)
+			setText(hEdPort, fmt.Sprintf("%d", gCfg.Port))
+			setText(hEdToken, gCfg.Token)
+			setText(hEdFingerprint, gCfg.TLSFingerprint)
+			send(hChkTLS, 0x00F1, boolPtr(gCfg.TLS), 0)
+			messageBox(hwnd, "Код принят. Настройки подключения сохранены.", appTitle, mbOk|mbIconInfo)
 		case idSTest:
 			port, _ := strconv.Atoi(strings.TrimSpace(getText(hEdPort)))
 			tls := send(hChkTLS, 0x00F0, 0, 0) == 1

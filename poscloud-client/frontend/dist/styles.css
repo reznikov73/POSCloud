@@ -75,6 +75,12 @@ input{width:100%;background:#fff;border:1px solid var(--field-line);border-radiu
   padding:4px 7px;font-size:11.5px;outline:none;transition:.15s}
 input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.14)}
 input[type=number]{max-width:84px}
+textarea{width:100%;background:#fff;border:1px solid var(--field-line);border-radius:5px;color:var(--txt);
+  padding:4px 7px;font-size:11px;outline:none;transition:.15s;resize:vertical;font-family:Consolas,"Courier New",monospace}
+textarea:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.14)}
+.pair-box{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 8px;margin-bottom:7px}
+.pair-title{font-weight:600;font-size:11px;margin-bottom:4px;color:var(--txt)}
+#cliPairCode{min-height:42px;max-height:120px;background:#fff;color:var(--txt);border-color:var(--field-line);font:10.5px/1.4 Consolas,"Courier New",monospace;padding:4px 7px}
 
 /* кнопки */
 .row-btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}

@@ -70,6 +70,10 @@ type authStore struct {
 	path  string
 	users []User
 
+	// Одноразовые коды подключения. В памяти хранятся только SHA-256-хэши:
+	// после перезапуска сервера неиспользованные коды становятся недействительны.
+	pairings map[string]pairingEntry
+
 	logf    func(string)  // журнал приложения (необязательный)
 	pending []string      // сообщения, накопленные до подключения журнала
 	dirty   bool          // есть несохранённые изменения (отметки LastSeen)
@@ -77,7 +81,7 @@ type authStore struct {
 }
 
 func newAuthStore(path string) *authStore {
-	s := &authStore{path: path}
+	s := &authStore{path: path, pairings: map[string]pairingEntry{}}
 	s.load()
 	return s
 }
@@ -398,6 +402,11 @@ func (s *authStore) deleteUser(id string) error {
 func (s *authStore) issueToken(userID, deviceName string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.issueTokenLocked(userID, deviceName)
+}
+
+// issueTokenLocked — внутренняя версия issueToken; вызывать под s.mu.
+func (s *authStore) issueTokenLocked(userID, deviceName string) (string, error) {
 	i := s.userIndexLocked(userID)
 	if i < 0 {
 		return "", fmt.Errorf("пользователь не найден")
@@ -537,7 +546,7 @@ func tokenFromRequest(r *http.Request) string {
 // withAuth пропускает /health без проверки, остальные запросы требуют валидный Bearer-токен.
 func (a *App) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/health" || r.URL.Path == "/pair" {
 			next.ServeHTTP(w, r)
 			return
 		}

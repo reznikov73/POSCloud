@@ -49,9 +49,12 @@
         <div class="client-main">
           <div class="client-label">Адрес для клиентов <span id="srvTlsPill" class="pill" style="display:none">TLS</span></div>
           <div class="client-url" id="srvAddr">-</div>
-          <div class="client-hint">Введите этот адрес, порт и токен в клиентском приложении на другом ПК.</div>
+          <div class="client-hint">Введите адрес, порт и токен вручную или подключите клиент по коду.</div>
         </div>
-        <button class="btn small" id="srvCopyAddr" disabled>Копировать адрес</button>
+        <div class="client-actions">
+          <button class="btn small" id="srvCopyAddr" disabled>Копировать адрес</button>
+          <button class="btn small primary" id="srvPairBtn" disabled>Код подключения</button>
+        </div>
       </div>
 
       <div class="server-meta">
@@ -240,6 +243,33 @@
       </div>
     </div>
   </main>
+</div>
+<div class="modal-backdrop" id="pairModal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pairTitle">
+    <div class="modal-head">
+      <div>
+        <div class="card-title" id="pairTitle">Код подключения</div>
+        <div class="hint-muted">Одноразовый код для нового клиента. Действует 10 минут.</div>
+      </div>
+      <button class="btn small ghost" id="pairClose" title="Закрыть">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="field-label" for="pairUser">Пользователь</label>
+      <select id="pairUser"></select>
+      <div class="row-btns">
+        <button class="btn primary" id="pairCreate">Создать код</button>
+      </div>
+      <div id="pairResult" hidden>
+        <label class="field-label" for="pairCode">Скопируйте код и вставьте его в клиенте</label>
+        <textarea id="pairCode" class="pair-code" readonly spellcheck="false"></textarea>
+        <div class="row-btns">
+          <button class="btn" id="pairCopy">Копировать код</button>
+          <span class="hint-muted" id="pairExpiry"></span>
+        </div>
+      </div>
+      <div class="hint" id="pairError"></div>
+    </div>
+  </div>
 </div>
 <script src="./app.js"></script>
 </body>

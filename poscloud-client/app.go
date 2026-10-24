@@ -321,6 +321,69 @@ func (a *App) SaveSettings(host string, port int, localDir string, interval int,
 	return a.GetClientState()
 }
 
+// PairConnection подключает клиент по текстовому коду, созданному на сервере.
+// Код содержит адрес, порт, TLS-отпечаток и одноразовый секрет; постоянный
+// токен выдаёт сервер только после успешного обмена.
+func (a *App) PairConnection(rawCode string) ClientState {
+	info, err := parseConnectionCode(rawCode)
+	if err != nil {
+		st := a.GetClientState()
+		st.Error = err.Error()
+		return st
+	}
+
+	a.mu.Lock()
+	oldFingerprint := a.tlsFingerprint
+	a.mu.Unlock()
+	restoreTLS := func() {
+		_ = configureTLS(oldFingerprint)
+	}
+
+	if info.TLS {
+		if err := configureTLS(info.Fingerprint); err != nil {
+			restoreTLS()
+			st := a.GetClientState()
+			st.Error = "Ошибка TLS: " + err.Error()
+			return st
+		}
+	} else {
+		_ = configureTLS("")
+	}
+
+	hostname, _ := os.Hostname()
+	res, err := pairConnection(baseURL(info.Host, info.Port, info.TLS), info.Code, hostname)
+	if err != nil {
+		restoreTLS()
+		st := a.GetClientState()
+		st.Error = err.Error()
+		return st
+	}
+
+	a.mu.Lock()
+	a.host = info.Host
+	a.port = info.Port
+	a.tls = info.TLS
+	a.tlsFingerprint = info.Fingerprint
+	a.token = res.Token
+	a.mu.Unlock()
+	a.syn.ResetAuthBackoff()
+	a.syn.Update(a.syncConfig())
+	a.persistConfig()
+	a.log("подключение по коду: сервер " + baseURL(info.Host, info.Port, info.TLS))
+	st := a.GetClientState()
+	st.Error = ""
+	return st
+}
+
+// ReadClipboard возвращает текст буфера обмена (для кнопки «Вставить»).
+func (a *App) ReadClipboard() string {
+	text, err := runtime.ClipboardGetText(a.ctx)
+	if err != nil {
+		return ""
+	}
+	return text
+}
+
 func (a *App) shutdown(ctx context.Context) {
 	a.syn.Stop()
 }

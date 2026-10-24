@@ -146,6 +146,25 @@ $("cliSave").addEventListener("click", async () => {
   renderClient(st);
   flash("настройки сохранены", true);
 });
+$("cliPaste").addEventListener("click", async () => {
+  const text = await call("ReadClipboard");
+  if (!text || !String(text).trim()) { flash("Буфер обмена пуст", false); return; }
+  $("cliPairCode").value = String(text).trim();
+  flash("Код вставлен — нажмите «Подключить»", true);
+});
+$("cliPair").addEventListener("click", async () => {
+  const code = $("cliPairCode").value.trim();
+  if (!code) { flash("Вставьте код подключения", false); return; }
+  $("cliPair").disabled = true;
+  const st = await call("PairConnection", code);
+  $("cliPair").disabled = false;
+  if (!st) { flash("Не удалось выполнить подключение", false); return; }
+  seeded = false;
+  renderClient(st);
+  if (st.error) { flash(st.error, false); return; }
+  $("cliPairCode").value = "";
+  flash("Подключено: " + (st.serverURL || ""), true);
+});
 $("cliSync").addEventListener("click", async () => { await call("SyncNow"); });
 $("cliIgnoreSave").addEventListener("click", async () => {
   await call("SaveIgnore", $("cliIgnoreInput").value);

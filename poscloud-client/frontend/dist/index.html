@@ -61,6 +61,17 @@
 
       <div class="card">
         <div class="card-title">Настройки подключения</div>
+        <div class="pair-box">
+          <div class="pair-title">Подключение по коду</div>
+          <label class="field"><span>Код с сервера</span>
+            <textarea id="cliPairCode" rows="2" spellcheck="false" placeholder="poscloud://connect?..."></textarea>
+          </label>
+          <div class="row-btns">
+            <button class="btn primary" id="cliPair">Подключить</button>
+            <button class="btn ghost" id="cliPaste">Вставить из буфера</button>
+          </div>
+          <div class="hint-muted">Скопируйте код в окне сервера: «Код подключения».</div>
+        </div>
         <div class="inline-2">
           <label class="field"><span>Адрес сервера</span><input id="cliHostInput" type="text" value="localhost" placeholder="IP или домен"/></label>
           <label class="field"><span>Порт</span><input id="cliPortInput" type="number" min="1" max="65535" value="8090"/></label>

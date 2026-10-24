@@ -19,6 +19,8 @@ type ignoreList = eng.IgnoreList
 type syncConfig = eng.Config
 type syncer = eng.Syncer
 type ServerFolderNode = eng.ServerFolderNode
+type connectionInfo = eng.ConnectionInfo
+type pairResult = eng.PairResult
 
 const (
 	folderBoth = eng.FolderBoth
@@ -111,3 +113,9 @@ func testConnection(host string, port int, token string, secure bool) string {
 func configureTLS(fingerprint string) error { return eng.ConfigureTLS(fingerprint) }
 
 func baseURL(host string, port int, secure bool) string { return eng.BaseURL(host, port, secure) }
+
+func parseConnectionCode(raw string) (connectionInfo, error) { return eng.ParseConnectionCode(raw) }
+
+func pairConnection(base, code, deviceName string) (pairResult, error) {
+	return eng.Pair(base, code, deviceName)
+}

@@ -656,6 +656,7 @@ func (a *App) serverMux() *http.ServeMux {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"service": "poscloud-server", "status": "ok"})
 	})
+	mux.HandleFunc("POST /pair", a.handlePair)
 	mux.HandleFunc("GET /whoami", func(w http.ResponseWriter, r *http.Request) {
 		uid := userIDFromCtx(r)
 		name := uid

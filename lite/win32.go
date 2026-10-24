@@ -54,6 +54,12 @@ var (
 	procTrackPopupMenu       = user32.NewProc("TrackPopupMenu")
 	procGetCursorPos         = user32.NewProc("GetCursorPos")
 	procCoInitializeEx       = ole32.NewProc("CoInitializeEx")
+	procOpenClipboard        = user32.NewProc("OpenClipboard")
+	procCloseClipboard       = user32.NewProc("CloseClipboard")
+	procGetClipboardData     = user32.NewProc("GetClipboardData")
+	procGlobalLock           = kernel32.NewProc("GlobalLock")
+	procGlobalUnlock         = kernel32.NewProc("GlobalUnlock")
+	procGlobalSize           = kernel32.NewProc("GlobalSize")
 )
 
 const (
@@ -125,6 +131,8 @@ const (
 	errorAlreadyExists = 183
 
 	colorWindow = 5
+
+	cfUnicodeText = 13
 
 	wmNotify = 0x004E
 	wmTray   = 0x8000 + 10
@@ -305,6 +313,34 @@ func getText(hwnd uintptr) string {
 	n, _, _ := procGetWindowTextLengthW.Call(hwnd)
 	buf := make([]uint16, int(n)+2)
 	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), n+1)
+	return syscall.UTF16ToString(buf)
+}
+
+// clipboardText читает Unicode-текст из буфера обмена. Пустая строка означает,
+// что буфер пуст или занят другим приложением.
+func clipboardText() string {
+	if r, _, _ := procOpenClipboard.Call(0); r == 0 {
+		return ""
+	}
+	defer procCloseClipboard.Call()
+	h, _, _ := procGetClipboardData.Call(cfUnicodeText)
+	if h == 0 {
+		return ""
+	}
+	p, _, _ := procGlobalLock.Call(h)
+	if p == 0 {
+		return ""
+	}
+	defer procGlobalUnlock.Call(h)
+	size, _, _ := procGlobalSize.Call(h)
+	if size < 2 {
+		return ""
+	}
+	n := int(size / 2)
+	if n > 1<<20 {
+		n = 1 << 20
+	}
+	buf := unsafe.Slice((*uint16)(unsafe.Pointer(p)), n)
 	return syscall.UTF16ToString(buf)
 }
 

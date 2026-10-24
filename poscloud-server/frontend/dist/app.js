@@ -96,6 +96,7 @@ function renderServer(st) {
   $("srvAddr").textContent = url || "—";
   $("srvAddr").title = url || "";
   $("srvCopyAddr").disabled = !url;
+  $("srvPairBtn").disabled = !running || !(st.users > 0);
   $("srvTlsPill").style.display = st.tls ? "" : "none";
 
   const dot = $("srvDot");
@@ -525,6 +526,67 @@ $("srvCopyFP").addEventListener("click", async () => {
   if (!st || !st.fingerprint) { flash("отпечаток ещё не создан — включите HTTPS и сохраните настройки", false); return; }
   await call("CopyToClipboard", st.fingerprint);
   flash("отпечаток скопирован", true);
+});
+
+function closePairModal() {
+  $("pairModal").hidden = true;
+  $("pairError").textContent = "";
+  $("pairResult").hidden = true;
+  $("pairCode").value = "";
+}
+
+async function openPairModal() {
+  $("pairModal").hidden = false;
+  $("pairError").textContent = "";
+  $("pairError").style.color = "var(--crit)";
+  $("pairResult").hidden = true;
+  $("pairCode").value = "";
+  const users = (await call("ListUsers")) || [];
+  const enabled = users.filter((u) => u && u.enabled);
+  const sel = $("pairUser");
+  sel.innerHTML = "";
+  if (enabled.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Нет активных пользователей";
+    sel.appendChild(opt);
+    $("pairCreate").disabled = true;
+    $("pairError").textContent = "Сначала создайте пользователя во вкладке «Пользователи».";
+    return;
+  }
+  enabled.forEach((u) => {
+    const opt = document.createElement("option");
+    opt.value = u.id;
+    opt.textContent = u.name + " (" + u.id + ")";
+    sel.appendChild(opt);
+  });
+  $("pairCreate").disabled = false;
+}
+
+$("srvPairBtn").addEventListener("click", openPairModal);
+$("pairClose").addEventListener("click", closePairModal);
+$("pairModal").addEventListener("click", (e) => { if (e.target.id === "pairModal") closePairModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("pairModal").hidden) closePairModal(); });
+$("pairCreate").addEventListener("click", async () => {
+  const uid = $("pairUser").value;
+  if (!uid) { $("pairError").textContent = "Выберите пользователя."; return; }
+  $("pairCreate").disabled = true;
+  const res = await call("CreateConnectionCode", uid);
+  $("pairCreate").disabled = false;
+  if (!res) { $("pairError").textContent = "Не удалось создать код."; return; }
+  if (res.error) { $("pairError").style.color = "var(--crit)"; $("pairError").textContent = res.error; return; }
+  $("pairError").textContent = "";
+  $("pairCode").value = res.code || "";
+  $("pairResult").hidden = false;
+  $("pairExpiry").textContent = "Действует до " + (res.expiresAt || "—") + " (одноразовый)";
+  $("pairCode").focus();
+  $("pairCode").select();
+});
+$("pairCopy").addEventListener("click", async () => {
+  const code = $("pairCode").value;
+  if (!code) return;
+  await call("CopyToClipboard", code);
+  $("pairExpiry").textContent = "Код скопирован. " + $("pairExpiry").textContent;
 });
 
 $("srvSave").addEventListener("click", async () => {
