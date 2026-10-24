@@ -29,16 +29,18 @@ type FileItem struct {
 }
 
 type ServerState struct {
-	Running    bool   `json:"running"`
-	Port       int    `json:"port"`
-	PortFree   bool   `json:"portFree"`
-	DataDir    string `json:"dataDir"`
-	URL        string `json:"url"`
-	LocalIP    string `json:"localIP"`
-	Count      int    `json:"count"`
-	Users      int    `json:"users"`
-	Error      string `json:"error"`
-	ConfigPath string `json:"configPath"`
+	Running     bool   `json:"running"`
+	Port        int    `json:"port"`
+	PortFree    bool   `json:"portFree"`
+	DataDir     string `json:"dataDir"`
+	TLS         bool   `json:"tls"`
+	Fingerprint string `json:"fingerprint"`
+	URL         string `json:"url"`
+	LocalIP     string `json:"localIP"`
+	Count       int    `json:"count"`
+	Users       int    `json:"users"`
+	Error       string `json:"error"`
+	ConfigPath  string `json:"configPath"`
 }
 
 type App struct {
@@ -52,6 +54,8 @@ type App struct {
 	srvRun  bool
 	srvPort int
 	srvDir  string
+	srvTLS  bool
+	srvFP   string
 	srvErr  string
 
 	auth *authStore
@@ -148,6 +152,7 @@ func (a *App) root() string {
 type savedConfig struct {
 	Port    int    `json:"port"`
 	DataDir string `json:"dataDir"`
+	TLS     *bool  `json:"tls,omitempty"`
 	// nil — запуск при открытии программы включён по умолчанию
 	AutoRun *bool `json:"autoRun,omitempty"`
 }
@@ -165,6 +170,9 @@ func (a *App) loadConfig() {
 		if c.DataDir != "" {
 			a.srvDir = c.DataDir
 		}
+		if c.TLS != nil {
+			a.srvTLS = *c.TLS
+		}
 		if c.AutoRun != nil {
 			a.autoRun = *c.AutoRun
 		}
@@ -174,7 +182,7 @@ func (a *App) loadConfig() {
 func (a *App) persistConfig() {
 	p := filepath.Join(a.root(), "server.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, AutoRun: &a.autoRun}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Port: a.srvPort, DataDir: a.srvDir, TLS: &a.srvTLS, AutoRun: &a.autoRun}, "", "  ")
 	if err := atomicReplaceFile(p, b, 0644); err != nil {
 		a.log("не удалось сохранить настройки: " + err.Error())
 	}
@@ -257,7 +265,7 @@ func (a *App) compactManifests(dataDir string) {
 }
 
 // SaveSettings — сохранить настройки, не запуская сервер.
-func (a *App) SaveSettings(port int, dataDir string) ServerState {
+func (a *App) SaveSettings(port int, dataDir string, tlsOn bool) ServerState {
 	a.mu.Lock()
 	if port > 0 {
 		a.srvPort = port
@@ -265,9 +273,28 @@ func (a *App) SaveSettings(port int, dataDir string) ServerState {
 	if dataDir != "" {
 		a.srvDir = dataDir
 	}
+	a.srvTLS = tlsOn
+	targetDir := a.srvDir
 	a.mu.Unlock()
+	if tlsOn {
+		_, _, fp, err := ensureTLSCert(targetDir)
+		if err != nil {
+			a.mu.Lock()
+			a.srvErr = "не удалось создать TLS-сертификат: " + err.Error()
+			a.mu.Unlock()
+			a.log(a.srvErr)
+		} else {
+			a.mu.Lock()
+			a.srvFP = fp
+			a.mu.Unlock()
+		}
+	} else {
+		a.mu.Lock()
+		a.srvFP = ""
+		a.mu.Unlock()
+	}
 	a.persistConfig()
-	a.log("настройки сохранены (порт " + fmt.Sprintf("%d", port) + ", каталог " + dataDir + ")")
+	a.log("настройки сохранены (порт " + fmt.Sprintf("%d", port) + ", каталог " + dataDir + ", TLS " + fmt.Sprintf("%v", tlsOn) + ")")
 	return a.GetServerState()
 }
 
@@ -1100,13 +1127,20 @@ func (a *App) serverMux() *http.ServeMux {
 
 func (a *App) GetServerState() ServerState {
 	a.mu.Lock()
-	st := ServerState{Running: a.srvRun, Port: a.srvPort, DataDir: a.srvDir, Error: a.srvErr}
+	st := ServerState{Running: a.srvRun, Port: a.srvPort, DataDir: a.srvDir, TLS: a.srvTLS, Fingerprint: a.srvFP, Error: a.srvErr}
 	a.mu.Unlock()
 	if st.Port == 0 {
 		st.Port = 8090
 	}
+	if st.TLS && st.Fingerprint == "" {
+		st.Fingerprint = tlsCertFingerprint(st.DataDir)
+	}
 	st.PortFree = portFree(st.Port)
-	st.URL = fmt.Sprintf("http://%s:%d", firstIPOrLocalhost(), st.Port)
+	scheme := "http"
+	if st.TLS {
+		scheme = "https"
+	}
+	st.URL = fmt.Sprintf("%s://%s:%d", scheme, firstIPOrLocalhost(), st.Port)
 	st.LocalIP = localIPv4()
 	st.Count = countFiles(st.DataDir)
 	if a.auth != nil {
@@ -1156,6 +1190,26 @@ func (a *App) StartServer(port int, dataDir string) ServerState {
 	// И уборка манифестов: старые надгробия удаляются, чтобы файлы не росли.
 	go a.compactManifests(dataDir)
 
+	a.mu.Lock()
+	tlsOn := a.srvTLS
+	a.mu.Unlock()
+	var certFile, keyFile string
+	if tlsOn {
+		var fp string
+		var err error
+		certFile, keyFile, fp, err = ensureTLSCert(dataDir)
+		if err != nil {
+			a.mu.Lock()
+			a.srvErr = "не удалось подготовить TLS-сертификат: " + err.Error()
+			a.mu.Unlock()
+			a.log(a.srvErr)
+			return a.GetServerState()
+		}
+		a.mu.Lock()
+		a.srvFP = fp
+		a.mu.Unlock()
+	}
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
 		Handler:           a.withLog(a.withAuth(a.serverMux())),
@@ -1180,7 +1234,12 @@ func (a *App) StartServer(port int, dataDir string) ServerState {
 	a.mu.Unlock()
 
 	go func() {
-		err := srv.Serve(ln)
+		var err error
+		if tlsOn {
+			err = srv.ServeTLS(ln, certFile, keyFile)
+		} else {
+			err = srv.Serve(ln)
+		}
 		a.mu.Lock()
 		a.srvRun = false
 		a.httpSrv = nil

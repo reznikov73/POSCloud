@@ -53,6 +53,7 @@ function renderServer(st) {
   $("srvUsers").textContent = st.users || 0;
   $("srvDir").textContent = st.dataDir || "-";
   $("srvAddr").textContent = st.running ? (st.url || "-") : "запустите сервер, чтобы увидеть адрес";
+  $("srvFingerprint").textContent = st.fingerprint || "-";
   $("srvCfgPath").textContent = st.configPath ? ("Файл настроек: " + st.configPath) : "";
 
   const dot = $("srvDot");
@@ -73,6 +74,7 @@ function renderServer(st) {
   if (!seeded) {
     $("srvPortInput").value = st.port;
     $("srvDirInput").value = st.dataDir || "";
+    $("srvTLS").checked = !!st.tls;
     seeded = true;
   }
 }
@@ -251,7 +253,7 @@ async function renderTree() {
 }
 
 /* ---------- действия ---------- */
-function form() { return { port: parseInt($("srvPortInput").value, 10) || 8090, dir: $("srvDirInput").value.trim() }; }
+function form() { return { port: parseInt($("srvPortInput").value, 10) || 8090, dir: $("srvDirInput").value.trim(), tls: $("srvTLS").checked }; }
 function flash(msg, ok) { $("srvErr").style.color = ok ? "#1aae39" : "#e5484d"; $("srvErr").textContent = msg; }
 
 let serverRunning = false;
@@ -287,8 +289,14 @@ $("srvRelease").addEventListener("click", async () => {
   renderServer(res); refresh();
   flash(res && res.error ? res.error : "процесс завершён, порт освобождён", !(res && res.error));
 });
+$("srvCopyFP").addEventListener("click", async () => {
+  const st = await call("GetServerState");
+  if (!st || !st.fingerprint) { flash("отпечаток ещё не создан — включите HTTPS и сохраните настройки", false); return; }
+  await call("CopyToClipboard", st.fingerprint);
+  flash("отпечаток скопирован", true);
+});
 $("srvSave").addEventListener("click", async () => {
-  const f = form(); const st = await call("SaveSettings", f.port, f.dir); renderServer(st);
+  const f = form(); const st = await call("SaveSettings", f.port, f.dir, f.tls); renderServer(st);
   if (st && !st.error) flash("настройки сохранены", true);
 });
 $("srvPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("srvDirInput").value = d; });

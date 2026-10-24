@@ -62,6 +62,13 @@
         </label>
         <label class="autostart"><input type="checkbox" id="srvAutoRun"/><span>Запускать сервер при открытии программы</span></label>
         <label class="autostart"><input type="checkbox" id="srvAutostart"/><span>Запускать программу при входе в Windows</span></label>
+        <label class="autostart"><input type="checkbox" id="srvTLS"/><span>HTTPS (TLS, самоподписанный сертификат)</span></label>
+        <div class="addr-box">
+          <div class="addr-title">Отпечаток сертификата (SHA-256)</div>
+          <div class="addr-value" id="srvFingerprint">-</div>
+          <button class="btn small" id="srvCopyFP">Копировать отпечаток</button>
+          <div class="addr-hint">Включите HTTPS и укажите этот отпечаток в клиенте. После смены режима перезапустите сервер.</div>
+        </div>
         <div class="row-btns">
           <button class="btn ghost" id="srvSave">Сохранить настройки</button>
         </div>
