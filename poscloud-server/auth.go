@@ -51,6 +51,7 @@ type UserInfo struct {
 	CreatedAt  string `json:"createdAt"`
 	TokenCount int    `json:"tokenCount"`
 	FileCount  int    `json:"fileCount"`
+	UsedBytes  int64  `json:"usedBytes"`
 }
 
 // TokenInfo — DTO токена для интерфейса (без хэша).

@@ -1322,9 +1322,10 @@ func (a *App) ListUsers() []UserInfo {
 	root := a.storageRoot()
 	out := make([]UserInfo, 0)
 	for _, u := range a.auth.list() {
+		dir := filepath.Join(root, u.ID)
 		out = append(out, UserInfo{
 			ID: u.ID, Name: u.Name, Enabled: u.Enabled, CreatedAt: u.CreatedAt,
-			TokenCount: len(u.Tokens), FileCount: countFiles(filepath.Join(root, u.ID)),
+			TokenCount: len(u.Tokens), FileCount: countFiles(dir), UsedBytes: usageBytes(dir),
 		})
 	}
 	return out
@@ -1489,6 +1490,13 @@ func (a *App) DeleteUserFile(userID, name string) error {
 		return fmt.Errorf("недопустимое имя")
 	}
 	dir := filepath.Join(a.storageRoot(), userID)
+	a.mu.Lock()
+	mPrev := a.loadManifestCached(dir)
+	prev, hasPrev := mPrev.Files[clean]
+	a.mu.Unlock()
+	if hasPrev && !prev.Deleted && !prev.Dir {
+		_ = snapshotUserFile(dir, clean, "trash", prev.Version, prev.Size, prev.MTime, prev.Hash)
+	}
 	a.mu.Lock()
 	m := a.loadManifestCached(dir)
 	ver := markDeleted(dir, &m, clean)

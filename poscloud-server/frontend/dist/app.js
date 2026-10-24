@@ -84,12 +84,12 @@ function renderServer(st) {
 /* ---------- пользователи ---------- */
 function renderUsers(users) {
   const tb = $("usrRows");
-  if (!users || users.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="empty">нет пользователей - создайте первого</td></tr>'; return; }
+  if (!users || users.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="empty">нет пользователей - создайте первого</td></tr>'; return; }
   tb.innerHTML = "";
   users.forEach((u) => {
     const tr = document.createElement("tr");
     tr.innerHTML = "<td>" + escapeHtml(u.name) + "</td><td>" + escapeHtml(u.id) + "</td><td>" +
-      u.tokenCount + "</td><td>" + u.fileCount + "</td><td>" +
+      u.tokenCount + "</td><td>" + u.fileCount + "</td><td>" + fmtSize(u.usedBytes || 0) + "</td><td>" +
       (u.enabled ? '<span style="color:#1aae39">активен</span>' : '<span style="color:#c62a2f">отключён</span>') +
       '</td><td><button class="del" data-act="sel">Открыть</button></td>';
     tr.querySelector('[data-act="sel"]').addEventListener("click", () => selectUser(u));
@@ -273,12 +273,22 @@ async function renderConflicts() {
   items.forEach((c) => {
     const tr = document.createElement("tr");
     tr.innerHTML = "<td>" + escapeHtml(c.userName || c.userId) + "</td><td>" + escapeHtml(c.name) +
+      (c.original ? '<div class="meta">оригинал: ' + escapeHtml(c.original) + '</div>' : '') +
       "</td><td>" + fmtSize(c.size) + "</td><td>" + escapeHtml(c.modified) +
-      '</td><td><button class="del">Удалить</button></td>';
+      '</td><td><button class="btn small" data-act="server">Серверная</button>' +
+      '<button class="btn small" data-act="conflict">Конфликтная</button>' +
+      '<button class="del">Удалить</button></td>';
+    tr.querySelector('[data-act="server"]').addEventListener("click", async () => {
+      if (!confirm('Оставить серверную версию и удалить конфликтную копию "' + c.name + '"?')) return;
+      await call("ResolveConflict", c.userId, c.name, "server"); renderConflicts(); renderTree();
+    });
+    tr.querySelector('[data-act="conflict"]').addEventListener("click", async () => {
+      if (!confirm('Заменить оригинал конфликтной копией "' + c.name + '"?')) return;
+      await call("ResolveConflict", c.userId, c.name, "conflict"); renderConflicts(); renderTree();
+    });
     tr.querySelector(".del").addEventListener("click", async () => {
       if (!confirm('Удалить конфликтную копию "' + c.name + '"?')) return;
-      await call("DeleteUserFile", c.userId, c.name);
-      renderConflicts(); renderTree();
+      await call("DeleteUserFile", c.userId, c.name); renderConflicts(); renderTree();
     });
     tb.appendChild(tr);
   });
