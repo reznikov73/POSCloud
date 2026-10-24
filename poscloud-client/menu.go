@@ -154,7 +154,10 @@ func (a *App) trayToggleSync() {
 		a.log("запуск из трея невозможен: не заданы токен доступа или папка синхронизации")
 		a.trayShowWindow()
 	default:
-		a.StartSync(host, port, dir, itv, tok)
+		a.mu.Lock()
+		tls, fp := a.tls, a.tlsFingerprint
+		a.mu.Unlock()
+		a.StartSync(host, port, dir, itv, tok, tls, fp)
 	}
 	a.updateTrayMenu()
 }

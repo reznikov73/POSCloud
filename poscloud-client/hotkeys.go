@@ -220,7 +220,7 @@ func HotkeySummary() string {
 
 // startHotkeys запускает обработчик горячих клавиш в отдельном потоке.
 func (a *App) startHotkeys() {
-	go a.hotkeyLoop()
+	a.safeGo("hotkeyLoop", a.hotkeyLoop)
 }
 
 func (a *App) hotkeyLoop() {
@@ -280,7 +280,7 @@ func (a *App) hotkeyLoop() {
 			fn := hotkeyActive[uintptr(msg.WParam)]
 			hotkeyMu.Unlock()
 			if fn != nil {
-				go fn(a)
+				a.safeGo("hotkeyAction", func() { fn(a) })
 			}
 			continue
 		case wmAppReload, wmAppResume:

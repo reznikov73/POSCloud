@@ -65,6 +65,8 @@
           <label class="field"><span>Адрес сервера</span><input id="cliHostInput" type="text" value="localhost" placeholder="IP или домен"/></label>
           <label class="field"><span>Порт</span><input id="cliPortInput" type="number" min="1" max="65535" value="8090"/></label>
         </div>
+        <label class="autostart"><input type="checkbox" id="cliTLS"/><span>HTTPS (TLS)</span></label>
+        <label class="field"><span>Отпечаток сертификата (SHA-256)</span><input id="cliFingerprintInput" type="text" placeholder="AA:BB:CC:... (из окна сервера)"/></label>
         <label class="field"><span>Токен доступа</span><input id="cliTokenInput" type="text" placeholder="pcs_... (получить в окне сервера)"/></label>
         <label class="field field-narrow"><span>Интервал опроса (сек)</span><input id="cliIntInput" type="number" min="1" value="3"/></label>
         <label class="field"><span>Папка синхронизации</span>
@@ -76,6 +78,7 @@
         <div class="row-btns">
           <button class="btn ghost" id="cliSave">Сохранить настройки</button>
           <button class="btn ghost" id="cliTest">Проверить связь</button>
+          <button class="btn ghost" id="cliRecheck">Проверить токен</button>
         </div>
         <div class="hint-muted" id="cliCfgPath"></div>
         <div class="hint" id="cliErr"></div>

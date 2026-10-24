@@ -104,6 +104,10 @@ func newSyncer(cfg syncConfig, logf func(string), save func(syncConfig)) *syncer
 	return eng.NewSyncer(cfg, logf, func(c syncConfig) { save(c) })
 }
 
-func testConnection(host string, port int, token string) string {
-	return eng.TestConnection(host, port, token)
+func testConnection(host string, port int, token string, secure bool) string {
+	return eng.TestConnection(host, port, token, secure)
 }
+
+func configureTLS(fingerprint string) error { return eng.ConfigureTLS(fingerprint) }
+
+func baseURL(host string, port int, secure bool) string { return eng.BaseURL(host, port, secure) }

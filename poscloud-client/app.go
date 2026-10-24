@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -25,37 +26,41 @@ type FileItem struct {
 }
 
 type ClientState struct {
-	Running    bool   `json:"running"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Token      string `json:"token"`
-	ServerURL  string `json:"serverURL"`
-	LocalDir   string `json:"localDir"`
-	Interval   int    `json:"interval"`
-	LastSync   string `json:"lastSync"`
-	Count      int    `json:"count"`
-	Online     bool   `json:"online"`
-	Error      string `json:"error"`
-	ConfigPath string `json:"configPath"`
+	Running     bool   `json:"running"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	TLS         bool   `json:"tls"`
+	Fingerprint string `json:"fingerprint"`
+	Token       string `json:"token"`
+	ServerURL   string `json:"serverURL"`
+	LocalDir    string `json:"localDir"`
+	Interval    int    `json:"interval"`
+	LastSync    string `json:"lastSync"`
+	Count       int    `json:"count"`
+	Online      bool   `json:"online"`
+	Error       string `json:"error"`
+	ConfigPath  string `json:"configPath"`
 }
 
 type App struct {
 	ctx context.Context
 	mu  sync.Mutex
 
-	syncRun       bool
-	syn           *syncer // движок синхронизации: правила, состояние, обмен с сервером
-	host          string
-	port          int
-	localDir      string
-	interval      int
-	token         string
-	shotSync      bool // сохранять снимки экрана в папку синхронизации
-	editAfterShot bool // открывать редактор после снимка
-	shotUIActive  bool // сценарий снимка идёт: окно могло быть показано для выбора/редактора
-	shotWasHidden bool // окно было скрыто до начала сценария снимка
-	autoRun       bool // начинать синхронизацию сразу при открытии программы
-	hotkeys       HotkeyConfig
+	syncRun        bool
+	syn            *syncer // движок синхронизации: правила, состояние, обмен с сервером
+	host           string
+	port           int
+	tls            bool
+	tlsFingerprint string
+	localDir       string
+	interval       int
+	token          string
+	shotSync       bool // сохранять снимки экрана в папку синхронизации
+	editAfterShot  bool // открывать редактор после снимка
+	shotUIActive   bool // сценарий снимка идёт: окно могло быть показано для выбора/редактора
+	shotWasHidden  bool // окно было скрыто до начала сценария снимка
+	autoRun        bool // начинать синхронизацию сразу при открытии программы
+	hotkeys        HotkeyConfig
 
 	logs     []string
 	logFile  *os.File
@@ -83,13 +88,42 @@ func NewApp() *App {
 		hotkeys:  DefaultHotkeys(),
 	}
 	a.syn = newSyncer(a.syncConfig(), func(s string) { a.log(s) }, func(syncConfig) { a.persistConfig() })
+	a.syn.SetCrashLogger(a.writeCrashLog)
+	crashReporter = a.writeCrashLog
 	return a
+}
+
+// crashReporter используется низкоуровневыми горутинами (например, захватом экрана).
+var crashReporter func(string)
+
+func (a *App) writeCrashLog(text string) {
+	a.log("panic: " + text)
+	p := filepath.Join(a.root(), "client-crash.log")
+	_ = os.MkdirAll(filepath.Dir(p), 0755)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), text)
+}
+
+// safeGo запускает горутину с recover: паника не убивает клиент молча.
+func (a *App) safeGo(where string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				a.writeCrashLog(fmt.Sprintf("panic в %s: %v\n%s", where, r, debug.Stack()))
+			}
+		}()
+		fn()
+	}()
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.openLogFile()
-	go a.logPruneLoop()
+	a.safeGo("logPruneLoop", a.logPruneLoop)
 	a.loadConfig()
 	a.applyFlagOverrides()
 	// Явно переданный -autostart важнее сохранённой настройки.
@@ -117,7 +151,7 @@ func (a *App) startOnLaunch() {
 		a.log("автозапуск пропущен: не выбрана папка синхронизации")
 		return
 	}
-	a.StartSync(a.host, a.port, a.localDir, a.interval, a.token)
+	a.StartSync(a.host, a.port, a.localDir, a.interval, a.token, a.tls, a.tlsFingerprint)
 }
 
 // applyFlagOverrides применяет значения из командной строки поверх сохранённых
@@ -167,11 +201,13 @@ func (a *App) root() string {
 }
 
 type savedConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Dir      string `json:"dir"`
-	Interval int    `json:"interval"`
-	Token    string `json:"token"`
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	TLS            *bool  `json:"tls,omitempty"`
+	TLSFingerprint string `json:"tlsFingerprint,omitempty"`
+	Dir            string `json:"dir"`
+	Interval       int    `json:"interval"`
+	Token          string `json:"token"`
 	// nil — настройка ещё не сохранялась, считаем включённой
 	ScreenshotSync *bool `json:"screenshotSync,omitempty"`
 	// nil — запуск при открытии программы включён по умолчанию
@@ -201,6 +237,12 @@ func (a *App) loadConfig() {
 		if c.Port > 0 {
 			a.port = c.Port
 		}
+		if c.TLS != nil {
+			a.tls = *c.TLS
+		}
+		if c.TLSFingerprint != "" {
+			a.tlsFingerprint = c.TLSFingerprint
+		}
 		if c.Dir != "" {
 			a.localDir = c.Dir
 		}
@@ -224,6 +266,7 @@ func (a *App) loadConfig() {
 		}
 		cfg := a.syn.Config()
 		cfg.Host, cfg.Port, cfg.Dir, cfg.Interval, cfg.Token = a.host, a.port, a.localDir, a.interval, a.token
+		cfg.TLS, cfg.TLSFingerprint = a.tls, a.tlsFingerprint
 		cfg.Rules = c.FolderRules
 		if c.RulesFree != nil {
 			cfg.RulesFree = *c.RulesFree
@@ -237,7 +280,7 @@ func (a *App) loadConfig() {
 
 // syncConfig собирает движковую часть настроек из полей приложения и движка.
 func (a *App) syncConfig() syncConfig {
-	cfg := syncConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token}
+	cfg := syncConfig{Host: a.host, Port: a.port, TLS: a.tls, TLSFingerprint: a.tlsFingerprint, Dir: a.localDir, Interval: a.interval, Token: a.token}
 	if a.syn != nil {
 		cur := a.syn.Config()
 		cfg.Rules, cfg.RulesFree, cfg.RuleDefaultsMigrated = cur.Rules, cur.RulesFree, cur.RuleDefaultsMigrated
@@ -249,12 +292,12 @@ func (a *App) persistConfig() {
 	cfg := a.syn.Config()
 	p := filepath.Join(a.root(), "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys, EditAfterShot: &a.editAfterShot, FolderRules: cfg.Rules, RulesFree: &cfg.RulesFree, RuleDefaultsMigrated: &cfg.RuleDefaultsMigrated}, "", "  ")
+	b, _ := json.MarshalIndent(savedConfig{Host: a.host, Port: a.port, TLS: &a.tls, TLSFingerprint: a.tlsFingerprint, Dir: a.localDir, Interval: a.interval, Token: a.token, ScreenshotSync: &a.shotSync, AutoRun: &a.autoRun, Hotkeys: &a.hotkeys, EditAfterShot: &a.editAfterShot, FolderRules: cfg.Rules, RulesFree: &cfg.RulesFree, RuleDefaultsMigrated: &cfg.RuleDefaultsMigrated}, "", "  ")
 	_ = os.WriteFile(p, b, 0644)
 }
 
 // SaveSettings — сохранить настройки, не запуская синхронизацию.
-func (a *App) SaveSettings(host string, port int, localDir string, interval int, token string) ClientState {
+func (a *App) SaveSettings(host string, port int, localDir string, interval int, token string, tls bool, fingerprint string) ClientState {
 	a.mu.Lock()
 	if host != "" {
 		a.host = host
@@ -262,6 +305,8 @@ func (a *App) SaveSettings(host string, port int, localDir string, interval int,
 	if port > 0 {
 		a.port = port
 	}
+	a.tls = tls
+	a.tlsFingerprint = strings.TrimSpace(fingerprint)
 	if localDir != "" {
 		a.localDir = localDir
 	}
@@ -270,6 +315,7 @@ func (a *App) SaveSettings(host string, port int, localDir string, interval int,
 	}
 	a.token = strings.TrimSpace(token)
 	a.mu.Unlock()
+	a.syn.ResetAuthBackoff()
 	a.persistConfig()
 	a.log("настройки сохранены")
 	return a.GetClientState()
@@ -416,10 +462,11 @@ func listFiles(dir string) []FileItem {
 func (a *App) GetClientState() ClientState {
 	stt := a.syn.Status()
 	a.mu.Lock()
-	st := ClientState{Running: a.syncRun, Host: a.host, Port: a.port, Token: a.token, LocalDir: a.localDir,
-		Interval: a.interval, LastSync: stt.LastSync, Error: stt.ErrMsg, Count: stt.Count, Online: stt.Online}
+	st := ClientState{Running: a.syncRun, Host: a.host, Port: a.port, TLS: a.tls, Fingerprint: a.tlsFingerprint,
+		Token: a.token, LocalDir: a.localDir, Interval: a.interval, LastSync: stt.LastSync,
+		Error: stt.ErrMsg, Count: stt.Count, Online: stt.Online}
 	a.mu.Unlock()
-	st.ServerURL = fmt.Sprintf("http://%s:%d", st.Host, st.Port)
+	st.ServerURL = baseURL(st.Host, st.Port, st.TLS)
 	if st.Count == 0 {
 		st.Count = len(listFiles(st.LocalDir))
 	}
@@ -427,7 +474,7 @@ func (a *App) GetClientState() ClientState {
 	return st
 }
 
-func (a *App) TestConnection(host string, port int, token string) string {
+func (a *App) TestConnection(host string, port int, token string, tls bool, fingerprint string) string {
 	if host == "" {
 		host = a.host
 	}
@@ -437,10 +484,20 @@ func (a *App) TestConnection(host string, port int, token string) string {
 	if token == "" {
 		token = a.token
 	}
-	return testConnection(host, port, token)
+	if strings.TrimSpace(fingerprint) == "" {
+		fingerprint = a.tlsFingerprint
+	}
+	if tls {
+		if err := configureTLS(fingerprint); err != nil {
+			return "Ошибка: " + err.Error()
+		}
+	} else {
+		_ = configureTLS("")
+	}
+	return testConnection(host, port, token, tls)
 }
 
-func (a *App) StartSync(host string, port int, localDir string, interval int, token string) ClientState {
+func (a *App) StartSync(host string, port int, localDir string, interval int, token string, tls bool, fingerprint string) ClientState {
 	a.mu.Lock()
 	if a.syncRun {
 		a.mu.Unlock()
@@ -454,6 +511,8 @@ func (a *App) StartSync(host string, port int, localDir string, interval int, to
 	if port > 0 {
 		a.port = port
 	}
+	a.tls = tls
+	a.tlsFingerprint = strings.TrimSpace(fingerprint)
 	if localDir != "" {
 		a.localDir = localDir
 	}
@@ -463,8 +522,22 @@ func (a *App) StartSync(host string, port int, localDir string, interval int, to
 	}
 	a.interval = interval
 	a.syncRun = true
+	fingerprint = a.tlsFingerprint
 	a.mu.Unlock()
 
+	if tls {
+		if err := configureTLS(fingerprint); err != nil {
+			a.mu.Lock()
+			a.syncRun = false
+			a.mu.Unlock()
+			st := a.GetClientState()
+			st.Error = err.Error()
+			return st
+		}
+	} else {
+		_ = configureTLS("")
+	}
+	a.syn.ResetAuthBackoff()
 	a.syn.Update(a.syncConfig())
 	a.syn.Run()
 	a.persistConfig()
@@ -479,9 +552,18 @@ func (a *App) StopSync() ClientState {
 	return a.GetClientState()
 }
 
+// RecheckToken снимает паузу после 401 и сразу пробует синхронизацию.
+func (a *App) RecheckToken() ClientState {
+	a.syn.ResetAuthBackoff()
+	a.log("проверка токена")
+	a.safeGo("recheckToken", func() { a.syn.SyncOnce(true) })
+	return a.GetClientState()
+}
+
 func (a *App) SyncNow() ClientState {
 	a.log("ручная синхронизация")
-	go a.syn.SyncOnce(true)
+	a.syn.ResetAuthBackoff()
+	a.safeGo("syncNow", func() { a.syn.SyncOnce(true) })
 	return a.GetClientState()
 }
 
@@ -538,7 +620,7 @@ func (a *App) SaveIgnore(text string) error {
 			return err
 		}
 	}
-	go a.syn.SyncOnce(false)
+	a.safeGo("syncIgnore", func() { a.syn.SyncOnce(false) })
 	return nil
 }
 

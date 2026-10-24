@@ -138,6 +138,15 @@ var (
 func withDpiAwareness(f func() error) error {
 	ch := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				msg := fmt.Sprintf("panic в withDpiAwareness: %v", r)
+				if crashReporter != nil {
+					crashReporter(msg)
+				}
+				ch <- fmt.Errorf("%s", msg)
+			}
+		}()
 		goruntime.LockOSThread()
 		defer goruntime.UnlockOSThread()
 		prev, _, _ := procSetThreadDpiAwareness.Call(dpiPerMonitorAwareV2)
@@ -446,7 +455,7 @@ func (a *App) saveShot(img image.Image) (string, error) {
 
 	a.log("снимок экрана сохранён: " + path)
 	if a.syn.Running() {
-		go a.syn.SyncOnce(false)
+		a.safeGo("syncShot", func() { a.syn.SyncOnce(false) })
 	}
 	a.notifyShot(path, copied)
 	return path, nil

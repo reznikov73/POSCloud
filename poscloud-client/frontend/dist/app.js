@@ -74,6 +74,8 @@ function renderClient(st) {
   if (!seeded) {
     $("cliHostInput").value = st.host;
     $("cliPortInput").value = st.port;
+    $("cliTLS").checked = !!st.tls;
+    $("cliFingerprintInput").value = st.fingerprint || "";
     $("cliIntInput").value = st.interval;
     $("cliTokenInput").value = st.token || "";
     $("cliDirInput").value = st.localDir || "";
@@ -117,6 +119,8 @@ function form() {
   return {
     host: $("cliHostInput").value.trim(),
     port: parseInt($("cliPortInput").value, 10) || 8090,
+    tls: $("cliTLS").checked,
+    fingerprint: $("cliFingerprintInput").value.trim(),
     dir: $("cliDirInput").value.trim(),
     itv: parseInt($("cliIntInput").value, 10) || 3,
     token: $("cliTokenInput").value.trim(),
@@ -132,13 +136,13 @@ let clientRunning = false;
 $("cliToggle").addEventListener("click", async () => {
   if (clientRunning) { renderClient(await call("StopSync")); return; }
   const f = form();
-  const st = await call("StartSync", f.host, f.port, f.dir, f.itv, f.token);
+  const st = await call("StartSync", f.host, f.port, f.dir, f.itv, f.token, f.tls, f.fingerprint);
   $("cliErr").dataset.sticky = "";
   renderClient(st);
 });
 $("cliSave").addEventListener("click", async () => {
   const f = form();
-  const st = await call("SaveSettings", f.host, f.port, f.dir, f.itv, f.token);
+  const st = await call("SaveSettings", f.host, f.port, f.dir, f.itv, f.token, f.tls, f.fingerprint);
   renderClient(st);
   flash("настройки сохранены", true);
 });
@@ -928,8 +932,13 @@ $("cliAutoRun").addEventListener("change", async (e) => {
 $("cliPick").addEventListener("click", async () => { const d = await call("PickDirectory"); if (d) $("cliDirInput").value = d; });
 $("cliTest").addEventListener("click", async () => {
   const f = form();
-  const msg = await call("TestConnection", f.host, f.port, f.token);
+  const msg = await call("TestConnection", f.host, f.port, f.token, f.tls, f.fingerprint);
   flash(msg || "Ошибка проверки", !!(msg && msg.indexOf("OK") === 0));
+});
+$("cliRecheck").addEventListener("click", async () => {
+  const st = await call("RecheckToken");
+  renderClient(st);
+  flash("проверка токена выполнена", true);
 });
 
 async function refreshFiles() { renderFiles((await call("LocalFiles")) || []); }

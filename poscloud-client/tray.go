@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -361,12 +362,12 @@ func (a *App) trayInit(title string) {
 
 // startTrayMenuRefresh раз в секунду обновляет подписи в шапке меню.
 func (a *App) startTrayMenuRefresh() {
-	go func() {
+	a.safeGo("trayMenuRefresh", func() {
 		for {
 			time.Sleep(time.Second)
 			a.updateTrayMenu()
 		}
-	}()
+	})
 }
 
 // openInExplorer открывает каталог или файл в проводнике.
@@ -452,6 +453,13 @@ func (a *App) trayQuit() {
 // startTrayAnimation крутит стрелки, пока идут передачи файлов.
 func startTrayAnimation() {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if crashReporter != nil {
+					crashReporter(fmt.Sprintf("panic в trayAnimation: %v", r))
+				}
+			}
+		}()
 		i := 0
 		lastActive := false
 		for {
