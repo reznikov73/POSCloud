@@ -3,26 +3,17 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"path/filepath"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// ---------- кто занимает порт и как его освободить ----------
+// ---------- платформенная часть: таблица TCP и завершение процесса ----------
 //
-// Сервер слушает порт сам, но порт может занять и посторонний процесс.
-// Кнопка «Освободить порт» сначала показывает, кто держит порт, и только после
-// подтверждения пользователя завершает именно этот процесс — по его PID.
-
-// PortHolderInfo — процесс, слушающий TCP-порт.
-type PortHolderInfo struct {
-	PID    uint32 `json:"pid"`
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	IsSelf bool   `json:"isSelf"`
-}
+// Общая логика проверок и текст сообщений живут в port_common.go.
+// Здесь только то, что зависит от Windows API.
 
 var (
 	iphlpapi                = windows.NewLazySystemDLL("iphlpapi.dll")
@@ -94,70 +85,18 @@ func processDisplayName(pid uint32) (string, string) {
 	return filepath.Base(full), full
 }
 
-// PortHolder сообщает, какой процесс слушает порт. Нулевой PID — порт свободен.
-func (a *App) PortHolder(port int) PortHolderInfo {
-	if port <= 0 {
-		port = 8090
-	}
-	pid := listenerPID(port)
-	if pid == 0 {
-		return PortHolderInfo{}
-	}
-	name, path := processDisplayName(pid)
-	return PortHolderInfo{PID: pid, Name: name, Path: path, IsSelf: pid == windows.GetCurrentProcessId()}
-}
+// selfPID возвращает PID текущего процесса.
+func selfPID() uint32 { return windows.GetCurrentProcessId() }
 
-// ReleasePort освобождает порт. Если наш сервер запущен — просто останавливает его.
-// Если порт занят посторонним процессом — завершает его, но только когда переданный
-// PID совпадает с текущим владельцем порта: это защита от завершения не того процесса.
-func (a *App) ReleasePort(port int, pid uint32) ServerState {
-	if port <= 0 {
-		port = 8090
-	}
-
-	a.mu.Lock()
-	running := a.srvRun
-	a.mu.Unlock()
-	if running {
-		return a.StopServer()
-	}
-
-	holder := a.PortHolder(port)
-	if holder.PID == 0 {
-		a.setServerError("")
-		a.log(fmt.Sprintf("порт %d свободен", port))
-		return a.GetServerState()
-	}
-	if holder.IsSelf {
-		a.setServerError("порт слушает это же приложение — сначала остановите сервер")
-		return a.GetServerState()
-	}
-	if pid == 0 || pid != holder.PID {
-		a.setServerError(fmt.Sprintf("порт %d занимает другой процесс (PID %d) — обновите данные и повторите", port, holder.PID))
-		return a.GetServerState()
-	}
-
+// terminateProcess завершает процесс по PID.
+func terminateProcess(pid uint32) error {
 	h, err := windows.OpenProcess(processTerminate, false, pid)
 	if err != nil {
-		a.setServerError("не удалось открыть процесс: " + err.Error())
-		a.log(fmt.Sprintf("не удалось открыть процесс %d (%s): %v", pid, holder.Name, err))
-		return a.GetServerState()
+		return errors.New("не удалось открыть процесс: " + err.Error())
 	}
 	defer windows.CloseHandle(h)
-
 	if err := windows.TerminateProcess(h, 1); err != nil {
-		a.setServerError("не удалось завершить процесс: " + err.Error())
-		a.log(fmt.Sprintf("не удалось завершить процесс %d (%s): %v", pid, holder.Name, err))
-		return a.GetServerState()
+		return errors.New("не удалось завершить процесс: " + err.Error())
 	}
-
-	a.log(fmt.Sprintf("завершён процесс %d (%s), занимавший порт %d", pid, holder.Name, port))
-	a.setServerError("")
-	return a.GetServerState()
-}
-
-func (a *App) setServerError(msg string) {
-	a.mu.Lock()
-	a.srvErr = msg
-	a.mu.Unlock()
+	return nil
 }

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/windows"
 )
 
 // freePort занимает свободный порт и возвращает его номер.
@@ -30,8 +28,8 @@ func TestPortHolderFindsSelf(t *testing.T) {
 
 	a := NewApp()
 	h := a.PortHolder(port)
-	if h.PID != windows.GetCurrentProcessId() {
-		t.Fatalf("PID=%d, ожидался текущий процесс %d", h.PID, windows.GetCurrentProcessId())
+	if h.PID != selfPID() {
+		t.Fatalf("PID=%d, ожидался текущий процесс %d", h.PID, selfPID())
 	}
 	if !h.IsSelf {
 		t.Fatal("собственный процесс не распознан как свой")
@@ -59,7 +57,7 @@ func TestReleasePortRefusesSelf(t *testing.T) {
 	defer ln.Close()
 
 	a := NewApp()
-	st := a.ReleasePort(port, windows.GetCurrentProcessId())
+	st := a.ReleasePort(port, selfPID())
 	if !strings.Contains(st.Error, "это же приложение") {
 		t.Fatalf("ожидался отказ с пояснением, получено: %q", st.Error)
 	}
@@ -134,7 +132,7 @@ func TestReleasePortTerminatesForeignListener(t *testing.T) {
 	if holder.PID == 0 {
 		t.Fatal("сторонний слушатель не найден в таблице портов")
 	}
-	if holder.PID == windows.GetCurrentProcessId() {
+	if holder.PID == selfPID() {
 		t.Fatal("найден собственный процесс вместо стороннего")
 	}
 	if int(holder.PID) != cmd.Process.Pid {
