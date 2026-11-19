@@ -35,3 +35,21 @@ func TestAutoStartCanBeDisabled(t *testing.T) {
 		t.Error("autostart остался включённым при явном -autostart=false")
 	}
 }
+
+// -hidden используется записью автозапуска: окно при входе в систему не открывается.
+func TestHiddenFlag(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	f := bindServerFlags(fs)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("разбор без аргументов: %v", err)
+	}
+	if f.hidden {
+		t.Error("-hidden должен быть выключен по умолчанию")
+	}
+	if err := fs.Parse([]string{"-hidden"}); err != nil {
+		t.Fatalf("разбор -hidden: %v", err)
+	}
+	if !f.hidden {
+		t.Error("-hidden должен включаться при явной передаче")
+	}
+}

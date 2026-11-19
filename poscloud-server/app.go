@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"golang.org/x/sys/windows/registry"
 )
 
 type FileItem struct {
@@ -124,6 +122,9 @@ func (a *App) startup(ctx context.Context) {
 		a.autoRun = a.autoStart
 	}
 	a.log("Сервер POSCloud инициализирован")
+	// Запись автозапуска прежних версий указывала на exe без -hidden:
+	// после входа в систему всплывало окно. Обновляем её при старте.
+	a.migrateAutostartEntry()
 	if a.autoRun {
 		a.StartServer(a.srvPort, a.srvDir)
 	}
@@ -436,10 +437,9 @@ func (a *App) logPruneLoop() {
 	}
 }
 
-// OpenLogFile — открыть файл журнала в Проводнике (выделив его).
+// OpenLogFile — открыть файл журнала в системном файловом менеджере.
 func (a *App) OpenLogFile() {
-	p := a.logPath()
-	_ = exec.Command("explorer", "/select,"+p).Start()
+	revealPath(a.logPath())
 }
 
 func (a *App) GetLogs() []string {
@@ -1606,7 +1606,6 @@ func (a *App) unsubscribe(uid string, ch chan int64) {
 	a.subMu.Unlock()
 }
 
-// AutostartEnabled сообщает, включён ли автозапуск при входе в Windows.
 // AutoRunEnabled сообщает, запускается ли сервер сразу при открытии программы.
 func (a *App) AutoRunEnabled() bool {
 	a.mu.Lock()
@@ -1620,34 +1619,6 @@ func (a *App) SetAutoRun(on bool) error {
 	a.autoRun = on
 	a.mu.Unlock()
 	a.persistConfig()
-	return nil
-}
-
-func (a *App) AutostartEnabled() bool {
-	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
-	if err != nil {
-		return false
-	}
-	defer k.Close()
-	_, _, err = k.GetStringValue("POSCloud Server")
-	return err == nil
-}
-
-// SetAutostart включает/выключает автозапуск при входе в Windows (реестр HKCU\...\Run).
-func (a *App) SetAutostart(enabled bool) error {
-	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE|registry.SET_VALUE)
-	if err != nil {
-		return err
-	}
-	defer k.Close()
-	if enabled {
-		exe, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		return k.SetStringValue("POSCloud Server", "\""+exe+"\" -autostart")
-	}
-	_ = k.DeleteValue("POSCloud Server")
 	return nil
 }
 

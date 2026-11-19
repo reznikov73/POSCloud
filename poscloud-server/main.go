@@ -38,6 +38,7 @@ type serverFlags struct {
 	port      int
 	data      string
 	autostart bool
+	hidden    bool
 }
 
 // bindServerFlags объявляет флаги запуска. Пустая строка и 0 означают
@@ -48,6 +49,7 @@ func bindServerFlags(fs *flag.FlagSet) *serverFlags {
 	fs.IntVar(&f.port, "port", 0, "порт сервера (0 = взять из сохранённых настроек, по умолчанию 8090)")
 	fs.StringVar(&f.data, "data", "", "каталог хранения файлов")
 	fs.BoolVar(&f.autostart, "autostart", true, "запускать сервер сразу при старте программы (-autostart=false — не запускать)")
+	fs.BoolVar(&f.hidden, "hidden", false, "запускать скрыто в трее (окно не показывать)")
 	return f
 }
 
@@ -86,6 +88,8 @@ func main() {
 		MinWidth:         980,
 		MinHeight:        680,
 		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 22, A: 1},
+		// -hidden используется автозапуском: старт в трее, без окна.
+		StartHidden: f.hidden,
 		// правый клик в полях ввода: копировать/вставить/вырезать/выделить всё
 		EnableDefaultContextMenu: true,
 		AssetServer:              &assetserver.Options{Assets: assets},
