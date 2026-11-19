@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -7,7 +5,6 @@ import (
 	"image/color"
 	"math"
 	"os"
-	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -369,12 +366,9 @@ func (a *App) startTrayMenuRefresh() {
 	}()
 }
 
-// openInExplorer открывает каталог или файл в проводнике.
+// openInExplorer открывает каталог или файл в системном файловом менеджере.
 func openInExplorer(path string) {
-	if path == "" {
-		return
-	}
-	_ = exec.Command("explorer", path).Start()
+	openPath(path)
 }
 
 // showAbout показывает информационное окно.
