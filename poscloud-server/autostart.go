@@ -52,3 +52,9 @@ func autostartNeedsUpdate(value, exe string) bool {
 	}
 	return !strings.Contains(strings.ToLower(value), "-hidden")
 }
+
+// AutostartLabel — подпись галочки автозапуска для интерфейса.
+// Текст разный, потому что механизм разный: реестр Windows и .desktop-файл в Linux.
+func (a *App) AutostartLabel() string {
+	return autostartLabel
+}

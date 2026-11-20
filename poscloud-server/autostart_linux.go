@@ -11,6 +11,9 @@ import (
 // desktopFileName — файл автозапуска в ~/.config/autostart (стандарт freedesktop).
 const desktopFileName = "poscloud-server.desktop"
 
+// autostartLabel — подпись галочки автозапуска в интерфейсе.
+const autostartLabel = "Запускать программу при входе в систему"
+
 // autostartPath возвращает путь к .desktop-файлу автозапуска.
 func autostartPath() (string, error) {
 	cfg := os.Getenv("XDG_CONFIG_HOME")

@@ -729,6 +729,8 @@ async function refresh() {
   renderLogs(logs);
   $("pulse").className = "pulse" + (st && st.running ? " on" : "");
   if (!autostartLoaded) {
+    const label = await call("AutostartLabel");
+    if (typeof label === "string" && label) { $("srvAutostartLabel").textContent = label; }
     const au = await call("AutostartEnabled");
     if (typeof au === "boolean") { $("srvAutostart").checked = au; autostartLoaded = true; }
   }

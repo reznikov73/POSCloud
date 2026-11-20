@@ -11,6 +11,9 @@ import (
 // runKey — ветка реестра, откуда Windows читает программы автозапуска.
 const runKeyPath = `Software\Microsoft\Windows\CurrentVersion\Run`
 
+// autostartLabel — подпись галочки автозапуска в интерфейсе.
+const autostartLabel = "Запускать программу при входе в Windows"
+
 // AutostartEnabled сообщает, включён ли автозапуск при входе в Windows.
 func (a *App) AutostartEnabled() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.QUERY_VALUE)
