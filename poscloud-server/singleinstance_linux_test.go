@@ -2,16 +2,29 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"syscall"
+	"testing"
+)
 
 // Второй вызов acquireSingleInstance в том же процессе должен получить отказ:
 // flock на уже открытом дескрипторе не даёт взять блокировку повторно.
 func TestAcquireSingleInstanceTwice(t *testing.T) {
-	if p, err := singleInstancePath(); err == nil {
-		_ = p
+	// Замок может быть занят работающей программой: тогда проверить нечего.
+	if singleInstanceFile == nil {
+		if p, _ := singleInstancePath(); p != "" {
+			if f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0644); err == nil {
+				locked := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
+				_ = f.Close()
+				if locked {
+					t.Skip("замок держит работающий экземпляр программы")
+				}
+			}
+		}
 	}
-	// Первый экземпляр уже мог занять замок в этом процессе — освобождаем
-	// состояние, чтобы тест не зависел от порядка запуска.
+
+	// Освобождаем состояние, чтобы тест не зависел от порядка запуска.
 	if singleInstanceFile != nil {
 		_ = singleInstanceFile.Close()
 		singleInstanceFile = nil

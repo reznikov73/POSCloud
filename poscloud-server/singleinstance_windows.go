@@ -55,6 +55,13 @@ func acquireSingleInstance(name string) bool {
 // activateExistingWindow находит окно уже запущенной программы по заголовку и
 // выводит его на передний план. Окно может быть скрыто (закрытие не завершает
 // программу, а прячет окно), поэтому FindWindowW ищет и невидимые окна.
+// startShowRequestListener и stopShowRequestListener в Windows не нужны:
+// окно уже запущенной программы поднимается через FindWindowW и ShowWindow
+// в activateExistingWindow, отдельный сокет не требуется.
+func startShowRequestListener(a *App) {}
+
+func stopShowRequestListener() {}
+
 func activateExistingWindow(title string) {
 	t, err := windows.UTF16PtrFromString(title)
 	if err != nil {

@@ -3,9 +3,12 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -13,8 +16,8 @@ import (
 // ---------- защита от двойного запуска ----------
 //
 // Первый экземпляр программы берёт эксклюзивную блокировку flock на файле-замке.
-// Второй экземпляр блокировку получить не может и завершается, не создавая
-// ни трея, ни окна, ни HTTP-сервера.
+// Второй экземпляр блокировку получить не может, поэтому просит первый показать
+// окно и завершается, не создавая ни трея, ни окна, ни HTTP-сервера.
 //
 // flock снимается ядром автоматически при завершении процесса, поэтому «зависший»
 // после падения экземпляр не блокирует следующий запуск.
@@ -33,6 +36,16 @@ func singleInstancePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "poscloud-server.lock"), nil
+}
+
+// showSocketPath возвращает путь к сокету, через который второй экземпляр
+// просит первый показать окно.
+func showSocketPath() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "poscloud-server.sock"), nil
 }
 
 // acquireSingleInstance возвращает true, если это первый (единственный) экземпляр.
@@ -62,11 +75,75 @@ func acquireSingleInstance(name string) bool {
 	return true
 }
 
-// activateExistingWindow в Linux ничего не делает: оконный менеджер сам
-// поднимает окно уже запущенного приложения при повторном запуске, а надёжного
-// способа сделать это из чужого процесса без привязки к конкретному WM нет.
+// startShowRequestListener принимает просьбы «покажи окно» от повторных запусков.
+//
+// Зачем это нужно: закрытие окна не завершает программу, а прячет его в трей.
+// Без такого приёма повторный запуск из файлового менеджера выглядел бы как
+// «программа не запускается» — второй экземпляр молча завершался, а спрятанное
+// окно первого так и оставалось невидимым.
+func startShowRequestListener(a *App) {
+	p, err := showSocketPath()
+	if err != nil {
+		return
+	}
+	// Сокет от прошлого запуска мог остаться после падения — убираем.
+	_ = os.Remove(p)
+	ln, err := net.Listen("unix", p)
+	if err != nil {
+		return
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Запрос короткий: читаем с таймаутом, чтобы чужое соединение
+			// не подвесило приёмник.
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			buf := make([]byte, 32)
+			n, _ := conn.Read(buf)
+			_ = conn.Close()
+			if strings.TrimSpace(string(buf[:n])) == "show" {
+				a.showWindowFromOtherInstance()
+			}
+		}
+	}()
+}
+
+// showWindowFromOtherInstance показывает и поднимает окно уже запущенной программы.
+func (a *App) showWindowFromOtherInstance() {
+	if a.ctx == nil {
+		return
+	}
+	runtime.WindowUnminimise(a.ctx)
+	runtime.WindowShow(a.ctx)
+}
+
+// stopShowRequestListener убирает сокет при выходе: иначе следующий запуск
+// попытается подключиться к мёртвому сокету.
+func stopShowRequestListener() {
+	if p, err := showSocketPath(); err == nil {
+		_ = os.Remove(p)
+	}
+}
+
+// activateExistingWindow просит уже запущенный экземпляр показать окно.
+// Если первый экземпляр не отвечает (например, ещё не поднял сокет),
+// просто завершаемся молча — окно всё равно появится при следующем запуске.
 func activateExistingWindow(title string) {
 	_ = title
+	p, err := showSocketPath()
+	if err != nil {
+		return
+	}
+	conn, err := net.DialTimeout("unix", p, time.Second)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+	_, _ = conn.Write([]byte("show"))
 }
 
 // WindowHidden сообщает интерфейсу, что окно скрыто (свёрнуто в трей):

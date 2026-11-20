@@ -78,6 +78,11 @@ func main() {
 	app.autoStart = f.autostart
 	app.autoStartSet = autoStartSet
 
+	// Первый экземпляр слушает просьбы «покажи окно» от повторных запусков:
+	// закрытие окна прячет его в трей, и без этого запуск из меню выглядел бы
+	// как «программа не запускается».
+	startShowRequestListener(app)
+
 	buildTrayIcons()
 	trayStart, trayEnd := systray.RunWithExternalLoop(func() { app.trayInit("POSCloud Server") }, nil)
 
@@ -98,8 +103,9 @@ func main() {
 			app.startup(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
-			app.shutdown(ctx)
 			trayEnd()
+			stopShowRequestListener()
+			app.shutdown(ctx)
 		},
 		OnBeforeClose: func(ctx context.Context) bool {
 			if trayQuitRequested() {
