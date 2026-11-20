@@ -121,12 +121,16 @@ API: `POST /pair` принимает `{"code":"pcp_...","deviceName":"..."}` и 
 
 ```bash
 sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.0-dev
-go build -tags "gtk3 webkit2_40"
+go build -tags "production gtk3 webkit2_40"
 ```
 
-Без build-тегов Wails собирается, но при запуске сообщает
-`Wails applications will not build without the correct build tags`:
-GUI-часть требует cgo, поэтому теги обязательны.
+Тег `production` обязателен наравне с остальными: без него Wails собирается,
+но при запуске пишет `Wails applications will not build without the correct
+build tags` и завершается. Тег `gtk3` включает GTK-часть, `webkit2_40` —
+привязку к WebKitGTK 4.0 (для 4.1 используется `webkit2_41`).
+
+Проверено на Ubuntu 22.04: окно открывается, сервер отвечает по HTTP,
+интерфейс отрисовывается в WebKitGTK.
 
 **Про защиту токенов.** В Windows ключ DPAPI хранится вне каталога приложения и привязан
 к пользователю. В Linux единого такого механизма нет: Secret Service (libsecret) требует
