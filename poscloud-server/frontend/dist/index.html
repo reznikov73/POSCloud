@@ -298,6 +298,10 @@
         <button class="btn primary" id="pairCreate">Создать код</button>
       </div>
       <div id="pairResult" hidden>
+        <div id="pairQrBox" class="qr-box" hidden>
+          <img id="pairQr" class="qr-img" alt="QR-код подключения"/>
+          <div class="qr-hint">Наведите камеру телефона или отсканируйте в приложении POSCloud</div>
+        </div>
         <label class="field-label" for="pairCode">Скопируйте код и вставьте его в клиенте</label>
         <textarea id="pairCode" class="pair-code" readonly spellcheck="false"></textarea>
         <div class="row-btns">

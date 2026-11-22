@@ -1256,6 +1256,8 @@ func (a *App) serverMux() *http.ServeMux {
 	// Копия из браузера: без диалога сохранения, файл отдаётся на скачивание.
 	mux.HandleFunc("POST /api/CreateBackup", a.handleBackupCreate)
 	mux.HandleFunc("GET /api/backup", a.handleBackupDownload)
+	// QR-код подключения: телефон считывает его с экрана.
+	mux.HandleFunc("GET /api/code-qr", a.handleCodeQR)
 	registerAPIHandlers(mux)
 
 	return mux

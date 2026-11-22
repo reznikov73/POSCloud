@@ -715,6 +715,7 @@ function closePairModal() {
   $("pairError").textContent = "";
   $("pairResult").hidden = true;
   $("pairCode").value = "";
+  clearPairQR();
 }
 
 async function openPairModal() {
@@ -723,6 +724,7 @@ async function openPairModal() {
   $("pairError").style.color = "var(--crit)";
   $("pairResult").hidden = true;
   $("pairCode").value = "";
+  clearPairQR();
   const users = (await call("ListUsers")) || [];
   const enabled = users.filter((u) => u && u.enabled);
   const sel = $("pairUser");
@@ -749,6 +751,30 @@ $("srvPairBtn").addEventListener("click", openPairModal);
 $("pairClose").addEventListener("click", closePairModal);
 $("pairModal").addEventListener("click", (e) => { if (e.target.id === "pairModal") closePairModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("pairModal").hidden) closePairModal(); });
+/* QR-код подключения: телефон считывает его с экрана. */
+async function showPairQR(code) {
+  const box = $("pairQrBox");
+  const img = $("pairQr");
+  if (!box || !img) return;
+  if (!code) { box.hidden = true; return; }
+  const res = await call("QRForConnectionCode", code);
+  if (res && res.qr) {
+    img.src = res.qr;
+    box.hidden = false;
+  } else {
+    // QR не построился — код всё равно можно скопировать текстом.
+    box.hidden = true;
+    if (res && res.error) console.warn("QR:", res.error);
+  }
+}
+
+function clearPairQR() {
+  const box = $("pairQrBox");
+  const img = $("pairQr");
+  if (img) img.removeAttribute("src");
+  if (box) box.hidden = true;
+}
+
 $("pairCreate").addEventListener("click", async () => {
   const uid = $("pairUser").value;
   if (!uid) { $("pairError").textContent = "Выберите пользователя."; return; }
@@ -760,6 +786,7 @@ $("pairCreate").addEventListener("click", async () => {
   $("pairError").textContent = "";
   $("pairCode").value = res.code || "";
   $("pairResult").hidden = false;
+  await showPairQR(res.code || "");
   $("pairExpiry").textContent = "Действует до " + (res.expiresAt || "—") + " (одноразовый)";
   $("pairCode").focus();
   $("pairCode").select();

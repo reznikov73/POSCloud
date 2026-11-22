@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/energye/systray v1.0.3
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/sys v0.46.0
 )

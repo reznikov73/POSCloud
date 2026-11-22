@@ -52,6 +52,7 @@ var apiMethods = []apiMethod{
 	{name: "RenameToken"},
 	{name: "RevokeToken"},
 	{name: "CreateConnectionCode"},
+	{name: "QRForConnectionCode"},
 	{name: "ExportConnectionCode", needsGUI: true},
 
 	{name: "UserFiles"},
