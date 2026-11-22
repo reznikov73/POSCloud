@@ -583,7 +583,12 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 		// /api — веб-админка: у неё своя авторизация (пароль + сессия),
 		// токены устройств здесь не подходят. / — страница админки, её
 		// защищает withAdminAuth на уровне API.
-		if p == "/health" || p == "/pair" || p == "/" || strings.HasPrefix(p, "/api/") {
+		// Статика админки (app.js, styles.css) отдаётся без токена устройств:
+		// это публичные файлы интерфейса, доступ к данным закрыт сессией админки.
+		if p == "/health" || p == "/pair" || p == "/" || strings.HasPrefix(p, "/api/") ||
+			strings.HasSuffix(p, ".js") || strings.HasSuffix(p, ".css") ||
+			strings.HasSuffix(p, ".html") || strings.HasSuffix(p, ".png") ||
+			strings.HasSuffix(p, ".ico") || strings.HasSuffix(p, ".svg") {
 			next.ServeHTTP(w, r)
 			return
 		}
