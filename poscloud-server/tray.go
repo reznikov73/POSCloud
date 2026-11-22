@@ -35,11 +35,13 @@ var (
 )
 
 // buildTrayIcons готовит статичную иконку и кадры для анимации.
+// Формат зависит от платформы: ICO в Windows, PNG в Linux
+// (см. trayicon_windows.go и trayicon_linux.go).
 func buildTrayIcons() {
-	trayStatic = trayICO(0)
+	trayStatic = trayIconForOS()
 	trayFrames = make([][]byte, 0, trayFrameCount)
 	for k := 0; k < trayFrameCount; k++ {
-		trayFrames = append(trayFrames, trayICO(360*float64(k)/float64(trayFrameCount)))
+		trayFrames = append(trayFrames, trayFrameForOS(360*float64(k)/float64(trayFrameCount)))
 	}
 }
 

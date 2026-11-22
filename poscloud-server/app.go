@@ -69,6 +69,7 @@ type App struct {
 
 	logs     []string
 	logMu    sync.Mutex
+	logBytes int64 // текущий размер журнала в байтах (для порога ротации)
 	logFile  *os.File
 	dataRoot string
 	rootOnce sync.Once
@@ -362,6 +363,13 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
+// maxLogBytes — предел размера журнала (10 МБ). При активной синхронизации
+// каждая загрузка файла пишет строку, и без порога журнал вырастает в гигабайты.
+const maxLogBytes = 10 << 20
+
+// logLinesKept — сколько последних строк оставлять при обрезке.
+const logLinesKept = 20000
+
 func (a *App) log(s string) {
 	line := time.Now().Format("15:04:05") + "  " + s
 	a.logMu.Lock()
@@ -370,7 +378,12 @@ func (a *App) log(s string) {
 		a.logs = a.logs[len(a.logs)-500:]
 	}
 	if a.logFile != nil {
+		a.logBytes += int64(len(line)) + 11 // 11 — дата "2006-01-02 " и перевод строки
 		_, _ = a.logFile.WriteString(time.Now().Format("2006-01-02 ") + line + "\n")
+		// Порог проверяем по счётчику, а не по Stat: дешевле и без диска.
+		if a.logBytes > maxLogBytes {
+			a.pruneLogLocked()
+		}
 	}
 	a.logMu.Unlock()
 }
@@ -384,14 +397,25 @@ func (a *App) openLogFile() {
 	if err == nil {
 		a.logMu.Lock()
 		a.logFile = f
+		// Стартовый размер нужен, чтобы порог ротации сработал сразу,
+		// а не после первого мегабайта новых записей.
+		if fi, serr := f.Stat(); serr == nil {
+			a.logBytes = fi.Size()
+		}
 		a.logMu.Unlock()
 	}
 }
 
-// pruneLogFile оставляет в файле журнала только последние 3 дня.
+// pruneLogFile оставляет в файле журнала последние строки: не старше 3 дней
+// и не больше maxLogBytes.
 func (a *App) pruneLogFile() {
 	a.logMu.Lock()
 	defer a.logMu.Unlock()
+	a.pruneLogLocked()
+}
+
+// pruneLogLocked обрезает журнал. Вызывать под a.logMu.
+func (a *App) pruneLogLocked() {
 	p := a.logPath()
 	b, err := os.ReadFile(p)
 	if err != nil || len(b) == 0 {
@@ -405,10 +429,16 @@ func (a *App) pruneLogFile() {
 		}
 		kept = append(kept, ln)
 	}
-	if len(kept) > 20000 {
-		kept = kept[len(kept)-20000:]
+	if len(kept) > logLinesKept {
+		kept = kept[len(kept)-logLinesKept:]
 	}
 	res := []byte(strings.Join(kept, "\n"))
+	// Длинные строки могут не влезть в порог даже после обрезки по количеству:
+	// тогда режем ещё, отбрасывая по четверти с начала.
+	for len(res) > maxLogBytes && len(kept) > 1 {
+		kept = kept[len(kept)/4+1:]
+		res = []byte(strings.Join(kept, "\n"))
+	}
 	if len(res) == len(b) {
 		return
 	}
@@ -419,11 +449,13 @@ func (a *App) pruneLogFile() {
 	if err := atomicReplaceFile(p, res, 0644); err != nil {
 		if f, oerr := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); oerr == nil {
 			a.logFile = f
+			a.logBytes = int64(len(res))
 		}
 		return
 	}
 	if f, oerr := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); oerr == nil {
 		a.logFile = f
+		a.logBytes = int64(len(res))
 	}
 }
 

@@ -92,6 +92,7 @@ func main() {
 		Height:           820,
 		MinWidth:         980,
 		MinHeight:        680,
+		Linux:            linuxOptions(),
 		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 22, A: 1},
 		// -hidden используется автозапуском: старт в трее, без окна.
 		StartHidden: f.hidden,
