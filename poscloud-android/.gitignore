@@ -1,0 +1,15 @@
+# артефакты сборки
+*.apk
+*.aab
+*.idsig
+aligned.apk
+Icon.png
+
+# ключи подписи — в репозиторий не попадают
+*.keystore
+*.jks
+debug.keystore
+
+# локальные данные тестовых запусков
+*.log
+*.log.old
