@@ -123,6 +123,11 @@ func localIPs() []net.IP {
 		if ipnet.IP.IsLoopback() {
 			continue
 		}
+		// Link-local адреса (fe80::/10, 169.254.0.0/16) в сертификат не нужны:
+		// по ним клиент к серверу не подключается, а SAN они засоряют.
+		if ipnet.IP.IsLinkLocalUnicast() {
+			continue
+		}
 		out = append(out, ipnet.IP)
 	}
 	return out
