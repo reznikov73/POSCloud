@@ -325,6 +325,52 @@ function showTokenBox(tok) {
   $("tokenBox").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+/* QR с уже выданным токеном устройства.
+   В отличие от «Кода для телефона», здесь токен не перевыпускается:
+   телефон просто получит тот же секрет, что и само устройство.
+   Старое подключение продолжает работать. */
+async function showTokenQR(t) {
+  const box = $("uPairBox");
+  const st = await call("GetServerState");
+  if (!st || !st.running) {
+    $("uPairExpiry").textContent = "Сервер не запущен — QR требует адрес и порт.";
+    box.hidden = false;
+    $("uPairQr").parentElement.hidden = true;
+    $("uPairCode").value = "";
+    return;
+  }
+  // Формат тот же, что у кода подключения, но вместо одноразового code
+  // передаётся готовый токен устройства — клиент сохранит его как есть.
+  const q = new URLSearchParams();
+  q.set("v", "1");
+  q.set("host", st.localIP || st.url || "");
+  q.set("port", String(st.port));
+  q.set("name", t.name || "Устройство");
+  q.set("token", t.token);
+  if (st.tls) {
+    q.set("tls", "1");
+    if (st.fingerprint) q.set("fp", st.fingerprint);
+  } else {
+    q.set("tls", "0");
+  }
+  const code = "poscloud://connect?" + q.toString();
+
+  $("uPairUser").textContent = (selectedUser ? selectedUser.name : "") + " · " + (t.name || "Устройство");
+  $("uPairCode").value = code;
+  $("uPairExpiry").textContent = "Токен устройства «" + (t.name || "Устройство") + "» — постоянный, не одноразовый";
+  box.hidden = false;
+
+  const qr = await call("QRForConnectionCode", code);
+  const imgBox = $("uPairQr").parentElement;
+  if (qr && qr.qr) {
+    $("uPairQr").src = qr.qr;
+    imgBox.hidden = false;
+  } else {
+    $("uPairQr").removeAttribute("src");
+    imgBox.hidden = true;
+  }
+}
+
 function tokenButton(text, cls, onClick) {
   const b = document.createElement("button");
   b.className = cls;
@@ -359,10 +405,17 @@ function renderTokens(tokens) {
         eye.textContent = shown ? "Показать" : "Скрыть";
       });
       const copy = tokenButton("Копировать", "btn small", async () => {
-        await call("CopyToClipboard", t.token);
+        if (hasWails()) {
+          await call("CopyToClipboard", t.token);
+        } else if (navigator.clipboard) {
+          try { await navigator.clipboard.writeText(t.token); } catch (e) {}
+        }
         flash("Токен скопирован", true);
       });
-      tokTd.append(val, eye, copy);
+      // QR с уже выданным токеном: телефон подключается к этому же устройству,
+      // токен НЕ перевыпускается — старое подключение продолжает работать.
+      const qrBtn = tokenButton("QR", "btn small", () => showTokenQR(t));
+      tokTd.append(val, eye, copy, qrBtn);
     } else {
       const val = document.createElement("span");
       val.className = "token-missing";
