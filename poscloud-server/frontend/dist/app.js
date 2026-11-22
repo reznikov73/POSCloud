@@ -411,12 +411,57 @@ function renderTokens(tokens) {
   });
 }
 
+/* Код подключения для выбранного пользователя: QR + текст. */
+async function showUserPair() {
+  if (!selectedUser) return;
+  const box = $("uPairBox");
+  const btn = $("uPair");
+  btn.disabled = true;
+  const res = await call("CreateConnectionCode", selectedUser.id, "");
+  btn.disabled = false;
+  if (!res || res.error) {
+    $("uPairExpiry").textContent = (res && res.error) || "Не удалось создать код. Запущен ли сервер?";
+    box.hidden = false;
+    $("uPairQr").removeAttribute("src");
+    $("uPairQr").parentElement.hidden = true;
+    $("uPairCode").value = "";
+    return;
+  }
+  $("uPairUser").textContent = res.userName || selectedUser.name;
+  $("uPairCode").value = res.code || "";
+  $("uPairExpiry").textContent = "Действует до " + (res.expiresAt || "—") + " (одноразовый)";
+  box.hidden = false;
+
+  const qr = await call("QRForConnectionCode", res.code || "");
+  const imgBox = $("uPairQr").parentElement;
+  if (qr && qr.qr) {
+    $("uPairQr").src = qr.qr;
+    imgBox.hidden = false;
+  } else {
+    $("uPairQr").removeAttribute("src");
+    imgBox.hidden = true;
+  }
+}
+
+function hideUserPair() {
+  const box = $("uPairBox");
+  if (!box) return;
+  box.hidden = true;
+  $("uPairQr").removeAttribute("src");
+  $("uPairCode").value = "";
+  $("uPairExpiry").textContent = "";
+}
+
 function selectUser(u) {
   selectedUser = u;
   $("filesUser").textContent = u.name + " (" + u.id + ")";
   $("uToken").disabled = false;
   $("uToggle").disabled = false;
   $("uDelete").disabled = false;
+  $("uPair").disabled = false;
+  // Блок кода от предыдущего пользователя скрываем: код одноразовый
+  // и привязан к конкретному пользователю.
+  hideUserPair();
   $("uToggle").textContent = u.enabled ? "Отключить" : "Включить";
   loadUserDetails();
 }
@@ -877,6 +922,29 @@ $("usrNew").addEventListener("click", async () => {
     showTokenBox(tok);
     loadUserDetails(); refreshUsers();
   } else { flash("пользователь создан, но токен выдать не удалось", false); }
+});
+
+$("uPair").addEventListener("click", showUserPair);
+$("uPairNew").addEventListener("click", showUserPair);
+$("uPairClose").addEventListener("click", hideUserPair);
+$("uPairCopy").addEventListener("click", async () => {
+  const code = $("uPairCode").value;
+  if (!code) return;
+  // В браузере navigator.clipboard, в окне Wails — системный буфер.
+  if (hasWails()) {
+    await call("CopyToClipboard", code);
+  } else if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch (e) {
+      $("uPairCode").select();
+      document.execCommand("copy");
+    }
+  } else {
+    $("uPairCode").select();
+    document.execCommand("copy");
+  }
+  $("uPairExpiry").textContent = "Код скопирован. " + $("uPairExpiry").textContent;
 });
 
 $("uToken").addEventListener("click", async () => {

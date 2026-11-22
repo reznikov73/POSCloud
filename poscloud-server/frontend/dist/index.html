@@ -152,9 +152,26 @@
       <div class="card">
         <div class="card-title">Пользователь: <span id="filesUser">не выбран</span></div>
         <div class="row-btns" id="uActions" style="margin-top:0">
+          <button class="btn primary" id="uPair" disabled>Код для телефона</button>
           <button class="btn" id="uToken" disabled>Новый токен</button>
           <button class="btn" id="uToggle" disabled>Отключить</button>
           <button class="btn warn" id="uDelete" disabled>Удалить</button>
+        </div>
+        <div id="uPairBox" class="pair-inline" hidden>
+          <div class="pair-inline-head">
+            <div class="card-title">Код подключения: <span id="uPairUser"></span></div>
+            <button class="btn small ghost" id="uPairClose" title="Скрыть">✕</button>
+          </div>
+          <div class="qr-box">
+            <img id="uPairQr" class="qr-img" alt="QR-код подключения"/>
+            <div class="qr-hint">Отсканируйте телефоном или скопируйте код</div>
+          </div>
+          <textarea id="uPairCode" class="pair-code" readonly spellcheck="false"></textarea>
+          <div class="row-btns">
+            <button class="btn" id="uPairCopy">Копировать</button>
+            <button class="btn" id="uPairNew">Новый код</button>
+          </div>
+          <div class="hint-muted" id="uPairExpiry"></div>
         </div>
         <div class="subtitle" style="margin:10px 0 4px">Устройства (токены)</div>
         <table class="files">

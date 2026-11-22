@@ -309,3 +309,10 @@ select:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.13)}
 .qr-box[hidden]{display:none}
 .qr-img{display:block;width:240px;height:240px;image-rendering:pixelated}
 .qr-hint{font-size:11.5px;color:#4a5560;text-align:center;line-height:1.4}
+
+/* QR-код подключения во вкладке «Пользователи» */
+.pair-inline{margin-top:12px;padding:12px;border:1px solid var(--border,#2a3138);border-radius:10px;background:#151a20}
+.pair-inline[hidden]{display:none}
+.pair-inline-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.pair-inline .qr-box{margin:0 0 10px;padding:10px}
+.pair-inline .qr-img{width:220px;height:220px}
