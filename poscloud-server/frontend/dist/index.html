@@ -250,6 +250,19 @@
           </div>
           <div class="hint-muted" id="restoreStatus"></div>
         </section>
+        <section class="card maint-card" id="adminPwCard">
+          <div class="card-title">Пароль веб-админки</div>
+          <p class="maint-text">Пароль для входа в этот веб-интерфейс по сети. Хранится как хеш с солью; логина нет — только пароль. Минимум 8 символов.</p>
+          <div class="pw-grid">
+            <label>Текущий пароль<input id="pwCurrent" type="password" autocomplete="current-password" placeholder="текущий пароль"/></label>
+            <label>Новый пароль<input id="pwNext" type="password" autocomplete="new-password" placeholder="не короче 8 символов"/></label>
+            <label>Повторите<input id="pwNext2" type="password" autocomplete="new-password" placeholder="ещё раз"/></label>
+          </div>
+          <div class="row-btns">
+            <button class="btn primary" id="pwSave">Сменить пароль</button>
+          </div>
+          <div class="hint-muted" id="pwStatus"></div>
+        </section>
       </div>
     </div>
 

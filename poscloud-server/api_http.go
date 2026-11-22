@@ -1,6 +1,9 @@
 package main
 
 import (
+	"strings"
+	"path/filepath"
+	"os"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -73,6 +76,7 @@ var apiMethods = []apiMethod{
 	// Эти в браузере не имеют смысла, но интерфейс их вызывает:
 	// отвечаем безопасной заглушкой, чтобы не ломать страницу.
 	{name: "PickDirectory", needsGUI: true},
+	{name: "CheckDirectory"},
 	{name: "CopyToClipboard", needsGUI: true},
 	{name: "OpenLogFile", needsGUI: true},
 	{name: "WindowHidden", needsGUI: true},
@@ -221,4 +225,49 @@ func callGUIMethod(app *App, name string, raw []json.RawMessage) (any, error) {
 		return false, nil
 	}
 	return nil, fmt.Errorf("метод %s недоступен по HTTP", name)
+}
+
+// dirCheck — ответ проверки каталога.
+type dirCheck struct {
+	Exists  bool   `json:"exists"`
+	Created bool   `json:"created"`
+	Error   string `json:"error,omitempty"`
+	Path    string `json:"path"`
+}
+
+// CheckDirectory проверяет каталог хранения, выбранный в браузере.
+// Системного диалога там нет, поэтому путь вводят текстом — его надо
+// проверить до сохранения настроек: опечатка иначе всплывёт при запуске.
+func (a *App) CheckDirectory(path string) dirCheck {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return dirCheck{Error: "путь не указан"}
+	}
+	if !filepath.IsAbs(p) {
+		return dirCheck{Error: "нужен полный путь (начинается с «/»)", Path: p}
+	}
+	fi, err := os.Stat(p)
+	if err == nil {
+		if !fi.IsDir() {
+			return dirCheck{Error: "это файл, а не каталог", Path: p}
+		}
+		// Проверяем запись: каталог может быть только для чтения.
+		f, werr := os.CreateTemp(p, ".poscloud-write-*")
+		if werr != nil {
+			return dirCheck{Exists: true, Error: "нет прав на запись в каталог", Path: p}
+		}
+		name := f.Name()
+		_ = f.Close()
+		_ = os.Remove(name)
+		return dirCheck{Exists: true, Path: p}
+	}
+	if !os.IsNotExist(err) {
+		return dirCheck{Error: "не удалось проверить каталог: " + err.Error(), Path: p}
+	}
+	// Каталога нет: проверим, что родитель существует и доступен на запись.
+	parent := filepath.Dir(p)
+	if pfi, perr := os.Stat(parent); perr != nil || !pfi.IsDir() {
+		return dirCheck{Error: "родительский каталог не существует: " + parent, Path: p}
+	}
+	return dirCheck{Created: true, Path: p}
 }

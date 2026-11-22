@@ -180,11 +180,42 @@ $("logRefresh").addEventListener("click", () => refreshLogs());
 /* ---------- обслуживание ---------- */
 $("backupCreate").addEventListener("click", async () => {
   $("backupStatus").textContent = "Создаю резервную копию…";
-  const res = await call("CreateBackup");
+  // В браузере нет диалога сохранения файла, поэтому в веб-режиме копия
+  // пишется в каталог по умолчанию на сервере, а файл отдаётся на скачивание.
+  const res = hasWails() ? await call("CreateBackup") : await createBackupWeb();
   if (!res) { $("backupStatus").textContent = "Не удалось создать копию."; return; }
   if (res.error) { $("backupStatus").textContent = res.error; return; }
-  $("backupStatus").textContent = "Копия сохранена: " + (res.path || "");
+  $("backupStatus").textContent = "Копия сохранена: " + (res.path || "") + (res.downloaded ? " — скачивание начато" : "");
 });
+
+/* В веб-режиме: создать копию и сразу скачать её. */
+async function createBackupWeb() {
+  try {
+    const r = await fetch("/api/CreateBackup", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin", body: "[]",
+    });
+    if (r.status === 401) { showLogin(); return { error: "требуется вход" }; }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { error: d.error || "ошибка " + r.status };
+    const res = d.result || {};
+    if (res.error) return res;
+    // Скачиваем готовый файл по имени.
+    const name = (res.path || "").split(/[\\/]/).pop();
+    if (name) {
+      const a = document.createElement("a");
+      a.href = "/api/backup?name=" + encodeURIComponent(name);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      res.downloaded = true;
+    }
+    return res;
+  } catch (e) {
+    return { error: "сеть: " + e.message };
+  }
+}
 $("backupRestore").addEventListener("click", async () => {
   if (!confirm("Восстановить настройки и доступы из резервной копии? Текущие файлы будут сохранены в .restore-backup-*.")) return;
   $("restoreStatus").textContent = "Восстанавливаю…";
@@ -195,6 +226,31 @@ $("backupRestore").addEventListener("click", async () => {
   renderServer(await call("GetServerState"));
   refreshUsers();
   $("restoreStatus").textContent = "Восстановлено. Можно запускать сервер." + (res.safetyPath ? " Текущие файлы: " + res.safetyPath : "");
+});
+
+/* ---------- пароль веб-админки ---------- */
+$("pwSave") && $("pwSave").addEventListener("click", async () => {
+  const st = $("pwStatus");
+  const cur = $("pwCurrent").value;
+  const next = $("pwNext").value;
+  const next2 = $("pwNext2").value;
+  st.textContent = "";
+  if (next.length < 8) { st.textContent = "Новый пароль короче 8 символов."; return; }
+  if (next !== next2) { st.textContent = "Пароли не совпадают."; return; }
+  st.textContent = "Меняю пароль…";
+  try {
+    const r = await fetch("/api/admin-password", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ current: cur, next: next }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { st.textContent = d.error || "Не удалось сменить пароль"; return; }
+    st.textContent = "Пароль изменён.";
+    $("pwCurrent").value = $("pwNext").value = $("pwNext2").value = "";
+  } catch (e) {
+    st.textContent = "Ошибка сети: " + e.message;
+  }
 });
 
 /* ---------- состояние сервера ---------- */
@@ -734,6 +790,22 @@ $("srvSave").addEventListener("click", async () => {
   if (st && !st.error) flash("настройки сохранены", true);
 });
 $("srvPick").addEventListener("click", async () => {
+  // В браузере системного диалога нет: спрашиваем путь текстом и проверяем,
+  // что такой каталог существует на сервере.
+  if (!hasWails()) {
+    const inp = $("srvDirInput");
+    const cur = inp.value || "";
+    const next = prompt("Каталог хранения файлов на сервере (полный путь):", cur);
+    if (next === null) return;
+    const path = next.trim();
+    if (!path) return;
+    inp.value = path;
+    const chk = await call("CheckDirectory", path);
+    if (chk && chk.error) { flash(chk.error, false); return; }
+    if (chk && chk.created) flash("каталог будет создан при сохранении", true);
+    else flash("каталог существует", true);
+    return;
+  }
   const d = await call("PickDirectory");
   if (d) $("srvDirInput").value = d;
 });

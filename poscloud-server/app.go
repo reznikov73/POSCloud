@@ -1253,6 +1253,9 @@ func (a *App) serverMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/logout", a.handleAdminLogout)
 	mux.HandleFunc("POST /api/admin-password", a.handleAdminPassword)
 	mux.HandleFunc("GET /api/admin-status", a.handleAdminStatus)
+	// Копия из браузера: без диалога сохранения, файл отдаётся на скачивание.
+	mux.HandleFunc("POST /api/CreateBackup", a.handleBackupCreate)
+	mux.HandleFunc("GET /api/backup", a.handleBackupDownload)
 	registerAPIHandlers(mux)
 
 	return mux
