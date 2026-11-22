@@ -1,0 +1,29 @@
+[Unit]
+Description=POSCloud Server (синхронизация файлов)
+# Лимит перезапусков: 5 раз за 10 минут, дальше служба ждёт ручного вмешательства.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+Documentation=https://github.com/reznikov73/POSCloud
+# Сеть нужна обязательно: сервер слушает порт и ходит к клиентам.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rez
+Group=rez
+# -service: без окна и трея, только HTTP-сервер и веб-админка.
+# Порт и каталог берутся из server.json рядом с исполняемым файлом.
+ExecStart=/home/rez/bin/poscloud-server -service
+# Перезапуск при падении: 5 раз за 10 минут, дальше ждём минуту.
+Restart=always
+RestartSec=5s
+# Остановка по SIGTERM: сервер успевает закрыть соединения и сохранить состояние.
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+# Журнал — в systemd, а не в файл: journalctl -u poscloud-server
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

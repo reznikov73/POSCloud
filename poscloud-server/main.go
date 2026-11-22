@@ -39,6 +39,8 @@ type serverFlags struct {
 	data      string
 	autostart bool
 	hidden    bool
+	// service — режим службы: окно и трей не создаются вообще.
+	service bool
 }
 
 // bindServerFlags объявляет флаги запуска. Пустая строка и 0 означают
@@ -50,6 +52,7 @@ func bindServerFlags(fs *flag.FlagSet) *serverFlags {
 	fs.StringVar(&f.data, "data", "", "каталог хранения файлов")
 	fs.BoolVar(&f.autostart, "autostart", true, "запускать сервер сразу при старте программы (-autostart=false — не запускать)")
 	fs.BoolVar(&f.hidden, "hidden", false, "запускать скрыто в трее (окно не показывать)")
+	fs.BoolVar(&f.service, "service", false, "режим службы: без окна и трея, только HTTP-сервер")
 	return f
 }
 
@@ -69,6 +72,13 @@ func main() {
 	// уже запущенного экземпляра и завершаемся.
 	if !acquireSingleInstance(oneInstanceKey) {
 		activateExistingWindow(appWindowTitle)
+		return
+	}
+
+	// Режим службы: ни окна, ни трея, ни Wails — только HTTP-сервер и админка.
+	// Так программа работает без графической сессии (systemd, автозагрузка ОС).
+	if f.service {
+		runService(f)
 		return
 	}
 
