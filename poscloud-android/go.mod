@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	fyne.io/fyne/v2 v2.8.1
+	github.com/makiuchi-d/gozxing v0.1.1
 	poscloud-engine v0.0.0
 )
 
@@ -41,6 +42,7 @@ require (
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/xerrors v0.0.0-20260804184101-5ec99f83aff1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
