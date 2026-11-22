@@ -1240,6 +1240,21 @@ func (a *App) serverMux() *http.ServeMux {
 		a.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"blocks": out})
 	})
+	// Страница веб-админки: тот же frontend/dist, что встроен в окно.
+	// Отдаётся без токена устройств — доступ к данным закрыт сессией админки.
+	distFS, ferr := fs.Sub(assets, "frontend/dist")
+	if ferr == nil {
+		mux.Handle("GET /", http.FileServer(http.FS(distFS)))
+	}
+
+	// Веб-админка: те же методы, что вызывает окно Wails, доступны по HTTP.
+	// Вход, выход и смена пароля — отдельные эндпоинты без сессии.
+	mux.HandleFunc("POST /api/login", a.handleAdminLogin)
+	mux.HandleFunc("POST /api/logout", a.handleAdminLogout)
+	mux.HandleFunc("POST /api/admin-password", a.handleAdminPassword)
+	mux.HandleFunc("GET /api/admin-status", a.handleAdminStatus)
+	registerAPIHandlers(mux)
+
 	return mux
 }
 
@@ -1332,7 +1347,7 @@ func (a *App) StartServer(port int, dataDir string) ServerState {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
-		Handler:           a.withLog(a.withAuth(a.serverMux())),
+		Handler:           a.withLog(a.withAuth(a.withAdminAuth(a.serverMux()))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

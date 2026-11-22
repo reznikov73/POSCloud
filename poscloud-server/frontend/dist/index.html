@@ -298,6 +298,17 @@
     </div>
   </div>
 </div>
+<!-- Вход в веб-админку. В окне Wails не показывается: там сессия не нужна. -->
+<div id="loginOverlay" class="login-overlay" hidden>
+  <form id="loginForm" class="login-box" autocomplete="off">
+    <div class="login-logo">POSCloud</div>
+    <div class="login-sub">Вход в админку</div>
+    <input id="loginPassword" type="password" placeholder="Пароль администратора" autocomplete="current-password" required/>
+    <div id="loginError" class="login-error" hidden></div>
+    <button id="loginSubmit" type="submit">Войти</button>
+    <div id="loginHint" class="login-hint">Первый вход: пароль <code>poscloud</code> — сразу смените его.</div>
+  </form>
+</div>
 <script src="./app.js"></script>
 </body>
 </html>

@@ -579,7 +579,11 @@ func tokenFromRequest(r *http.Request) string {
 // withAuth пропускает /health без проверки, остальные запросы требуют валидный Bearer-токен.
 func (a *App) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == "/pair" {
+		p := r.URL.Path
+		// /api — веб-админка: у неё своя авторизация (пароль + сессия),
+		// токены устройств здесь не подходят. / — страница админки, её
+		// защищает withAdminAuth на уровне API.
+		if p == "/health" || p == "/pair" || p == "/" || strings.HasPrefix(p, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -280,3 +280,19 @@ select:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,117,222,.13)}
 .maint-card .row-btns{margin-top:0}
 #backupStatus,#restoreStatus{min-height:16px;white-space:pre-wrap}
 @media (max-width:900px){.maint-grid{grid-template-columns:1fr}}
+/* Вход в веб-админку */
+.login-overlay{position:fixed;inset:0;background:rgba(15,18,22,.96);display:flex;align-items:center;justify-content:center;z-index:9999}
+.login-overlay[hidden]{display:none}
+.login-box{background:var(--panel,#1a1f26);border:1px solid var(--border,#2a3138);border-radius:12px;padding:28px 32px;width:340px;display:flex;flex-direction:column;gap:12px}
+.login-logo{font-size:22px;font-weight:600;color:var(--text,#e6edf3);letter-spacing:.5px}
+.login-logo::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;margin-right:8px;vertical-align:middle}
+.login-sub{font-size:12.5px;color:var(--muted,#8b949e);margin-bottom:4px}
+.login-box input{background:#0f1216;border:1px solid var(--border,#2a3138);border-radius:8px;padding:10px 12px;color:var(--text,#e6edf3);font-size:14px;font-family:inherit}
+.login-box input:focus{outline:none;border-color:#2f81f7}
+.login-box button{background:#2f81f7;color:#fff;border:0;border-radius:8px;padding:10px 12px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit}
+.login-box button:hover{background:#3b8bf8}
+.login-box button:disabled{opacity:.6;cursor:default}
+.login-error{font-size:12.5px;color:#f85149}
+.login-error[hidden]{display:none}
+.login-hint{font-size:11.5px;color:var(--muted,#8b949e);line-height:1.5}
+.login-hint code{background:#0f1216;padding:1px 5px;border-radius:4px;color:#e6edf3}

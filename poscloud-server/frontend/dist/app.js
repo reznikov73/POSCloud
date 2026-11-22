@@ -23,13 +23,108 @@ const PAGE_META = {
   "tab-maint": { title: "Обслуживание", sub: "резервные копии и восстановление" },
 };
 
+/* Транспорт: в окне Wails методы доступны через биндинг window.go,
+   в браузере — через POST /api/<метод>. Логика интерфейса одна и та же. */
+function hasWails() {
+  return !!(window.go && window.go.main && window.go.main.App);
+}
+
 async function call(method, ...args) {
   try {
-    if (!window.go || !window.go.main || !window.go.main.App) return null;
-    return await window.go.main.App[method](...args);
+    if (hasWails()) {
+      return await window.go.main.App[method](...args);
+    }
+    const r = await fetch("/api/" + method, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(args),
+    });
+    if (r.status === 401) {
+      showLogin();
+      return null;
+    }
+    if (!r.ok) {
+      const t = await r.text();
+      console.error(method, r.status, t);
+      return null;
+    }
+    const data = await r.json();
+    return data.result === undefined ? null : data.result;
   } catch (e) {
     console.error(method, e);
     return null;
+  }
+}
+
+/* --- вход в веб-админку --- */
+let loginShown = false;
+
+/* В браузере проверяем сессию до первого запроса данных. */
+async function ensureAdminSession() {
+  if (hasWails()) return true;            // в окне авторизация не нужна
+  try {
+    const r = await fetch("/api/admin-status", { credentials: "same-origin" });
+    const d = await r.json();
+    if (d && d.authorized) return true;
+  } catch (e) {
+    console.error("admin-status", e);
+  }
+  showLogin();
+  return false;
+}
+
+function showLogin() {
+  if (hasWails() || loginShown) return;
+  loginShown = true;
+  const ov = $("loginOverlay");
+  if (!ov) return;
+  ov.hidden = false;
+  const inp = $("loginPassword");
+  if (inp) { inp.value = ""; inp.focus(); }
+}
+
+function hideLogin() {
+  loginShown = false;
+  const ov = $("loginOverlay");
+  if (ov) ov.hidden = true;
+}
+
+async function doLogin(ev) {
+  ev.preventDefault();
+  const inp = $("loginPassword");
+  const err = $("loginError");
+  const btn = $("loginSubmit");
+  if (!inp) return;
+  err.hidden = true;
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ password: inp.value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      err.textContent = d.error || "Не удалось войти";
+      err.hidden = false;
+      btn.disabled = false;
+      inp.select();
+      return;
+    }
+    hideLogin();
+    btn.disabled = false;
+    if (d.defaultPassword) {
+      const hint = $("loginHint");
+      if (hint) hint.innerHTML = "Вы вошли с паролем по умолчанию. Смените его: <code>Настройки → пароль админки</code>.";
+    }
+    refresh();
+    refreshUsers();
+  } catch (e) {
+    err.textContent = "Ошибка сети";
+    err.hidden = false;
+    btn.disabled = false;
   }
 }
 
@@ -740,7 +835,13 @@ async function refresh() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
+  const form = $("loginForm");
+  if (form) form.addEventListener("submit", doLogin);
+  // В браузере сначала проверяем сессию: без неё показываем форму входа.
+  if (!hasWails()) {
+    if (!(await ensureAdminSession())) return;
+  }
   refresh();
   refreshUsers();
   setInterval(() => { if (!document.hidden) refresh(); }, 1500);

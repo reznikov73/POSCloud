@@ -83,6 +83,10 @@ func main() {
 	// как «программа не запускается».
 	startShowRequestListener(app)
 
+	// Тот же экземпляр обслуживает HTTP-админку: методы окна доступны
+	// по /api/<метод> (см. api_http.go).
+	setAPIApp(app)
+
 	buildTrayIcons()
 	trayStart, trayEnd := systray.RunWithExternalLoop(func() { app.trayInit("POSCloud Server") }, nil)
 
