@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,7 +64,12 @@ func TestHTTPSFullCycle(t *testing.T) {
 	a.auth = newAuthStore(filepath.Join(dir, "users.json"))
 	a.auth.setLogger(a.log)
 	a.srvTLS = true
-	st := a.StartServer(0, dir)
+	// StartServer(0, ...) берёт порт из настроек (8090 по умолчанию),
+	// поэтому на машине с работающим сервером тест падал бы «порт занят».
+	// Просим свободный порт у ядра: 0 в net.Listen делает именно это,
+	// но приложение подставляет сохранённый порт, поэтому выбираем его сами.
+	a.srvPort = freeTCPPort(t)
+	st := a.StartServer(a.srvPort, dir)
 	if st.Error != "" {
 		t.Fatalf("сервер не стартовал: %s", st.Error)
 	}
@@ -118,4 +124,17 @@ func TestHTTPSFullCycle(t *testing.T) {
 			t.Errorf("в сертификате нет ни одного локального IP: сертификат %v, локальные %v", cert.IPAddresses, ips)
 		}
 	}
+}
+
+// freeTCPPort возвращает свободный порт, который ядро выдало и сразу отпустило.
+// Небольшая гонка с другими процессами возможна, но на практике достаточна:
+// тесту нужен порт, на котором точно не висит рабочий сервер.
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("не удалось получить свободный порт: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
