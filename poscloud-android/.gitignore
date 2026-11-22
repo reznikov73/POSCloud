@@ -1,15 +1,15 @@
-# артефакты сборки
+# build artifacts
 *.apk
 *.aab
 *.idsig
 aligned.apk
 Icon.png
 
-# ключи подписи — в репозиторий не попадают
+# signing keys — never committed to the repository
 *.keystore
 *.jks
 debug.keystore
 
-# локальные данные тестовых запусков
+# local data from test runs
 *.log
 *.log.old
