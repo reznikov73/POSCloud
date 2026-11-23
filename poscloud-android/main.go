@@ -128,6 +128,7 @@ func heading(text string) fyne.CanvasObject {
 func caption(text string) *widget.Label {
 	l := widget.NewLabel(text)
 	l.Importance = widget.LowImportance
+	l.Wrapping = fyne.TextWrapWord
 	return l
 }
 
@@ -244,6 +245,9 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 	for _, l := range []*widget.Label{ui.serverValue, ui.onlineValue, ui.folderValue, ui.syncValue, ui.countValue} {
 		l.Wrapping = fyne.TextWrapWord
 	}
+	// Путь к папке — одна длинная строка без пробелов: переносим её в любом месте,
+	// иначе карточка требует ширину больше экрана телефона.
+	ui.folderValue.Wrapping = fyne.TextWrapBreak
 
 	serverCard := widget.NewCard("Сервер", "", container.NewVBox(
 		pairRow("Адрес", ui.serverValue),
@@ -291,14 +295,14 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 		transferCard,
 		ui.errLabel,
 		ui.btnStart,
-		container.NewGridWithColumns(2, ui.btnStop, ui.btnNow),
+		container.NewVBox(ui.btnStop, ui.btnNow),
 		container.NewPadded(caption("Синхронизация работает, пока приложение открыто или живо в фоне; для надёжной фоновой работы держите приложение в списке недавних.")),
 	)
 
 	// ===== вкладка «Подключение» =====
 	ui.pairEntry = widget.NewMultiLineEntry()
-	ui.pairEntry.SetPlaceHolder("poscloud://connect?v=1&host=192.168.1.10&port=8090&code=...")
-	ui.pairEntry.Wrapping = fyne.TextWrapOff
+	ui.pairEntry.SetPlaceHolder("poscloud://connect?…")
+	ui.pairEntry.Wrapping = fyne.TextWrapBreak
 
 	pairBtn := widget.NewButtonWithIcon("Подключиться по коду", theme.LoginIcon(), func() {
 		code := strings.TrimSpace(ui.pairEntry.Text)
@@ -352,11 +356,11 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 	ui.portEntry = widget.NewEntry()
 	ui.portEntry.SetPlaceHolder("8090")
 	ui.tokenEntry = widget.NewPasswordEntry()
-	ui.tokenEntry.SetPlaceHolder("токен устройства с сервера")
+	ui.tokenEntry.SetPlaceHolder("токен устройства")
 	ui.deviceEntry = widget.NewEntry()
-	ui.deviceEntry.SetPlaceHolder(ctrl.DeviceName())
+	ui.deviceEntry.SetPlaceHolder("имя устройства")
 	ui.dirEntry = widget.NewEntry()
-	ui.dirEntry.SetPlaceHolder(ctrl.DefaultSyncDir())
+	ui.dirEntry.SetPlaceHolder("папка синхронизации")
 	ui.dirEntry.Wrapping = fyne.TextWrapOff
 	dirBtn := widget.NewButtonWithIcon("Папка приложения", theme.FolderIcon(), func() {
 		ui.dirEntry.SetText(ctrl.DefaultSyncDir())
@@ -365,7 +369,7 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 	ui.intervalEntry.SetPlaceHolder("3")
 	ui.tlsCheck = widget.NewCheck("TLS (самоподписанный сертификат)", nil)
 	ui.fpEntry = widget.NewEntry()
-	ui.fpEntry.SetPlaceHolder("отпечаток SHA-256 с сервера")
+	ui.fpEntry.SetPlaceHolder("SHA-256")
 	ui.fpEntry.Hide()
 	ui.tlsCheck.OnChanged = func(on bool) {
 		if on {
@@ -374,18 +378,21 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 			ui.fpEntry.Hide()
 		}
 	}
-	ui.autoRunCheck = widget.NewCheck("Запускать синхронизацию при старте приложения", nil)
+	ui.autoRunCheck = widget.NewCheck("Запускать синхронизацию при старте", nil)
 
-	form := widget.NewForm(
-		widget.NewFormItem("Сервер", ui.hostEntry),
-		widget.NewFormItem("Порт", ui.portEntry),
-		widget.NewFormItem("Токен", ui.tokenEntry),
-		widget.NewFormItem("Имя устройства", ui.deviceEntry),
-		widget.NewFormItem("Папка", container.NewBorder(nil, nil, nil, dirBtn, ui.dirEntry)),
-		widget.NewFormItem("Интервал, с", ui.intervalEntry),
-		widget.NewFormItem("", ui.tlsCheck),
-		widget.NewFormItem("Отпечаток", ui.fpEntry),
-		widget.NewFormItem("", ui.autoRunCheck),
+	// Форма для узкого экрана: подпись над полем, поля и кнопки — на всю ширину.
+	// Классическая форма Fyne держит подписи в отдельной колонке слева и на
+	// телефоне оставляет полям слишком мало места.
+	form := container.NewVBox(
+		formRow("Сервер", ui.hostEntry),
+		formRow("Порт", ui.portEntry),
+		formRow("Токен", ui.tokenEntry),
+		formRow("Имя устройства", ui.deviceEntry),
+		formRow("Папка", container.NewVBox(ui.dirEntry, dirBtn)),
+		formRow("Интервал, с", ui.intervalEntry),
+		ui.tlsCheck,
+		formRow("Отпечаток", ui.fpEntry),
+		ui.autoRunCheck,
 	)
 
 	testBtn := widget.NewButtonWithIcon("Проверить связь", theme.ConfirmIcon(), func() {
@@ -418,7 +425,7 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 
 	manualCard := widget.NewCard("Ручная настройка", "", container.NewVBox(
 		form,
-		container.NewGridWithColumns(2, testBtn, saveBtn),
+		container.NewVBox(testBtn, saveBtn),
 	))
 
 	connectCard := container.NewVBox(
@@ -430,7 +437,7 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 	ui.loadFromConfig(ctrl)
 
 	// ===== вкладка «Папки» =====
-	ui.freeCheck = widget.NewCheck("Без правил — синхронизировать всё в обе стороны", func(on bool) {
+	ui.freeCheck = widget.NewCheck("Без правил — синхронизировать всё", func(on bool) {
 		go func() {
 			if err := ctrl.SetRulesFree(on); err != nil {
 				fyne.Do(func() { dialog.ShowError(err, ui.win) })
@@ -453,7 +460,7 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 			heading("Папки"),
 			widget.NewCard("", "", container.NewVBox(
 				ui.freeCheck,
-				container.NewGridWithColumns(2, ui.btnRefreshFld, ui.btnResync),
+				container.NewVBox(ui.btnRefreshFld, ui.btnResync),
 				ui.foldersState,
 			)),
 		),
@@ -463,7 +470,7 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 
 	// ===== вкладка «Журнал» =====
 	ui.logLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
-	ui.logLabel.Wrapping = fyne.TextWrapOff
+	ui.logLabel.Wrapping = fyne.TextWrapBreak
 	clearBtn := widget.NewButtonWithIcon("Очистить журнал", theme.DeleteIcon(), func() {
 		ctrl.ClearLogs()
 		ui.logLabel.SetText("")
@@ -476,7 +483,7 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 
 	tabs := container.NewAppTabs(
 		container.NewTabItemWithIcon("Статус", theme.HomeIcon(), container.NewScroll(statusCard)),
-		container.NewTabItemWithIcon("Подключение", theme.SettingsIcon(), container.NewScroll(connectCard)),
+		container.NewTabItemWithIcon("Связь", theme.SettingsIcon(), container.NewScroll(connectCard)),
 		container.NewTabItemWithIcon("Папки", theme.FolderOpenIcon(), foldersCard),
 		container.NewTabItemWithIcon("Журнал", theme.DocumentIcon(), logCard),
 	)
@@ -492,6 +499,13 @@ func buildUI(ctrl *client.Controller, w fyne.Window) *uiState {
 // pairRow строит строку «подпись — значение».
 func pairRow(label string, value *widget.Label) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, caption(label), nil, value)
+}
+
+// formRow строит строку формы для узкого экрана: подпись над полем.
+func formRow(label string, obj fyne.CanvasObject) fyne.CanvasObject {
+	l := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	l.Wrapping = fyne.TextWrapWord
+	return container.NewVBox(l, obj)
 }
 
 // pairConnect обменивает код подключения на токен и сообщает результат.
@@ -680,7 +694,7 @@ func folderRow(ctrl *client.Controller, ui *uiState, n eng.ServerFolderNode) fyn
 		info += "\nновая папка — выберите режим"
 	}
 	name := widget.NewLabelWithStyle(n.Path, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	name.Wrapping = fyne.TextWrapOff
+	name.Wrapping = fyne.TextWrapBreak
 	details := caption(info)
 	details.Wrapping = fyne.TextWrapWord
 
@@ -703,10 +717,10 @@ func folderRow(ctrl *client.Controller, ui *uiState, n eng.ServerFolderNode) fyn
 		sel.Selected = modeTitle(eng.FolderOff)
 	}
 
-	return widget.NewCard(n.Path, "", container.NewVBox(
+	return widget.NewCard("", "", container.NewVBox(
 		name,
 		details,
-		container.NewGridWrap(fyne.NewSize(240, sel.MinSize().Height), sel),
+		sel,
 	))
 }
 
