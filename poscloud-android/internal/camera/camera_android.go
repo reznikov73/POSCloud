@@ -564,6 +564,227 @@ done:
 	}
 	return rc;
 }
+
+// sdk_int возвращает Build.VERSION.SDK_INT (0 — не удалось прочитать).
+static int sdk_int(JNIEnv* env) {
+	jclass cVer = (*env)->FindClass(env, "android/os/Build$VERSION");
+	if (!cVer) {
+		(*env)->ExceptionClear(env);
+		return 0;
+	}
+	jfieldID f = (*env)->GetStaticFieldID(env, cVer, "SDK_INT", "I");
+	int v = 0;
+	if (f) {
+		v = (int)(*env)->GetStaticIntField(env, cVer, f);
+	}
+	(*env)->ExceptionClear(env);
+	(*env)->DeleteLocalRef(env, cVer);
+	return v;
+}
+
+// current_activity возвращает GoNativeActivity из статического поля класса
+// (конструктор Activity сохраняет туда себя). NULL — окно ещё не создано.
+// Это собственный класс приложения, а не скрытый API системы.
+static jobject current_activity(JNIEnv* env, char* err, int len) {
+	jclass cCls = (*env)->FindClass(env, "org/golang/app/GoNativeActivity");
+	if (take_exception(env, err, len, "FindClass GoNativeActivity")) {
+		return NULL;
+	}
+	jfieldID f = (*env)->GetStaticFieldID(env, cCls, "goNativeActivity", "Lorg/golang/app/GoNativeActivity;");
+	if (take_exception(env, err, len, "GetStaticFieldID goNativeActivity")) {
+		(*env)->DeleteLocalRef(env, cCls);
+		return NULL;
+	}
+	jobject act = (*env)->GetStaticObjectField(env, cCls, f);
+	(*env)->DeleteLocalRef(env, cCls);
+	if (!act) {
+		set_err(err, len, "окно приложения ещё не создано");
+	}
+	return act;
+}
+
+// check_permission: 1 — разрешение выдано, 0 — нет, -1 — ошибка.
+// До Android 6 (API 23) разрешения выдаются при установке — считаем выданным.
+static int check_permission(JNIEnv* env, const char* perm, char* err, int errlen) {
+	if (sdk_int(env) < 23) {
+		return 1;
+	}
+	int rc = -1;
+	jobject app = app_context(env, err, errlen);
+	if (!app) {
+		return -1;
+	}
+	jclass cCtx = (*env)->FindClass(env, "android/content/Context");
+	jmethodID check = (*env)->GetMethodID(env, cCtx, "checkSelfPermission", "(Ljava/lang/String;)I");
+	jstring p = (*env)->NewStringUTF(env, perm);
+	jint r = (*env)->CallIntMethod(env, app, check, p);
+	if (take_exception(env, err, errlen, "checkSelfPermission")) {
+		rc = -1;
+	} else {
+		rc = (r == 0) ? 1 : 0;  // PERMISSION_GRANTED = 0
+	}
+	(*env)->DeleteLocalRef(env, p);
+	(*env)->DeleteLocalRef(env, cCtx);
+	(*env)->DeleteLocalRef(env, app);
+	return rc;
+}
+
+// photo_permission проверяет оба разрешения на чтение фото: READ_MEDIA_IMAGES
+// (Android 13+) и READ_EXTERNAL_STORAGE (старые версии и приложения с targetSdk < 33).
+static int photo_permission(char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return -1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return -1;
+		}
+		attached = 1;
+	}
+	int rc = check_permission(env, "android.permission.READ_MEDIA_IMAGES", err, errlen);
+	if (rc != 0) {
+		goto done_perm;  // выдано или ошибка
+	}
+	rc = check_permission(env, "android.permission.READ_EXTERNAL_STORAGE", err, errlen);
+	if (rc == 0) {
+		set_err(err, errlen, "");
+	}
+done_perm:
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
+
+// request_photo_permission показывает системный диалог разрешения на чтение
+// фото. Без него MediaStore молча отдаёт только собственные файлы приложения.
+static int request_photo_permission(char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return 1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			set_err(err, errlen, "не удалось подключиться к JVM");
+			return 2;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	jobject act = NULL;
+	jobjectArray arr = NULL;
+	jclass cAct = NULL, cStr = NULL;
+
+	act = current_activity(env, err, errlen);
+	if (!act) {
+		rc = 3;
+		goto done_req;
+	}
+	cAct = (*env)->FindClass(env, "android/app/Activity");
+	cStr = (*env)->FindClass(env, "java/lang/String");
+	jmethodID req = (*env)->GetMethodID(env, cAct, "requestPermissions", "([Ljava/lang/String;I)V");
+	if (take_exception(env, err, errlen, "requestPermissions")) {
+		rc = 4;
+		goto done_req;
+	}
+	// Необъявленное в манифесте разрешение система просто отклоняет —
+	// поэтому просим оба: какой объявлен, тот и покажется в диалоге.
+	arr = (*env)->NewObjectArray(env, 2, cStr, NULL);
+	(*env)->SetObjectArrayElement(env, arr, 0, (*env)->NewStringUTF(env, "android.permission.READ_MEDIA_IMAGES"));
+	(*env)->SetObjectArrayElement(env, arr, 1, (*env)->NewStringUTF(env, "android.permission.READ_EXTERNAL_STORAGE"));
+	(*env)->CallVoidMethod(env, act, req, arr, (jint)7301);
+	if (take_exception(env, err, errlen, "requestPermissions")) {
+		rc = 5;
+	}
+
+done_req:
+	if (arr) (*env)->DeleteLocalRef(env, arr);
+	if (cAct) (*env)->DeleteLocalRef(env, cAct);
+	if (cStr) (*env)->DeleteLocalRef(env, cStr);
+	if (act) (*env)->DeleteLocalRef(env, act);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
+
+// open_app_settings открывает страницу приложения в настройках системы:
+// разрешение, отклонённое дважды, система больше не спрашивает — включить
+// его можно только там.
+static int open_app_settings(char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return 1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return 2;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	jobject app = NULL, pkg = NULL, uri = NULL, intent = NULL;
+	jclass cCtx = NULL, cIntent = NULL;
+
+	app = app_context(env, err, errlen);
+	if (!app) {
+		rc = 3;
+		goto done_set;
+	}
+	cCtx = (*env)->FindClass(env, "android/content/Context");
+	cIntent = (*env)->FindClass(env, "android/content/Intent");
+	{
+		jmethodID getPkg = (*env)->GetMethodID(env, cCtx, "getPackageName", "()Ljava/lang/String;");
+		pkg = (*env)->CallObjectMethod(env, app, getPkg);
+		if (take_exception(env, err, errlen, "getPackageName")) {
+			rc = 4;
+			goto done_set;
+		}
+		const char* pkgUtf = pkg ? (*env)->GetStringUTFChars(env, pkg, NULL) : NULL;
+		char uriStr[300];
+		snprintf(uriStr, sizeof uriStr, "package:%s", pkgUtf ? pkgUtf : "");
+		if (pkgUtf) {
+			(*env)->ReleaseStringUTFChars(env, pkg, pkgUtf);
+		}
+		uri = parse_uri(env, uriStr, err, errlen);
+		if (!uri) {
+			rc = 5;
+			goto done_set;
+		}
+		jmethodID ctor = (*env)->GetMethodID(env, cIntent, "<init>", "(Ljava/lang/String;)V");
+		jstring action = (*env)->NewStringUTF(env, "android.settings.APPLICATION_DETAILS_SETTINGS");
+		intent = (*env)->NewObject(env, cIntent, ctor, action);
+		(*env)->DeleteLocalRef(env, action);
+		jmethodID setData = (*env)->GetMethodID(env, cIntent, "setData", "(Landroid/net/Uri;)Landroid/content/Intent;");
+		(*env)->CallObjectMethod(env, intent, setData, uri);
+		jmethodID addFlags = (*env)->GetMethodID(env, cIntent, "addFlags", "(I)Landroid/content/Intent;");
+		(*env)->CallObjectMethod(env, intent, addFlags, (jint)0x10000000);  // FLAG_ACTIVITY_NEW_TASK
+		jmethodID startAct = (*env)->GetMethodID(env, cCtx, "startActivity", "(Landroid/content/Intent;)V");
+		(*env)->CallVoidMethod(env, app, startAct, intent);
+		if (take_exception(env, err, errlen, "startActivity settings")) {
+			rc = 6;
+		}
+	}
+
+done_set:
+	if (intent) (*env)->DeleteLocalRef(env, intent);
+	if (uri) (*env)->DeleteLocalRef(env, uri);
+	if (pkg) (*env)->DeleteLocalRef(env, pkg);
+	if (cIntent) (*env)->DeleteLocalRef(env, cIntent);
+	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
+	if (app) (*env)->DeleteLocalRef(env, app);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
 */
 import "C"
 
@@ -686,6 +907,47 @@ func Delete(uri string) error {
 		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
 		if msg == "" {
 			msg = "не удалось удалить запись MediaStore"
+		}
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// ---------- разрешение на чтение фото ----------
+//
+// Снимки экрана создаёт системное приложение. Пока пользователем не выдано
+// разрешение на чтение фото, MediaStore на запрос отвечает пустым списком
+// (приложение видит только собственные файлы) — без ошибки.
+
+// PhotoPermissionGranted сообщает, выдано ли разрешение читать фото
+// других приложений.
+func PhotoPermissionGranted() bool {
+	errBuf := make([]byte, 256)
+	return int(C.photo_permission((*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))) == 1
+}
+
+// RequestPhotoPermission показывает системный диалог разрешения на чтение
+// фото. Результат приходит в Activity, поэтому после ответа пользователя
+// разрешение проверяется повторно (PhotoPermissionGranted).
+func RequestPhotoPermission() error {
+	errBuf := make([]byte, 512)
+	if code := C.request_photo_permission((*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))); code != 0 {
+		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
+		if msg == "" {
+			msg = "не удалось запросить разрешение"
+		}
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// OpenAppSettings открывает страницу приложения в настройках системы.
+func OpenAppSettings() error {
+	errBuf := make([]byte, 512)
+	if code := C.open_app_settings((*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))); code != 0 {
+		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
+		if msg == "" {
+			msg = "не удалось открыть настройки"
 		}
 		return errors.New(msg)
 	}

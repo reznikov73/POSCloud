@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -45,6 +46,12 @@ func main() {
 	stop := make(chan struct{})
 	w.SetOnClosed(func() { close(stop) })
 	go ui.Refresh(ctrl, st, stop)
+
+	// При первом запуске просим доступ к фото: без него снимки экрана
+	// (их создаёт система) не видны приложению и не попадают в папку.
+	if ctrl.PhotoPermissionAsks() == 0 && !ctrl.PhotoPermissionGranted() {
+		time.AfterFunc(1500*time.Millisecond, ctrl.RequestPhotoAccess)
+	}
 
 	w.ShowAndRun()
 }

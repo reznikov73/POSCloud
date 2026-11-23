@@ -137,6 +137,9 @@ type State struct {
 	transferText *widget.Label
 	transferBar  *widget.ProgressBar
 	transferCard *widget.Card
+	shotBox      *fyne.Container
+	shotLabel    *widget.Label
+	btnShotPerm  *widget.Button
 
 	btnStart *widget.Button
 	btnStop  *widget.Button
@@ -210,6 +213,17 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.transferCard = transferCard
 	transferCard.Hide()
 
+	// Снимки экрана создаёт система; пока нет разрешения на чтение фото,
+	// они не попадают в папку синхронизации — говорим об этом и даём кнопку.
+	ui.shotLabel = caption("Снимки экрана не переносятся в папку: у приложения нет доступа к фото.")
+	ui.shotLabel.Importance = widget.WarningImportance
+	ui.btnShotPerm = widget.NewButtonWithIcon("Разрешить доступ к фото", theme.MediaPhotoIcon(), func() {
+		go ctrl.RequestPhotoAccess()
+	})
+	ui.btnShotPerm.Importance = widget.HighImportance
+	ui.shotBox = container.NewVBox(ui.shotLabel, ui.btnShotPerm)
+	ui.shotBox.Hide()
+
 	ui.btnStart = widget.NewButtonWithIcon("Запустить", theme.MediaPlayIcon(), func() {
 		host := strings.TrimSpace(ui.hostEntry.Text)
 		port := atoiDefault(ui.portEntry.Text, cfg.Port)
@@ -240,6 +254,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	statusCard := container.NewVBox(
 		ui.dot.object(),
 		actions,
+		ui.shotBox,
 		stateCard,
 		transferCard,
 		ui.errLabel,
@@ -650,12 +665,22 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 	defer t.Stop()
 	var lastLog string
 	ticks := 0
+	photoGranted := ctrl.PhotoPermissionGranted()
 	for {
 		select {
 		case <-stop:
 			return
 		case <-t.C:
 			ticks++
+			// Разрешение приходит после ответа в системном диалоге: как только
+			// оно появилось, сразу забираем накопившиеся снимки экрана.
+			if granted := ctrl.PhotoPermissionGranted(); granted != photoGranted {
+				photoGranted = granted
+				if granted {
+					go ctrl.ImportScreenshots()
+				}
+			}
+			shotAsks := ctrl.PhotoPermissionAsks()
 			// Раз в 30 секунд забираем новые снимки экрана в папку синхронизации.
 			if ticks%30 == 0 {
 				go ctrl.ImportScreenshots()
@@ -693,6 +718,15 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 
 			fyne.Do(func() {
 				ui.dot.set(running, st.Online, st.ErrMsg)
+				if photoGranted {
+					ui.shotBox.Hide()
+				} else {
+					// после двух отказов диалог больше не появится — ведём в настройки
+					if shotAsks >= 2 {
+						ui.btnShotPerm.SetText("Открыть настройки приложения")
+					}
+					ui.shotBox.Show()
+				}
 				ui.onlineValue.SetText(onlineTxt)
 				ui.serverValue.SetText(eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
 				ui.folderValue.SetText(cfg.Dir)

@@ -37,3 +37,16 @@ func Delete(uri string) error {
 func Screenshots() ([]Shot, error) {
 	return nil, errors.New("снимки экрана доступны только на Android")
 }
+
+// PhotoPermissionGranted: вне Android разрешения не нужны.
+func PhotoPermissionGranted() bool { return true }
+
+// RequestPhotoPermission доступен только на Android.
+func RequestPhotoPermission() error {
+	return errors.New("разрешения запрашиваются только на Android")
+}
+
+// OpenAppSettings доступен только на Android.
+func OpenAppSettings() error {
+	return errors.New("настройки приложения доступны только на Android")
+}

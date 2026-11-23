@@ -32,13 +32,14 @@ type androidConfig struct {
 
 // Controller links the sync engine with settings and the log.
 type Controller struct {
-	mu      sync.Mutex
-	syn     *eng.Syncer
-	cfg     androidConfig
-	running bool
-	logs    []string
-	root    string
-	shotErr string
+	mu       sync.Mutex
+	syn      *eng.Syncer
+	cfg      androidConfig
+	running  bool
+	logs     []string
+	root     string
+	shotErr  string
+	permAsks int // сколько раз просили разрешение на чтение фото
 
 	logDirty bool
 }
@@ -61,6 +62,7 @@ func NewController(root string) *Controller {
 		}
 	}
 	c.syn = eng.NewSyncer(c.cfg.Config, c.Log, func(eng.Config) { c.persist() })
+	c.permAsks = c.loadScreenshotState().PermAsks
 	c.Log("Клиент POSCloud для Android запущен; данные: " + root)
 	return c
 }
@@ -481,9 +483,11 @@ func (c *Controller) Resync() { go c.syn.Resync() }
 
 // ---------- снимки экрана ----------
 
-// screenshotsState — какие снимки экрана уже скопированы (имя -> размер).
+// screenshotsState — какие снимки экрана уже скопированы (имя -> размер)
+// и сколько раз просили разрешение на чтение фото.
 type screenshotsState struct {
-	Copied map[string]int64 `json:"copied"`
+	Copied   map[string]int64 `json:"copied"`
+	PermAsks int              `json:"perm_asks"`
 }
 
 // ScreenshotDirs — где система хранит снимки экрана.
@@ -499,6 +503,12 @@ func ScreenshotDirs() []string {
 func (c *Controller) ImportScreenshots() int {
 	cfg := c.Config()
 	if strings.TrimSpace(cfg.Dir) == "" {
+		return 0
+	}
+	// Снимки экрана принадлежит системе: без разрешения на чтение фото
+	// MediaStore их просто не показывает (и ошибки не даёт).
+	if !camera.PhotoPermissionGranted() {
+		c.setShotErr(errors.New("нет разрешения на чтение фото — нажмите «Разрешить доступ к фото» на вкладке «Статус»"))
 		return 0
 	}
 	dstDir := filepath.Join(cfg.Dir, "Снимки экрана")
@@ -552,6 +562,51 @@ func (c *Controller) setShotErr(err error) {
 	if msg != "" && msg != prev {
 		c.Log("снимки экрана: " + msg)
 	}
+}
+
+// ---------- разрешение на чтение фото ----------
+
+// PhotoPermissionGranted сообщает, может ли приложение видеть снимки экрана.
+func (c *Controller) PhotoPermissionGranted() bool { return camera.PhotoPermissionGranted() }
+
+// PhotoPermissionAsks — сколько раз уже просили разрешение. После второго
+// отказа система диалог больше не показывает.
+func (c *Controller) PhotoPermissionAsks() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.permAsks
+}
+
+// RequestPhotoAccess запрашивает разрешение на чтение фото (системный
+// диалог). Если диалог уже отклоняли дважды, открывает настройки приложения —
+// включить разрешение можно только там. Когда разрешение уже есть, сразу
+// забирает накопившиеся снимки экрана.
+func (c *Controller) RequestPhotoAccess() {
+	if c.PhotoPermissionGranted() {
+		go c.ImportScreenshots()
+		return
+	}
+	st := c.loadScreenshotState()
+	asks := c.PhotoPermissionAsks()
+	if asks >= 2 {
+		if err := camera.OpenAppSettings(); err != nil {
+			c.Log("настройки приложения не открылись: " + err.Error())
+		} else {
+			c.Log("разрешение на фото отклонено навсегда — включите «Фото и видео» в настройках приложения")
+		}
+		return
+	}
+	asks++
+	st.PermAsks = asks
+	c.saveScreenshotState(st)
+	c.mu.Lock()
+	c.permAsks = asks
+	c.mu.Unlock()
+	if err := camera.RequestPhotoPermission(); err != nil {
+		c.Log("запрос разрешения на фото не удался: " + err.Error())
+		return
+	}
+	c.Log("запрошено разрешение на чтение фото — оно нужно для переноса снимков экрана")
 }
 
 // loadScreenshotState читает список уже скопированных снимков экрана.

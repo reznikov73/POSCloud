@@ -11,6 +11,12 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 
 - **camera capture**: the “Take photo” button opens the system camera, the shot is written into
   the sync folder (through MediaStore) and decoded on the spot — the app connects by itself;
+- **screenshots**: system screenshots (Power + Volume Down) are copied every 30 seconds
+  from `Pictures/Screenshots` / `DCIM/Screenshots` (read through MediaStore) into
+  “Снимки экрана” inside the sync folder. Android shows another app's files to
+  MediaStore only with the photo permission, so the app asks for it at first
+  launch (the “Status” tab has the button when the permission is missing); after
+  the dialog is declined twice the button opens the app settings;
 - **two-way folder synchronization with the server**: polling at an interval,
   file watching (inotify works on internal storage) and a subscription to
   server changes (SSE `/events`) — just like the desktop client;
