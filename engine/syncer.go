@@ -35,6 +35,7 @@ type Status struct {
 	Count    int
 	Online   bool
 	ErrMsg   string
+	DirErr   string // папка синхронизации недоступна для записи (пусто — всё в порядке)
 }
 
 // Syncer выполняет синхронизацию папки без привязки к интерфейсу: один и тот
@@ -55,7 +56,10 @@ type Syncer struct {
 	count       int
 	online      bool
 	errMsg      string
-	authFailed  bool // токен уже отвергнут; не дублируем запись в журнал каждый цикл
+	dirErr      string            // последняя причина «в папку нельзя писать» — чтобы не спамить журнал
+	dirProbeAt  time.Time         // когда в последний раз проверяли запись в папку
+	failed      map[string]string // файл -> последняя ошибка передачи
+	authFailed  bool              // токен уже отвергнут; не дублируем запись в журнал каждый цикл
 	authRetryAt time.Time
 	authBackoff time.Duration
 
@@ -151,7 +155,7 @@ func (s *Syncer) Update(cfg Config) {
 func (s *Syncer) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Status{LastSync: s.lastSync, Count: s.count, Online: s.online, ErrMsg: s.errMsg}
+	return Status{LastSync: s.lastSync, Count: s.count, Online: s.online, ErrMsg: s.errMsg, DirErr: s.dirErr}
 }
 
 // saveNow сохраняет настройки через колбэк владельца.
@@ -380,6 +384,101 @@ func (s *Syncer) migrateRuleDefaults(st State) bool {
 	return dropped > 0 || pinned > 0
 }
 
+// probeWritable проверяет запись в папку пробным файлом.
+func probeWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".poscloud-probe-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return nil
+}
+
+// dirWritable сообщает, можно ли писать в папку синхронизации. Проверка — не
+// чаще раза в минуту, незачем дёргать диск каждые три секунды. Без записи
+// движок не сохраняет состояние и каждый цикл начинает с нуля: так было на
+// эмуляторе с Android 16, пока приложение не получило доступ к общей памяти —
+// «связь есть», а файлов нет и в журнале ни слова.
+func (s *Syncer) dirWritable(dir string) bool {
+	now := time.Now()
+	s.mu.Lock()
+	due := s.dirProbeAt.IsZero() || now.Sub(s.dirProbeAt) >= time.Minute
+	if due {
+		s.dirProbeAt = now
+	}
+	s.mu.Unlock()
+	if due {
+		if err := probeWritable(dir); err != nil {
+			s.noteDirErr(err.Error())
+		} else {
+			s.mu.Lock()
+			s.dirErr = ""
+			s.mu.Unlock()
+		}
+	}
+	s.mu.Lock()
+	ok := s.dirErr == ""
+	s.mu.Unlock()
+	return ok
+}
+
+// noteDirErr запоминает причину, по которой в папку нельзя писать, и пишет её в
+// журнал только когда она меняется.
+func (s *Syncer) noteDirErr(msg string) {
+	s.mu.Lock()
+	changed := s.dirErr != msg
+	s.dirErr = msg
+	s.mu.Unlock()
+	if changed {
+		s.log("папка синхронизации недоступна для записи: " + msg)
+	}
+}
+
+// download и upload — обёртки над передачей файла: неудачу видно в журнале,
+// иначе она пропадала молча (связь есть, а файлов нет — и почему, непонятно).
+func (s *Syncer) download(base, dir, name string, mtime int64, token string) error {
+	err := DownloadFile(base, dir, name, mtime, token)
+	s.noteTransfer(name, "down", err)
+	return err
+}
+
+func (s *Syncer) upload(base, dir, name, token string) (string, int64, int64, error) {
+	h, v, mt, err := UploadFile(base, dir, name, token)
+	s.noteTransfer(name, "up", err)
+	return h, v, mt, err
+}
+
+// noteTransfer пишет ошибку передачи в журнал по одному разу на файл, пока она
+// не сменится; после удачной передачи запись снимается.
+func (s *Syncer) noteTransfer(name, dir string, err error) {
+	s.mu.Lock()
+	if err == nil {
+		delete(s.failed, name)
+		s.mu.Unlock()
+		return
+	}
+	if s.failed == nil {
+		s.failed = map[string]string{}
+	}
+	msg := err.Error()
+	if s.failed[name] == msg {
+		s.mu.Unlock()
+		return
+	}
+	if len(s.failed) > 500 {
+		s.failed = map[string]string{}
+	}
+	s.failed[name] = msg
+	s.mu.Unlock()
+	action := "отправить"
+	if dir == "down" {
+		action = "получить"
+	}
+	s.log("не удалось " + action + " " + name + ": " + msg)
+}
+
 // SyncOnce — один цикл двусторонней синхронизации (хэши/версии, удаления, конфликты).
 func (s *Syncer) SyncOnce(verbose bool) {
 	s.syncMu.Lock()
@@ -400,7 +499,13 @@ func (s *Syncer) SyncOnce(verbose bool) {
 	if dir == "" {
 		return
 	}
-	_ = os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		s.noteDirErr(err.Error())
+		return
+	}
+	if !s.dirWritable(dir) {
+		return
+	}
 	base := BaseURL(host, port, secure)
 	rules := ParseRules(list)
 	rules.Free = free
@@ -547,7 +652,12 @@ func (s *Syncer) SyncOnce(verbose bool) {
 				continue
 			}
 			if hasLocal {
-				if hasState && ls.Hash == ss.Hash {
+				// Содержимое совпадает с удалённой версией — это тот же файл, который
+				// снова появился на этом устройстве (например, клиент на телефоне
+				// опять перенёс снимок экрана в папку). Удаляем без конфликтной
+				// копии: иначе файл вернулся бы на все устройства.
+				sameAsDeleted := (hasState && ls.Hash == ss.Hash) || (cs.Hash != "" && ls.Hash == cs.Hash)
+				if sameAsDeleted {
 					_ = os.Remove(LocalPath(dir, name))
 					PruneEmptyDirs(dir, LocalPath(dir, name))
 					del++
@@ -556,7 +666,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					cf := ConflictName(name)
 					_ = os.Rename(LocalPath(dir, name), LocalPath(dir, cf))
 					if mode == FolderBoth {
-						if h, v, mt, err := UploadFile(base, dir, cf, tok); err == nil {
+						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
 							up++
 						}
@@ -582,7 +692,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					skipped++
 					continue
 				}
-				if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+				if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 					next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 					down++
 					s.log("вниз: " + name)
@@ -596,7 +706,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 				switch mode {
 				case FolderUp:
 					// «только отправлять»: источник — это устройство, выгружаем локальную версию
-					if h, v, mt, err := UploadFile(base, dir, name, tok); err == nil {
+					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
 						s.log("вверх: " + name)
@@ -607,7 +717,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if data, err := os.ReadFile(LocalPath(dir, name)); err == nil {
 						_ = os.WriteFile(LocalPath(dir, cf), data, 0644)
 					}
-					if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -617,12 +727,12 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					cf := ConflictName(name)
 					if data, err := os.ReadFile(LocalPath(dir, name)); err == nil {
 						_ = os.WriteFile(LocalPath(dir, cf), data, 0644)
-						if h, v, mt, err := UploadFile(base, dir, cf, tok); err == nil {
+						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
 							up++
 						}
 					}
-					if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -631,7 +741,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 			case hasState && ls.Hash == ss.Hash:
 				// локально без изменений, сервер новее
 				if allowDown {
-					if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 						s.log("вниз: " + name)
@@ -648,7 +758,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 				switch mode {
 				case FolderUp:
 					// «только отправлять»: побеждает локальная версия
-					if h, v, mt, err := UploadFile(base, dir, name, tok); err == nil {
+					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
 						s.log("вверх (приоритет устройства): " + name)
@@ -657,7 +767,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					// «только получать»: ставим серверную версию, локальные правки сохраняем копией
 					cf := ConflictName(name)
 					_ = os.Rename(LocalPath(dir, name), LocalPath(dir, cf))
-					if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -667,12 +777,12 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					cf := ConflictName(name)
 					if data, err := os.ReadFile(LocalPath(dir, name)); err == nil {
 						_ = os.WriteFile(LocalPath(dir, cf), data, 0644)
-						if h, v, mt, err := UploadFile(base, dir, cf, tok); err == nil {
+						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
 							up++
 						}
 					}
-					if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -681,7 +791,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 			default:
 				// локально изменено, сервер не менял -> выгружаем
 				if allowUp {
-					if h, v, mt, err := UploadFile(base, dir, name, tok); err == nil {
+					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
 						s.log("вверх: " + name)
@@ -690,7 +800,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					}
 				} else {
 					// «только получать»: локальные правки возвращаем к серверной версии
-					if err := DownloadFile(base, dir, name, cs.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 						s.log("вниз (восстановление): " + name)
@@ -706,7 +816,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 				if hasState && ls.Hash == ss.Hash {
 					next.Files[name] = StateFile{Hash: ls.Hash, Size: ls.Size, MTime: ls.MTime, Version: ss.Version}
 				} else if allowUp {
-					if h, v, mt, err := UploadFile(base, dir, name, tok); err == nil {
+					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
 						s.log("вверх: " + name)
@@ -715,7 +825,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					}
 				} else if hasState {
 					// «только получать»: изменённый файл возвращаем к серверной версии
-					if err := DownloadFile(base, dir, name, ss.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, ss.MTime, tok); err == nil {
 						next.Files[name] = ss
 						down++
 						s.log("вниз (восстановление): " + name)
@@ -739,7 +849,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					}
 				} else {
 					// «только получать»: локальное удаление не уходит на сервер — файл возвращается
-					if err := DownloadFile(base, dir, name, ss.MTime, tok); err == nil {
+					if err := s.download(base, dir, name, ss.MTime, tok); err == nil {
 						next.Files[name] = ss
 						down++
 						s.log("вниз (восстановление): " + name)
