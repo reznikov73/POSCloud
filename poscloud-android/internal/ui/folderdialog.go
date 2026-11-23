@@ -63,18 +63,27 @@ func (b *folderBrowser) current() string { return b.cur }
 
 // object собирает браузер: путь сверху, быстрые переходы, список каталогов.
 func (b *folderBrowser) object() fyne.CanvasObject {
-	quick := container.NewHBox(
-		dialogRow("Приложение", theme.HomeIcon(), func() { b.load(b.ctrl.DefaultSyncDir()) }),
-		dialogRow("На карте", theme.StorageIcon(), func() {
-			dir := b.ctrl.ExternalSyncDir()
-			if dir == "" {
-				dialog.ShowInformation("Папка на карте",
-					"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
-				return
-			}
-			b.load(dir)
-		}),
-		dialogRow("Память", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
+	// Быстрые переходы: приватная папка, папка на карте, корень памяти и
+	// типовые фото-папки телефона (галерея и снимки экрана).
+	quick := container.NewVBox(
+		container.NewHBox(
+			dialogRow("Приложение", theme.HomeIcon(), func() { b.load(b.ctrl.DefaultSyncDir()) }),
+			dialogRow("На карте", theme.StorageIcon(), func() {
+				dir := b.ctrl.ExternalSyncDir()
+				if dir == "" {
+					dialog.ShowInformation("Папка на карте",
+						"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
+					return
+				}
+				b.load(dir)
+			}),
+			dialogRow("Память", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
+		),
+		container.NewHBox(
+			dialogRow("Фото", theme.MediaPhotoIcon(), func() { b.load("/storage/emulated/0/DCIM/Camera") }),
+			dialogRow("Снимки", theme.MediaPhotoIcon(), func() { b.load("/storage/emulated/0/Pictures/Screenshots") }),
+			dialogRow("POSCloud", theme.FolderIcon(), func() { b.load("/storage/emulated/0/DCIM/POScloud") }),
+		),
 	)
 	return container.NewBorder(
 		container.NewVBox(b.path, quick, widget.NewSeparator()),

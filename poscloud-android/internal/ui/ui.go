@@ -309,7 +309,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	quickCard := widget.NewCard("Быстрое подключение", "", container.NewVBox(
 		shootBtn,
 		container.NewGridWithColumns(2, qrBtn, pasteBtn),
-		caption("Сфотографируйте QR камерой — снимок попадёт в папку синхронизации и подключится сам."),
+		caption("Сфотографируйте QR камерой: снимок сохранится в «Фото смартфона» внутри папки синхронизации, приложение подключится само."),
 		ui.pairEntry,
 		pairBtn,
 	))
@@ -489,11 +489,15 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 	if dir == "" {
 		dir = ctrl.DefaultSyncDir()
 	}
-	// MediaStore разрешает фото только в DCIM/Pictures — снимаем в
-	// Pictures/POScloud, затем переносим файл в папку синхронизации.
-	const captureRel = "Pictures/POScloud"
-	captureDir := filepath.Join("/storage/emulated/0", captureRel)
-	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+	// Снимок всегда кладём в подпапку «Фото смартфона» внутри папки
+	// синхронизации: она уезжает на сервер вместе с остальными файлами.
+	captureRel := "DCIM/POScloud"
+	photoDir := filepath.Join(dir, "Фото смартфона")
+	if err := os.MkdirAll(photoDir, 0o755); err != nil {
+		dialog.ShowError(err, ui.win)
+		return
+	}
+	if err := os.MkdirAll(filepath.Join("/storage/emulated/0", captureRel), 0o755); err != nil {
 		dialog.ShowError(err, ui.win)
 		return
 	}
@@ -516,12 +520,19 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 		}
 		deadline := time.Now().Add(3 * time.Minute)
 		var size int64
+		stable := 0
 		for time.Now().Before(deadline) {
-			if s := camera.Size(uri); s > 0 {
-				size = s
-				break
+			s := camera.Size(uri)
+			if s > 0 && s == size {
+				stable++
+				if stable >= 2 {
+					break
+				}
+			} else {
+				stable = 0
 			}
-			time.Sleep(300 * time.Millisecond)
+			size = s
+			time.Sleep(400 * time.Millisecond)
 		}
 		fyne.Do(func() { wait.Hide() })
 		if size <= 0 {
@@ -532,15 +543,15 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 			return
 		}
 
-		// Файл создаёт приложение камеры, поэтому читаем его через свою запись
-		// MediaStore, а не по пути, и сохраняем копию в папку синхронизации.
+		// Файл создаёт приложение камеры: читаем его через свою запись MediaStore.
 		src, openErr := camera.Open(uri)
 		if openErr != nil {
 			fyne.Do(func() { dialog.ShowError(openErr, ui.win) })
 			return
 		}
-		_ = os.MkdirAll(dir, 0o755)
-		target := filepath.Join(dir, name)
+
+		target := filepath.Join(photoDir, name)
+		_ = os.MkdirAll(photoDir, 0o755)
 		out, createErr := os.Create(target)
 		copyErr := createErr
 		if copyErr == nil {
@@ -550,12 +561,13 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 			}
 		}
 		_ = src.Close()
+		// Оригинал в DCIM/POScloud больше не нужен: снимок живёт в папке
+		// синхронизации, дубликат в галерее только путает.
 		_ = camera.Delete(uri)
 		if copyErr != nil {
 			fyne.Do(func() { dialog.ShowError(copyErr, ui.win) })
 			return
 		}
-
 		f, err := os.Open(target)
 		if err != nil {
 			fyne.Do(func() { dialog.ShowError(err, ui.win) })
@@ -637,11 +649,17 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	var lastLog string
+	ticks := 0
 	for {
 		select {
 		case <-stop:
 			return
 		case <-t.C:
+			ticks++
+			// Раз в 30 секунд забираем новые снимки экрана в папку синхронизации.
+			if ticks%30 == 0 {
+				go ctrl.ImportScreenshots()
+			}
 			st := ctrl.Status()
 			cfg := ctrl.Config()
 			running := ctrl.Running()

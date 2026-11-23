@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -474,6 +475,117 @@ func (c *Controller) RulesFreeEnabled() bool { return c.syn.RulesFreeEnabled() }
 
 // Resync re-reads the full list of server files and synchronizes.
 func (c *Controller) Resync() { go c.syn.Resync() }
+
+// ---------- снимки экрана ----------
+
+// screenshotsState — какие снимки экрана уже скопированы (имя -> размер).
+type screenshotsState struct {
+	Copied map[string]int64 `json:"copied"`
+}
+
+// ScreenshotDirs — где система хранит снимки экрана.
+func ScreenshotDirs() []string {
+	return []string{
+		"/storage/emulated/0/Pictures/Screenshots",
+		"/storage/emulated/0/DCIM/Screenshots",
+	}
+}
+
+// ImportScreenshots копирует новые снимки экрана в подпапку «Снимки экрана»
+// папки синхронизации и возвращает число скопированных файлов.
+func (c *Controller) ImportScreenshots() int {
+	cfg := c.Config()
+	if strings.TrimSpace(cfg.Dir) == "" {
+		return 0
+	}
+	dstDir := filepath.Join(cfg.Dir, "Снимки экрана")
+	st := c.loadScreenshotState()
+	changed, copied := false, 0
+	for _, srcDir := range ScreenshotDirs() {
+		entries, err := os.ReadDir(srcDir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			name := e.Name()
+			if st.Copied[name] == info.Size() {
+				continue
+			}
+			if err := copyFile(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
+				c.Log("снимок экрана не прочитан: " + name + ": " + err.Error())
+				continue
+			}
+			st.Copied[name] = info.Size()
+			changed = true
+			copied++
+			c.Log("снимок экрана добавлен: " + name)
+		}
+	}
+	if changed {
+		c.saveScreenshotState(st)
+	}
+	return copied
+}
+
+// loadScreenshotState читает список уже скопированных снимков экрана.
+func (c *Controller) loadScreenshotState() screenshotsState {
+	st := screenshotsState{}
+	data, err := os.ReadFile(filepath.Join(c.root, "screenshots.json"))
+	if err == nil {
+		_ = json.Unmarshal(data, &st)
+	}
+	if st.Copied == nil {
+		st.Copied = map[string]int64{}
+	}
+	return st
+}
+
+// saveScreenshotState сохраняет список; старые записи отбрасываются.
+func (c *Controller) saveScreenshotState(st screenshotsState) {
+	if len(st.Copied) > 1000 {
+		n := 0
+		for name := range st.Copied {
+			delete(st.Copied, name)
+			n++
+			if n >= 200 {
+				break
+			}
+		}
+	}
+	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(c.root, "screenshots.json"), b, 0644)
+}
+
+// copyFile копирует файл, создавая каталог назначения.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
 
 // ---------- log ----------
 
