@@ -92,6 +92,44 @@ func pngEncode(img image.Image, buf *bytes.Buffer) error {
 	return png.Encode(buf, img)
 }
 
+// blurBox усредняет пиксели в окне radius — имитация смазанного снимка.
+func blurBox(src image.Image, radius int) image.Image {
+	b := src.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	for y := 0; y < b.Dy(); y++ {
+		for x := 0; x < b.Dx(); x++ {
+			var r, g, bl, n int
+			for dy := -radius; dy <= radius; dy++ {
+				for dx := -radius; dx <= radius; dx++ {
+					xx, yy := x+dx, y+dy
+					if xx < 0 || yy < 0 || xx >= b.Dx() || yy >= b.Dy() {
+						continue
+					}
+					cr, cg, cb, _ := src.At(b.Min.X+xx, b.Min.Y+yy).RGBA()
+					r += int(cr >> 8)
+					g += int(cg >> 8)
+					bl += int(cb >> 8)
+					n++
+				}
+			}
+			dst.Set(x, y, color.RGBA{uint8(r / n), uint8(g / n), uint8(bl / n), 255})
+		}
+	}
+	return dst
+}
+
+// TestDecodeQRImageBlurred — смазанный снимок: помогает усиление резкости.
+func TestDecodeQRImageBlurred(t *testing.T) {
+	code := "poscloud://connect?v=1&host=192.168.1.9&port=8090&tls=0&code=pcp_blur"
+	got, err := DecodeQRImage(blurBox(renderQR(t, code), 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != code {
+		t.Fatalf("неверный текст: %q", got)
+	}
+}
+
 // TestDecodeQRImageRotated — снимок с камеры часто приходит повёрнутым:
 // EXIF-ориентацию image.Decode не применяет, декодер обязан перебрать повороты.
 func TestDecodeQRImageRotated(t *testing.T) {

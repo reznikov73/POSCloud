@@ -18,6 +18,7 @@ import (
 // ловит паники в построении вкладок и заполнении полей из настроек.
 func TestBuildUISmoke(t *testing.T) {
 	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
 	w := testApp.NewWindow("POSCloud Client")
 	ctrl := client.NewController(t.TempDir())
 	st := Build(ctrl, w)
@@ -28,8 +29,8 @@ func TestBuildUISmoke(t *testing.T) {
 	st.loadFromConfig(ctrl)
 
 	// поля заполняются из настроек по умолчанию
-	if st.hostEntry.Text == "" || st.portEntry.Text == "" || st.dirEntry.Text == "" {
-		t.Fatalf("поля подключения не заполнены: host=%q port=%q dir=%q", st.hostEntry.Text, st.portEntry.Text, st.dirEntry.Text)
+	if st.hostEntry.Text == "" || st.portEntry.Text == "" || st.dirValue == "" {
+		t.Fatalf("поля подключения не заполнены: host=%q port=%q dir=%q", st.hostEntry.Text, st.portEntry.Text, st.dirValue)
 	}
 	if st.intervalEntry.Text == "" {
 		t.Fatal("интервал не заполнен")
@@ -40,6 +41,45 @@ func TestBuildUISmoke(t *testing.T) {
 	w.Close()
 }
 
+// TestFolderPickerOpens — диалог выбора папки строится без паники:
+// системный SAF-диалог на Android ронял приложение, теперь свой браузер.
+func TestFolderPickerOpens(t *testing.T) {
+	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
+	w := testApp.NewWindow("POSCloud Client")
+	ctrl := client.NewController(t.TempDir())
+	st := Build(ctrl, w)
+	st.pickFolder(ctrl)
+	time.Sleep(100 * time.Millisecond)
+	w.Close()
+}
+
+// TestSubdirs — список каталогов: только папки, без скрытых, по алфавиту.
+func TestSubdirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"beta", "alpha", ".hidden"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	names, err := subdirs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"alpha", "beta"}
+	if len(names) != len(want) {
+		t.Fatalf("получено %v, ожидалось %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("получено %v, ожидалось %v", names, want)
+		}
+	}
+}
+
 // TestScreenshotRender рендерит интерфейс (фирменная светлая тема)
 // в картинки — это скриншоты вкладок без запуска приложения.
 func TestScreenshotRender(t *testing.T) {
@@ -47,6 +87,7 @@ func TestScreenshotRender(t *testing.T) {
 		t.Skip("POSCLOUD_SHOTS не задан — скриншоты не нужны")
 	}
 	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
 	w := testApp.NewWindow("POSCloud Client")
 	ctrl := client.NewController(t.TempDir())
 	st := Build(ctrl, w)

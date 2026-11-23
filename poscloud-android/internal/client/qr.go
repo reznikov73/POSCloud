@@ -33,7 +33,7 @@ func DecodeQRImage(img image.Image) (string, error) {
 	small := resizeMax(img, maxDecodeSide)
 
 	// Порядок попыток — от дешёвой к дорогой.
-	stages := [][]image.Image{rotations(small), rotations(binarize(small))}
+	stages := [][]image.Image{rotations(small), rotations(binarize(small)), rotations(sharpen(small))}
 	if small.Bounds() != img.Bounds() {
 		stages = append(stages, rotations(img))
 	}
@@ -151,6 +151,40 @@ func binarize(src image.Image) image.Image {
 			v = 255
 		}
 		dst.Pix[i], dst.Pix[i+1], dst.Pix[i+2], dst.Pix[i+3] = v, v, v, 255
+	}
+	return dst
+}
+
+// sharpen повышает резкость: снимок с рук часто смазан, и границы модулей
+// QR «плывут» — после усиления контуров декодер находит код.
+func sharpen(src image.Image) image.Image {
+	s := toRGBA(src)
+	w, h := s.Rect.Dx(), s.Rect.Dy()
+	dst := image.NewRGBA(s.Rect)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			di := dst.PixOffset(x, y)
+			if x == 0 || y == 0 || x == w-1 || y == h-1 {
+				si := s.PixOffset(x, y)
+				copy(dst.Pix[di:di+4], s.Pix[si:si+4])
+				continue
+			}
+			for c := 0; c < 3; c++ {
+				v := 5*int(s.Pix[s.PixOffset(x, y)+c]) -
+					int(s.Pix[s.PixOffset(x-1, y)+c]) -
+					int(s.Pix[s.PixOffset(x+1, y)+c]) -
+					int(s.Pix[s.PixOffset(x, y-1)+c]) -
+					int(s.Pix[s.PixOffset(x, y+1)+c])
+				if v < 0 {
+					v = 0
+				}
+				if v > 255 {
+					v = 255
+				}
+				dst.Pix[di+c] = uint8(v)
+			}
+			dst.Pix[di+3] = 255
+		}
 	}
 	return dst
 }
