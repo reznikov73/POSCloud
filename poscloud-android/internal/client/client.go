@@ -17,6 +17,8 @@ import (
 	"time"
 
 	eng "poscloud-engine"
+
+	"poscloud-client-android/internal/camera"
 )
 
 // androidConfig — Android client settings: the engine part (compatible with the
@@ -36,6 +38,7 @@ type Controller struct {
 	running bool
 	logs    []string
 	root    string
+	shotErr string
 
 	logDirty bool
 }
@@ -501,37 +504,54 @@ func (c *Controller) ImportScreenshots() int {
 	dstDir := filepath.Join(cfg.Dir, "Снимки экрана")
 	st := c.loadScreenshotState()
 	changed, copied := false, 0
-	for _, srcDir := range ScreenshotDirs() {
-		entries, err := os.ReadDir(srcDir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() {
+
+	// Основной путь — MediaStore: только он даёт доступ к чужим файлам
+	// (скриншот принадлежит системному приложению).
+	shots, listErr := camera.Screenshots()
+	c.setShotErr(listErr)
+	if listErr == nil {
+		for _, sh := range shots {
+			if st.Copied[sh.Name] == sh.Size {
 				continue
 			}
-			info, err := e.Info()
+			src, err := camera.Open(sh.URI)
 			if err != nil {
+				c.Log("снимок экрана не прочитан: " + sh.Name + ": " + err.Error())
 				continue
 			}
-			name := e.Name()
-			if st.Copied[name] == info.Size() {
+			err = saveReader(src, filepath.Join(dstDir, sh.Name))
+			_ = src.Close()
+			if err != nil {
+				c.Log("снимок экрана не сохранён: " + sh.Name + ": " + err.Error())
 				continue
 			}
-			if err := copyFile(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
-				c.Log("снимок экрана не прочитан: " + name + ": " + err.Error())
-				continue
-			}
-			st.Copied[name] = info.Size()
+			st.Copied[sh.Name] = sh.Size
 			changed = true
 			copied++
-			c.Log("снимок экрана добавлен: " + name)
+			c.Log("снимок экрана добавлен: " + sh.Name)
 		}
 	}
+
 	if changed {
 		c.saveScreenshotState(st)
 	}
 	return copied
+}
+
+// setShotErr запоминает текущую ошибку списка снимков и пишет её в журнал
+// только при изменении, чтобы не засорять его каждые 30 секунд.
+func (c *Controller) setShotErr(err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	c.mu.Lock()
+	prev := c.shotErr
+	c.shotErr = msg
+	c.mu.Unlock()
+	if msg != "" && msg != prev {
+		c.Log("снимки экрана: " + msg)
+	}
 }
 
 // loadScreenshotState читает список уже скопированных снимков экрана.
@@ -581,6 +601,22 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// saveReader записывает поток в файл, создавая каталог назначения.
+func saveReader(r io.Reader, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, r); err != nil {
 		_ = out.Close()
 		return err
 	}

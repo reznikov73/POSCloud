@@ -134,6 +134,128 @@ static jobject parse_uri(JNIEnv* env, const char* s, char* err, int len) {
 	return uri;
 }
 
+// list_screenshots перечисляет снимки экрана из MediaStore:
+// строки «id\tимя\tразмер\n» (не больше 200 штук).
+static int list_screenshots(char* out, int out_len, char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return 1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return 2;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	if (out && out_len > 0) {
+		out[0] = 0;
+	}
+	jobject app = NULL, resolver = NULL, cursor = NULL;
+	jobjectArray proj = NULL, args = NULL;
+	jclass cRes = NULL, cCursor = NULL, cStr = NULL, cMS = NULL;
+	jstring sel = NULL;
+
+	app = app_context(env, err, errlen);
+	if (!app) {
+		rc = 3;
+		goto done;
+	}
+	resolver = resolver_of(env, app, err, errlen);
+	if (!resolver) {
+		rc = 4;
+		goto done;
+	}
+	cMS = (*env)->FindClass(env, "android/provider/MediaStore$Images$Media");
+	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
+	cCursor = (*env)->FindClass(env, "android/database/Cursor");
+	cStr = (*env)->FindClass(env, "java/lang/String");
+	{
+		jfieldID fUri = (*env)->GetStaticFieldID(env, cMS, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;");
+		jobject collection = (*env)->GetStaticObjectField(env, cMS, fUri);
+
+		proj = (*env)->NewObjectArray(env, 4, cStr, NULL);
+		(*env)->SetObjectArrayElement(env, proj, 0, (*env)->NewStringUTF(env, "_id"));
+		(*env)->SetObjectArrayElement(env, proj, 1, (*env)->NewStringUTF(env, "_display_name"));
+		(*env)->SetObjectArrayElement(env, proj, 2, (*env)->NewStringUTF(env, "_size"));
+		(*env)->SetObjectArrayElement(env, proj, 3, (*env)->NewStringUTF(env, "relative_path"));
+
+		args = (*env)->NewObjectArray(env, 2, cStr, NULL);
+		(*env)->SetObjectArrayElement(env, args, 0, (*env)->NewStringUTF(env, "Pictures/Screenshots%"));
+		(*env)->SetObjectArrayElement(env, args, 1, (*env)->NewStringUTF(env, "DCIM/Screenshots%"));
+		sel = (*env)->NewStringUTF(env, "relative_path LIKE ? OR relative_path LIKE ?");
+
+		jmethodID query = (*env)->GetMethodID(env, cRes, "query",
+			"(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;");
+		cursor = (*env)->CallObjectMethod(env, resolver, query, collection, proj, sel, args, NULL);
+		if (take_exception(env, err, errlen, "MediaStore.query")) {
+			rc = 5;
+			goto done;
+		}
+		if (!cursor) {
+			rc = 0;
+			goto done;
+		}
+	}
+
+	{
+		jmethodID move = (*env)->GetMethodID(env, cCursor, "moveToNext", "()Z");
+		jmethodID getLong = (*env)->GetMethodID(env, cCursor, "getLong", "(I)J");
+		jmethodID getString = (*env)->GetMethodID(env, cCursor, "getString", "(I)Ljava/lang/String;");
+		int off = 0, rows = 0;
+		while (rows < 200) {
+			if (!(*env)->CallBooleanMethod(env, cursor, move)) {
+				break;
+			}
+			if (take_exception(env, err, errlen, "Cursor.moveToNext")) {
+				rc = 6;
+				break;
+			}
+			jlong id = (*env)->CallLongMethod(env, cursor, getLong, 0);
+			jstring name = (jstring)(*env)->CallObjectMethod(env, cursor, getString, 1);
+			jlong size = (*env)->CallLongMethod(env, cursor, getLong, 2);
+			const char* nm = name ? (*env)->GetStringUTFChars(env, name, NULL) : NULL;
+			if (nm) {
+				int room = out_len - off - 1;
+				if (room < 64) {
+					(*env)->ReleaseStringUTFChars(env, name, nm);
+					break;
+				}
+				int w = snprintf(out + off, room, "%lld\t%s\t%lld\n", (long long)id, nm, (long long)size);
+				if (w > 0) {
+					off += w;
+				}
+				(*env)->ReleaseStringUTFChars(env, name, nm);
+			}
+			if (name) {
+				(*env)->DeleteLocalRef(env, name);
+			}
+			rows++;
+		}
+		if (out && out_len > off) {
+			out[off] = 0;
+		}
+	}
+
+	done:
+	if (cursor) (*env)->DeleteLocalRef(env, cursor);
+	if (proj) (*env)->DeleteLocalRef(env, proj);
+	if (args) (*env)->DeleteLocalRef(env, args);
+	if (sel) (*env)->DeleteLocalRef(env, sel);
+	if (cCursor) (*env)->DeleteLocalRef(env, cCursor);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
+	if (cStr) (*env)->DeleteLocalRef(env, cStr);
+	if (cMS) (*env)->DeleteLocalRef(env, cMS);
+	if (resolver) (*env)->DeleteLocalRef(env, resolver);
+	if (app) (*env)->DeleteLocalRef(env, app);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
+
 // start_capture создаёт запись в MediaStore и запускает камеру.
 static int start_capture(const char* display_name, const char* relative_path, char* out_uri, int out_uri_len, char* err, int errlen) {
 	JavaVM* vm = get_vm(err, errlen);
@@ -447,9 +569,61 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"unsafe"
 )
+
+// Shot — снимок экрана из MediaStore.
+type Shot struct {
+	ID   int64
+	Name string
+	Size int64
+	URI  string
+}
+
+// Screenshots перечисляет снимки экрана из MediaStore: только так можно
+// получить чужие файлы (системный скриншот принадлежит SystemUI, и чтение
+// по обычному пути даёт permission denied).
+func Screenshots() ([]Shot, error) {
+	buf := make([]byte, 64<<10)
+	errBuf := make([]byte, 256)
+	code := C.list_screenshots(
+		(*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)),
+		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	if code != 0 {
+		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
+		if msg == "" {
+			msg = "не удалось получить список снимков экрана"
+		}
+		return nil, errors.New(msg)
+	}
+	text := C.GoString((*C.char)(unsafe.Pointer(&buf[0])))
+	var out []Shot
+	for _, line := range strings.Split(text, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			continue
+		}
+		id, errID := strconv.ParseInt(parts[0], 10, 64)
+		size, errSize := strconv.ParseInt(parts[2], 10, 64)
+		if errID != nil || errSize != nil {
+			continue
+		}
+		out = append(out, Shot{
+			ID:   id,
+			Name: parts[1],
+			Size: size,
+			URI:  fmt.Sprintf("content://media/external/images/media/%d", id),
+		})
+	}
+	return out, nil
+}
 
 // Capture запускает системную камеру. Снимок создаётся в общей памяти
 // (relativePath — папка относительно /storage/emulated/0, например Pictures/POScloud),
