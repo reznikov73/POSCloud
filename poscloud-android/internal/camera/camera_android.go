@@ -57,8 +57,68 @@ static int take_exception(JNIEnv* env, char* err, int len, const char* where) {
 	return 1;
 }
 
+// delete_uri удаляет запись MediaStore (после переноса файла в папку синхронизации).
+static int delete_uri(const char* uri_str, char* err, int errlen) {
+	void* lib = dlopen("libnativehelper.so", RTLD_NOW);
+	if (!lib) {
+		lib = dlopen("libart.so", RTLD_NOW);
+	}
+	if (!lib) {
+		return 1;
+	}
+	jni_get_vms_fn get_vms = (jni_get_vms_fn)dlsym(lib, "JNI_GetCreatedJavaVMs");
+	if (!get_vms) {
+		return 2;
+	}
+	JavaVM* vm = NULL;
+	jsize count = 0;
+	if (get_vms(&vm, 1, &count) != JNI_OK || count < 1 || vm == NULL) {
+		return 3;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	jint res = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+	if (res == JNI_EDETACHED) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return 4;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	jobject app = NULL, resolver = NULL, uri = NULL;
+	jstring jUri = NULL;
+	jclass cAT = (*env)->FindClass(env, "android/app/ActivityThread");
+	jmethodID current = (*env)->GetStaticMethodID(env, cAT, "currentApplication", "()Landroid/app/Application;");
+	app = (*env)->CallStaticObjectMethod(env, cAT, current);
+	jclass cCtx = (*env)->FindClass(env, "android/content/Context");
+	jmethodID getResolver = (*env)->GetMethodID(env, cCtx, "getContentResolver", "()Landroid/content/ContentResolver;");
+	resolver = (*env)->CallObjectMethod(env, app, getResolver);
+	jclass cUriCls = (*env)->FindClass(env, "android/net/Uri");
+	jmethodID parse = (*env)->GetStaticMethodID(env, cUriCls, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+	jUri = (*env)->NewStringUTF(env, uri_str);
+	uri = (*env)->CallStaticObjectMethod(env, cUriCls, parse, jUri);
+	jclass cRes = (*env)->FindClass(env, "android/content/ContentResolver");
+	jmethodID del = (*env)->GetMethodID(env, cRes, "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I");
+	(*env)->CallIntMethod(env, resolver, del, uri, NULL, NULL);
+	if (take_exception(env, err, errlen, "MediaStore.delete")) {
+		rc = 5;
+	}
+	if (jUri) (*env)->DeleteLocalRef(env, jUri);
+	if (uri) (*env)->DeleteLocalRef(env, uri);
+	if (resolver) (*env)->DeleteLocalRef(env, resolver);
+	if (app) (*env)->DeleteLocalRef(env, app);
+	if (cUriCls) (*env)->DeleteLocalRef(env, cUriCls);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
+	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
+	if (cAT) (*env)->DeleteLocalRef(env, cAT);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
+
 // start_capture создаёт запись в MediaStore и запускает камеру.
-static int start_capture(const char* display_name, const char* relative_path, char* err, int errlen) {
+static int start_capture(const char* display_name, const char* relative_path, char* out_uri, int out_uri_len, char* err, int errlen) {
 	void* lib = dlopen("libnativehelper.so", RTLD_NOW);
 	if (!lib) {
 		lib = dlopen("libart.so", RTLD_NOW);
@@ -147,6 +207,20 @@ static int start_capture(const char* display_name, const char* relative_path, ch
 		insertUri = (*env)->CallObjectMethod(env, resolver, insert, collection, values);
 		if (take_exception(env, err, errlen, "MediaStore.insert")) { rc = 14; goto done; }
 		if (!insertUri) { set_err(err, errlen, "камера недоступна: не удалось создать файл в MediaStore"); rc = 14; goto done; }
+		if (out_uri && out_uri_len > 0) {
+			jclass cUri = (*env)->FindClass(env, "android/net/Uri");
+			jmethodID toString = (*env)->GetMethodID(env, cUri, "toString", "()Ljava/lang/String;");
+			jstring s = (jstring)(*env)->CallObjectMethod(env, insertUri, toString);
+			if (s) {
+				const char* utf = (*env)->GetStringUTFChars(env, s, NULL);
+				if (utf) {
+					snprintf(out_uri, out_uri_len, "%s", utf);
+					(*env)->ReleaseStringUTFChars(env, s, utf);
+				}
+				(*env)->DeleteLocalRef(env, s);
+			}
+			if (cUri) (*env)->DeleteLocalRef(env, cUri);
+		}
 	}
 
 	cIntent = (*env)->FindClass(env, "android/content/Intent");
@@ -201,20 +275,43 @@ import (
 	"unsafe"
 )
 
-// Capture запускает системную камеру. Снимок сохраняется в общую память по пути
-// Относительно /storage/emulated/0: relativePath — папка, displayName — имя файла.
-func Capture(displayName, relativePath string) error {
+// Capture запускает системную камеру. Снимок создаётся в общей памяти
+// (relativePath — папка относительно /storage/emulated/0, например Pictures/POScloud),
+// displayName — имя файла. Возвращает content://-URI созданной записи.
+func Capture(displayName, relativePath string) (string, error) {
 	cName := C.CString(displayName)
 	defer C.free(unsafe.Pointer(cName))
 	cRel := C.CString(relativePath)
 	defer C.free(unsafe.Pointer(cRel))
 
-	buf := make([]byte, 512)
-	code := C.start_capture(cName, cRel, (*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)))
+	errBuf := make([]byte, 512)
+	uriBuf := make([]byte, 512)
+	code := C.start_capture(cName, cRel,
+		(*C.char)(unsafe.Pointer(&uriBuf[0])), C.int(len(uriBuf)),
+		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if code != 0 {
-		msg := C.GoString((*C.char)(unsafe.Pointer(&buf[0])))
+		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
 		if msg == "" {
 			msg = "не удалось открыть камеру"
+		}
+		return "", errors.New(msg)
+	}
+	return C.GoString((*C.char)(unsafe.Pointer(&uriBuf[0]))), nil
+}
+
+// Delete убирает запись MediaStore после переноса снимка в папку синхронизации,
+// чтобы в галерее не оставался битый миниатюр.
+func Delete(uri string) error {
+	if uri == "" {
+		return nil
+	}
+	cURI := C.CString(uri)
+	defer C.free(unsafe.Pointer(cURI))
+	errBuf := make([]byte, 256)
+	if code := C.delete_uri(cURI, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))); code != 0 {
+		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
+		if msg == "" {
+			msg = "не удалось удалить запись MediaStore"
 		}
 		return errors.New(msg)
 	}

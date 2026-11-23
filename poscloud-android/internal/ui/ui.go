@@ -489,16 +489,10 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 	if dir == "" {
 		dir = ctrl.DefaultSyncDir()
 	}
-	// MediaStore умеет писать только в известные коллекции общей памяти,
-	// поэтому путь для камеры задаётся относительно /storage/emulated/0.
-	// Если папка синхронизации приватная — снимаем в Download/POScloud
-	// и потом переносим файл в папку.
-	captureDir := dir
-	rel, ok := sharedRelative(dir)
-	if !ok {
-		rel = "Download/POScloud"
-		captureDir = filepath.Join("/storage/emulated/0", rel)
-	}
+	// MediaStore разрешает фото только в DCIM/Pictures — снимаем в
+	// Pictures/POScloud, затем переносим файл в папку синхронизации.
+	const captureRel = "Pictures/POScloud"
+	captureDir := filepath.Join("/storage/emulated/0", captureRel)
 	if err := os.MkdirAll(captureDir, 0o755); err != nil {
 		dialog.ShowError(err, ui.win)
 		return
@@ -513,7 +507,8 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 	wait.Show()
 
 	go func() {
-		if err := camera.Capture(name, rel); err != nil {
+		uri, err := camera.Capture(name, captureRel)
+		if err != nil {
 			fyne.Do(func() {
 				wait.Hide()
 				dialog.ShowError(err, ui.win)
@@ -537,14 +532,21 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 			return
 		}
 
-		// Снимок всегда должен оказаться в папке синхронизации.
+		// Снимок должен оказаться в папке синхронизации.
 		target := capturePath
+		moved := false
 		if captureDir != dir {
 			_ = os.MkdirAll(dir, 0o755)
 			dst := filepath.Join(dir, name)
 			if err := moveFile(capturePath, dst); err == nil {
 				target = dst
+				moved = true
 			}
+		}
+		// Если файл ушёл из Pictures, убираем запись MediaStore, чтобы в галерее
+		// не оставался битый миниатюр.
+		if moved {
+			_ = camera.Delete(uri)
 		}
 		f, err := os.Open(target)
 		if err != nil {
@@ -563,19 +565,6 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 			ui.pairConnect(ctrl, code)
 		})
 	}()
-}
-
-// sharedRelative переводит путь в общей памяти в relative_path для MediaStore.
-func sharedRelative(dir string) (string, bool) {
-	const root = "/storage/emulated/0/"
-	if !strings.HasPrefix(dir, root) {
-		return "", false
-	}
-	rel := strings.Trim(strings.TrimPrefix(dir, root), "/")
-	if rel == "" {
-		return "", false
-	}
-	return rel, true
 }
 
 // pairConnect обменивает код подключения на токен и сообщает результат.

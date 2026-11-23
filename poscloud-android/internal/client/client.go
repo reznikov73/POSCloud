@@ -49,6 +49,13 @@ func NewController(root string) *Controller {
 	c.cfg.Interval = 3
 	c.cfg.Dir = c.DefaultSyncDir()
 	c.loadConfig()
+	// TLS настраиваем сразу: вкладка «Папки» ходит на сервер ещё до
+	// запуска синхронизации и иначе падает на самоподписанном сертификате.
+	if c.cfg.TLS {
+		if err := eng.ConfigureTLS(c.cfg.TLSFingerprint); err != nil {
+			c.Log("TLS: " + err.Error())
+		}
+	}
 	c.syn = eng.NewSyncer(c.cfg.Config, c.Log, func(eng.Config) { c.persist() })
 	c.Log("Клиент POSCloud для Android запущен; данные: " + root)
 	return c
@@ -240,6 +247,11 @@ func (c *Controller) SaveSettings(host string, port int, dir string, interval in
 	}
 	c.cfg.AutoRun = &autoRun
 	c.mu.Unlock()
+	if tls {
+		_ = eng.ConfigureTLS(strings.TrimSpace(fingerprint))
+	} else {
+		_ = eng.ConfigureTLS("")
+	}
 	c.syn.ResetAuthBackoff()
 	c.syn.Update(c.engineConfig())
 	c.persist()
