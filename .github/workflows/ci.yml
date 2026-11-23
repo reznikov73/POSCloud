@@ -88,6 +88,27 @@ jobs:
           path: ${{ runner.temp }}/poscloud-server-linux-amd64
           if-no-files-found: error
 
+  android-unit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            poscloud-android/go.sum
+
+      - name: Test Android controller
+        working-directory: poscloud-android
+        run: go test ./internal/...
+
+      - name: Vet Android controller
+        working-directory: poscloud-android
+        run: go vet ./internal/...
+
   build:
     runs-on: windows-latest
     steps:
