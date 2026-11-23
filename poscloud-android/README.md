@@ -9,6 +9,8 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 
 ## Features
 
+- **camera capture**: the “Take photo” button opens the system camera, the shot is written into
+  the sync folder (through MediaStore) and decoded on the spot — the app connects by itself;
 - **two-way folder synchronization with the server**: polling at an interval,
   file watching (inotify works on internal storage) and a subscription to
   server changes (SSE `/events`) — just like the desktop client;

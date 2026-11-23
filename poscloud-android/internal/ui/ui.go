@@ -6,6 +6,9 @@ package ui
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +24,7 @@ import (
 
 	eng "poscloud-engine"
 
+	"poscloud-client-android/internal/camera"
 	"poscloud-client-android/internal/client"
 )
 
@@ -286,6 +290,13 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	})
 	qrBtn.Importance = widget.HighImportance
 
+	// Съёмка системной камерой: снимок сразу ложится в папку синхронизации
+	// и, если на нём QR, приложение подключается само.
+	shootBtn := widget.NewButtonWithIcon("Сфотографировать", theme.MediaPhotoIcon(), func() {
+		ui.shootAndConnect(ctrl)
+	})
+	shootBtn.Importance = widget.HighImportance
+
 	// Вставить код из буфера — быстрее, чем набирать его вручную.
 	pasteBtn := widget.NewButtonWithIcon("Из буфера", theme.ContentPasteIcon(), func() {
 		if cb := w.Clipboard(); cb != nil {
@@ -296,8 +307,9 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	})
 
 	quickCard := widget.NewCard("Быстрое подключение", "", container.NewVBox(
+		shootBtn,
 		container.NewGridWithColumns(2, qrBtn, pasteBtn),
-		caption("QR на экране сервера («Код подключения») сфотографируйте и выберите снимок — или вставьте код из буфера."),
+		caption("Сфотографируйте QR камерой — снимок попадёт в папку синхронизации и подключится сам."),
 		ui.pairEntry,
 		pairBtn,
 	))
@@ -468,6 +480,102 @@ func formRow(label string, obj fyne.CanvasObject) fyne.CanvasObject {
 	l := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	l.Wrapping = fyne.TextWrapWord
 	return container.NewVBox(l, obj)
+}
+
+// shootAndConnect снимает QR системной камерой. Снимок сохраняется
+// в папку синхронизации (через MediaStore), затем декодируется.
+func (ui *State) shootAndConnect(ctrl *client.Controller) {
+	dir := cleanPath(ui.dirValue)
+	if dir == "" {
+		dir = ctrl.DefaultSyncDir()
+	}
+	// MediaStore умеет писать только в известные коллекции общей памяти,
+	// поэтому путь для камеры задаётся относительно /storage/emulated/0.
+	// Если папка синхронизации приватная — снимаем в Download/POScloud
+	// и потом переносим файл в папку.
+	captureDir := dir
+	rel, ok := sharedRelative(dir)
+	if !ok {
+		rel = "Download/POScloud"
+		captureDir = filepath.Join("/storage/emulated/0", rel)
+	}
+	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+		dialog.ShowError(err, ui.win)
+		return
+	}
+	name := "POSCloud-" + time.Now().Format("20060102-150405") + ".jpg"
+	capturePath := filepath.Join(captureDir, name)
+
+	wait := dialog.NewCustomWithoutButtons("Камера", container.NewVBox(
+		widget.NewLabel("Открываем камеру и ждём снимок…"),
+		widget.NewProgressBarInfinite(),
+	), ui.win)
+	wait.Show()
+
+	go func() {
+		if err := camera.Capture(name, rel); err != nil {
+			fyne.Do(func() {
+				wait.Hide()
+				dialog.ShowError(err, ui.win)
+			})
+			return
+		}
+		deadline := time.Now().Add(3 * time.Minute)
+		var size int64
+		for time.Now().Before(deadline) {
+			if fi, err := os.Stat(capturePath); err == nil && fi.Size() > 0 {
+				size = fi.Size()
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		fyne.Do(func() { wait.Hide() })
+		if size == 0 {
+			fyne.Do(func() {
+				dialog.ShowInformation("Камера", "Снимок не появился — съёмка отменена.", ui.win)
+			})
+			return
+		}
+
+		// Снимок всегда должен оказаться в папке синхронизации.
+		target := capturePath
+		if captureDir != dir {
+			_ = os.MkdirAll(dir, 0o755)
+			dst := filepath.Join(dir, name)
+			if err := moveFile(capturePath, dst); err == nil {
+				target = dst
+			}
+		}
+		f, err := os.Open(target)
+		if err != nil {
+			fyne.Do(func() { dialog.ShowError(err, ui.win) })
+			return
+		}
+		code, decodeErr := client.DecodeQRReader(f)
+		_ = f.Close()
+		fyne.Do(func() {
+			if decodeErr != nil {
+				dialog.ShowInformation("Фото сохранено",
+					"Снимок лежит в папке синхронизации:\n"+target+"\n\nQR-код на снимке не найден.", ui.win)
+				return
+			}
+			ui.pairEntry.SetText(code)
+			ui.pairConnect(ctrl, code)
+		})
+	}()
+}
+
+// sharedRelative переводит путь в общей памяти в relative_path для MediaStore.
+func sharedRelative(dir string) (string, bool) {
+	const root = "/storage/emulated/0/"
+	if !strings.HasPrefix(dir, root) {
+		return "", false
+	}
+	rel := strings.Trim(strings.TrimPrefix(dir, root), "/")
+	if rel == "" {
+		return "", false
+	}
+	return rel, true
 }
 
 // pairConnect обменивает код подключения на токен и сообщает результат.
@@ -700,6 +808,31 @@ func withBottomInset(obj fyne.CanvasObject) fyne.CanvasObject {
 	spacer := canvas.NewRectangle(colBg)
 	spacer.SetMinSize(fyne.NewSize(0, bottomInset))
 	return container.NewBorder(nil, spacer, nil, nil, obj)
+}
+
+// moveFile переносит файл; если переименование невозможно (разные файловые
+// системы), копирует и удаляет исходный.
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Remove(src)
 }
 
 // cleanPath убирает переводы строк, которые может добавить многострочное поле.
