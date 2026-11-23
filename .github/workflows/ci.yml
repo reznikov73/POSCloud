@@ -48,6 +48,46 @@ jobs:
           node --check poscloud-client/frontend/dist/app.js
           node --check poscloud-server/frontend/dist/app.js
 
+  linux-server:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            poscloud-server/go.sum
+
+      # Wails на Linux собирается через cgo: нужны заголовки GTK3 и WebKit2GTK 4.0.
+      # Ставим тот же набор, что описан в poscloud-server/deploy/README-linux.md.
+      - name: Install GTK and WebKit headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Test server (Linux)
+        working-directory: poscloud-server
+        run: go test ./...
+
+      - name: Vet server (Linux)
+        working-directory: poscloud-server
+        run: go vet ./...
+
+      - name: Build server (Linux, GTK3 + WebKit2GTK 4.0)
+        working-directory: poscloud-server
+        run: go build -tags "production gtk3 webkit2_40" -trimpath -o "$RUNNER_TEMP/poscloud-server-linux-amd64" .
+
+      - name: Upload Linux server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: poscloud-server-linux-amd64
+          path: ${{ runner.temp }}/poscloud-server-linux-amd64
+          if-no-files-found: error
+
   build:
     runs-on: windows-latest
     steps:
