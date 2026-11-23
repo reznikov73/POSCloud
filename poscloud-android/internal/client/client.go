@@ -34,7 +34,6 @@ type Controller struct {
 	cfg     androidConfig
 	running bool
 	logs    []string
-	logFile *os.File
 	root    string
 
 	logDirty bool
@@ -50,9 +49,8 @@ func NewController(root string) *Controller {
 	c.cfg.Interval = 3
 	c.cfg.Dir = c.DefaultSyncDir()
 	c.loadConfig()
-	c.openLogFile()
 	c.syn = eng.NewSyncer(c.cfg.Config, c.Log, func(eng.Config) { c.persist() })
-	c.Log("POSCloud client for Android initialized; data: " + root)
+	c.Log("Клиент POSCloud для Android запущен; данные: " + root)
 	return c
 }
 
@@ -205,19 +203,19 @@ func (c *Controller) SaveSettings(host string, port int, dir string, interval in
 	c.syn.ResetAuthBackoff()
 	c.syn.Update(c.engineConfig())
 	c.persist()
-	c.Log("settings saved")
+	c.Log("настройки сохранены")
 }
 
 // Start starts synchronization with the specified parameters.
 func (c *Controller) Start(host string, port int, dir string, interval int, token string, tls bool, fingerprint string) error {
 	if strings.TrimSpace(token) == "" {
-		return fmt.Errorf("no access token specified — obtain one on the server")
+		return fmt.Errorf("не указан токен доступа — получите его на сервере")
 	}
 	if strings.TrimSpace(dir) == "" {
-		return fmt.Errorf("no sync folder selected")
+		return fmt.Errorf("не выбрана папка синхронизации")
 	}
 	if port <= 0 || port > 65535 {
-		return fmt.Errorf("invalid server port")
+		return fmt.Errorf("неверный порт сервера")
 	}
 	if interval <= 0 {
 		interval = 3
@@ -228,7 +226,7 @@ func (c *Controller) Start(host string, port int, dir string, interval int, toke
 	c.mu.Lock()
 	if c.running {
 		c.mu.Unlock()
-		return fmt.Errorf("synchronization is already running")
+		return fmt.Errorf("синхронизация уже запущена")
 	}
 	c.cfg.Host, c.cfg.Port, c.cfg.Dir, c.cfg.Interval = host, port, dir, interval
 	c.cfg.Token = strings.TrimSpace(token)
@@ -251,7 +249,7 @@ func (c *Controller) Start(host string, port int, dir string, interval int, toke
 	c.syn.Update(c.engineConfig())
 	c.persist()
 	c.syn.Run()
-	c.Log("synchronization started: " + eng.BaseURL(host, port, tls) + ", folder " + dir)
+	c.Log("синхронизация запущена: " + eng.BaseURL(host, port, tls) + ", папка " + dir)
 	return nil
 }
 
@@ -267,7 +265,7 @@ func (c *Controller) Stop() {
 	c.running = false
 	c.mu.Unlock()
 	c.syn.Stop()
-	c.Log("synchronization stopped")
+	c.Log("синхронизация остановлена")
 }
 
 // Running reports whether synchronization is running.
@@ -282,7 +280,7 @@ func (c *Controller) Status() eng.Status { return c.syn.Status() }
 
 // SyncNow starts an out-of-band synchronization cycle.
 func (c *Controller) SyncNow() {
-	c.Log("manual synchronization")
+	c.Log("синхронизация вручную")
 	c.syn.ResetAuthBackoff()
 	go c.syn.SyncOnce(true)
 }
@@ -290,7 +288,7 @@ func (c *Controller) SyncNow() {
 // RecheckToken removes the pause after a 401 and immediately verifies the token.
 func (c *Controller) RecheckToken() {
 	c.syn.ResetAuthBackoff()
-	c.Log("token check")
+	c.Log("проверка токена")
 	go c.syn.SyncOnce(true)
 }
 
@@ -335,7 +333,7 @@ func (c *Controller) Pair(rawCode, deviceName string) (eng.PairResult, error) {
 	}
 	if info.TLS {
 		if err := eng.ConfigureTLS(info.Fingerprint); err != nil {
-			return eng.PairResult{}, fmt.Errorf("TLS error: %w", err)
+			return eng.PairResult{}, fmt.Errorf("ошибка TLS: %w", err)
 		}
 	} else {
 		_ = eng.ConfigureTLS("")
@@ -361,7 +359,7 @@ func (c *Controller) Pair(rawCode, deviceName string) (eng.PairResult, error) {
 	c.syn.ResetAuthBackoff()
 	c.syn.Update(c.engineConfig())
 	c.persist()
-	c.Log("connection via code: server " + eng.BaseURL(info.Host, info.Port, info.TLS) + ", user " + res.UserName + ", device " + res.DeviceName)
+	c.Log("подключение по коду: сервер " + eng.BaseURL(info.Host, info.Port, info.TLS) + ", пользователь " + res.UserName + ", устройство " + res.DeviceName)
 	return res, nil
 }
 
@@ -372,7 +370,7 @@ func (c *Controller) Pair(rawCode, deviceName string) (eng.PairResult, error) {
 func (c *Controller) applyDeviceToken(tc TokenConnection) (eng.PairResult, error) {
 	if tc.TLS {
 		if err := eng.ConfigureTLS(tc.Fingerprint); err != nil {
-			return eng.PairResult{}, fmt.Errorf("TLS error: %w", err)
+			return eng.PairResult{}, fmt.Errorf("ошибка TLS: %w", err)
 		}
 	} else {
 		_ = eng.ConfigureTLS("")
@@ -392,7 +390,7 @@ func (c *Controller) applyDeviceToken(tc TokenConnection) (eng.PairResult, error
 	c.syn.ResetAuthBackoff()
 	c.syn.Update(c.engineConfig())
 	c.persist()
-	c.Log("connection via device token: server " + eng.BaseURL(tc.Host, tc.Port, tc.TLS) + ", device " + name)
+	c.Log("подключение по токену устройства: сервер " + eng.BaseURL(tc.Host, tc.Port, tc.TLS) + ", устройство " + name)
 	return eng.PairResult{Token: tc.Token, DeviceName: name}, nil
 }
 
@@ -435,11 +433,25 @@ func (c *Controller) Log(s string) {
 	if len(c.logs) > 500 {
 		c.logs = c.logs[len(c.logs)-500:]
 	}
-	if c.logFile != nil {
-		_, _ = c.logFile.WriteString(time.Now().Format("2006-01-02 ") + line + "\n")
-	}
 	c.logDirty = true
 	c.mu.Unlock()
+	c.appendToFile(line)
+}
+
+// appendToFile дописывает строку в client.log.
+// Файл открывается на каждую запись и сразу закрывается: дескриптор не остаётся
+// открытым — это важно для Android и для тестов с временным каталогом.
+func (c *Controller) appendToFile(line string) {
+	p := filepath.Join(c.root, "client.log")
+	if fi, err := os.Stat(p); err == nil && fi.Size() > 2<<20 {
+		_ = os.Rename(p, p+".old")
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	_, _ = f.WriteString(time.Now().Format("2006-01-02 ") + line + "\n")
+	_ = f.Close()
 }
 
 // Logs returns a copy of the log.
@@ -465,20 +477,6 @@ func (c *Controller) ClearLogs() {
 	c.mu.Lock()
 	c.logs = nil
 	c.mu.Unlock()
-}
-
-// openLogFile opens client.log; an overly large log is rotated to .old.
-func (c *Controller) openLogFile() {
-	p := filepath.Join(c.root, "client.log")
-	if fi, err := os.Stat(p); err == nil && fi.Size() > 2<<20 {
-		_ = os.Rename(p, p+".old")
-	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err == nil {
-		c.mu.Lock()
-		c.logFile = f
-		c.mu.Unlock()
-	}
 }
 
 // ---------- transfer progress ----------

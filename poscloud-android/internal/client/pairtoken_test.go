@@ -18,7 +18,7 @@ func TestParseTokenConnectionOK(t *testing.T) {
 	if tc.TLS || tc.Fingerprint != "" {
 		t.Fatalf("TLS was not expected: %+v", tc)
 	}
-	if tc.DeviceName != "My phone" {
+	if tc.DeviceName != "Мой телефон" {
 		t.Fatalf("device name: %q", tc.DeviceName)
 	}
 }
@@ -73,14 +73,14 @@ func TestPairWithDeviceToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
-	if res.Token != "tok-42" || res.UserName != "" || res.DeviceName != "Tablet" {
+	if res.Token != "tok-42" || res.UserName != "" || res.DeviceName != "Планшет" {
 		t.Fatalf("result: %+v", res)
 	}
 	cfg := ctrl.Config()
 	if cfg.Host != "192.0.2.5" || cfg.Port != 9090 || cfg.Token != "tok-42" {
 		t.Fatalf("settings not applied: %+v", cfg)
 	}
-	if cfg.DeviceName != "Tablet" {
+	if cfg.DeviceName != "Планшет" {
 		t.Fatalf("device name: %q", cfg.DeviceName)
 	}
 	if !ctrl.HasCredentials() {

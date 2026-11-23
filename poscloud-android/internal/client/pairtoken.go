@@ -30,7 +30,7 @@ type TokenConnection struct {
 
 // errNoDeviceToken — the code has no token field: it is a regular code with a one-time
 // secret, parsed by engine.ParseConnectionCode.
-var errNoDeviceToken = errors.New("the code has no device token")
+var errNoDeviceToken = errors.New("в коде нет токена устройства")
 
 // ParseTokenConnection parses and validates a connection code with an existing
 // device token. The checks mirror engine.ParseConnectionCode,
@@ -38,21 +38,21 @@ var errNoDeviceToken = errors.New("the code has no device token")
 func ParseTokenConnection(raw string) (TokenConnection, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return TokenConnection{}, fmt.Errorf("empty connection code")
+		return TokenConnection{}, fmt.Errorf("пустой код подключения")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return TokenConnection{}, fmt.Errorf("failed to parse the code: %w", err)
+		return TokenConnection{}, fmt.Errorf("не удалось разобрать код: %w", err)
 	}
 	if !strings.EqualFold(u.Scheme, "poscloud") {
-		return TokenConnection{}, fmt.Errorf("invalid code scheme (expected poscloud://)")
+		return TokenConnection{}, fmt.Errorf("неверная схема кода (ожидается poscloud://)")
 	}
 	if !strings.EqualFold(u.Host, "connect") {
-		return TokenConnection{}, fmt.Errorf("invalid connection code type")
+		return TokenConnection{}, fmt.Errorf("неверный тип кода подключения")
 	}
 	q := u.Query()
 	if q.Get("v") != "1" {
-		return TokenConnection{}, fmt.Errorf("unsupported code version")
+		return TokenConnection{}, fmt.Errorf("неподдерживаемая версия кода")
 	}
 	token := strings.TrimSpace(q.Get("token"))
 	if token == "" {
@@ -60,19 +60,19 @@ func ParseTokenConnection(raw string) (TokenConnection, error) {
 	}
 	host := strings.TrimSpace(q.Get("host"))
 	if host == "" {
-		return TokenConnection{}, fmt.Errorf("the code does not specify the server address")
+		return TokenConnection{}, fmt.Errorf("в коде не указан адрес сервера")
 	}
 	if strings.ContainsAny(host, " /\\?<=") {
-		return TokenConnection{}, fmt.Errorf("invalid server address")
+		return TokenConnection{}, fmt.Errorf("недопустимый адрес сервера")
 	}
 	port, err := strconv.Atoi(strings.TrimSpace(q.Get("port")))
 	if err != nil || port < 1 || port > 65535 {
-		return TokenConnection{}, fmt.Errorf("invalid server port")
+		return TokenConnection{}, fmt.Errorf("неверный порт сервера")
 	}
 	tlsOn := q.Get("tls") == "1" || strings.EqualFold(q.Get("tls"), "true")
 	fp := strings.TrimSpace(q.Get("fp"))
 	if tlsOn && fp == "" {
-		return TokenConnection{}, fmt.Errorf("TLS requires the certificate fingerprint in the code")
+		return TokenConnection{}, fmt.Errorf("для TLS в коде нужен отпечаток сертификата")
 	}
 	deviceName := strings.TrimSpace(q.Get("name"))
 	if r := []rune(deviceName); len(r) > 80 {

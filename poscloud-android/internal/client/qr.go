@@ -17,15 +17,15 @@ import (
 // captures it with its camera, the shot is selected in the app and decoded.
 func DecodeQRImage(img image.Image) (string, error) {
 	if img == nil {
-		return "", fmt.Errorf("empty image")
+		return "", fmt.Errorf("пустое изображение")
 	}
 	bmp, err := gozxing.NewBinaryBitmapFromImage(img)
 	if err != nil {
-		return "", fmt.Errorf("failed to prepare the shot: %w", err)
+		return "", fmt.Errorf("не удалось подготовить снимок: %w", err)
 	}
 	res, err := qrcode.NewQRCodeReader().Decode(bmp, nil)
 	if err != nil {
-		return "", fmt.Errorf("QR code not found — capture the code larger and sharper")
+		return "", fmt.Errorf("QR-код не найден — снимите код крупнее и резче")
 	}
 	return res.GetText(), nil
 }
@@ -34,7 +34,7 @@ func DecodeQRImage(img image.Image) (string, error) {
 func DecodeQRBytes(data []byte) (string, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return "", fmt.Errorf("failed to read the image: %w", err)
+		return "", fmt.Errorf("не удалось прочитать изображение: %w", err)
 	}
 	return DecodeQRImage(img)
 }
@@ -43,7 +43,7 @@ func DecodeQRBytes(data []byte) (string, error) {
 func DecodeQRReader(r io.Reader) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(r, 64<<20))
 	if err != nil {
-		return "", fmt.Errorf("failed to read the file: %w", err)
+		return "", fmt.Errorf("не удалось прочитать файл: %w", err)
 	}
 	return DecodeQRBytes(data)
 }

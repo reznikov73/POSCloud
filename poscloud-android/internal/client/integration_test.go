@@ -151,10 +151,10 @@ func TestSyncEndToEnd(t *testing.T) {
 	// the log contains entries about the start and the upload
 	logs := c.Logs()
 	joined := strings.Join(logs, "\n")
-	if !containsStr(joined, "synchronization started") {
+	if !containsStr(joined, "синхронизация запущена") {
 		t.Fatalf("the log has no entry about the start:\n%s", joined)
 	}
-	if !containsStr(joined, "up: hello.txt") {
+	if !containsStr(joined, "вверх: hello.txt") {
 		t.Fatalf("the log has no entry about the upload:\n%s", joined)
 	}
 }
