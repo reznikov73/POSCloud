@@ -1,0 +1,15 @@
+# build artifacts
+*.apk
+*.aab
+*.idsig
+aligned.apk
+Icon.png
+
+# signing keys — never committed to the repository
+*.keystore
+*.jks
+debug.keystore
+
+# local data from test runs
+*.log
+*.log.old
