@@ -182,3 +182,34 @@ adaptive‑иконки собирает манифест своим binres, к�
 - Lite: `lite/out/POSCloud-Lite-x64.exe`, `POSCloud-Lite-x86.exe` (go1.20.14);
 - Android: `POSCloud-Client-1.0.30-android-arm64-debug.apk`; в BlueStacks установлен.
 - Старые APK 1.0.29 удалены из репозитория и из папки синхронизации `POSCloud/`.
+
+### Сессия 4 (24.11.2026, ночь): почему на телефон ничего не скачивалось
+
+Журнал с телефона (вкладка «Журнал», 1.0.30) наконец показал причину — до этого
+ошибки не писались:
+
+    не удалось получить POSCloud/poscloud-server-linux-amd64: rename
+    /storage/emulated/0/Download/POScloud/POSCloud/.poscloud-dl-…
+    /storage/emulated/0/Download/POScloud/POSCloud/poscloud-server-linux-amd64:
+    operation not permitted
+
+В общей памяти Android приложение с targetSdk 29 **может создавать и удалять
+файлы, но не переименовывать** (FUSE отвечает «operation not permitted»).
+Скачивание падало на последнем шаге: временный файл уже скачан, а встать на
+место не может. Отсюда «вверх работает, вниз 0» на телефоне — всегда, просто
+молча. Выгрузка шла, потому что съёмка и снимки пишутся через `os.Create`.
+
+Исправление: `engine/movefile.go` — `moveFile` сначала переименовывает, а если
+запрещено — копирует и удаляет исходник (как камера в `internal/ui`). Применён
+во всех местах, где файл встаёт на место: `http.go` (обычное скачивание),
+`chunks.go` (блочное), `state.go` (сохранение состояния), `syncer.go`
+(конфликтные копии). Тесты: `TestMoveFile`, `TestMoveFileFallback`.
+
+Версия **1.0.31**: APK — `poscloud-android/POSCloud-Client-1.0.31-android-arm64-debug.apk`,
+для телефона — `E:\Cloud\POSCloud\POSCloud\POSCloud-Client-1.0.31-android.apk`
+(ставится поверх 1.0.30, настройки сохраняются). Пересобраны клиент, сервер,
+Lite x64/x86, установщик `POSCloud-Setup-1.0.31.exe`.
+
+Проверить на телефоне после установки: в «Журнале» при синхронизации должны
+пойти строки «вниз: …», а «Файлов» должно вырасти; ошибок «rename … operation
+not permitted» больше быть не должно.
