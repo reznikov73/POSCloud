@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"testing"
 
@@ -89,4 +90,45 @@ func TestDecodeQRReader(t *testing.T) {
 // pngEncode encodes an image to PNG via the standard image/png.
 func pngEncode(img image.Image, buf *bytes.Buffer) error {
 	return png.Encode(buf, img)
+}
+
+// TestDecodeQRImageRotated — снимок с камеры часто приходит повёрнутым:
+// EXIF-ориентацию image.Decode не применяет, декодер обязан перебрать повороты.
+func TestDecodeQRImageRotated(t *testing.T) {
+	code := "poscloud://connect?v=1&host=192.168.1.42&port=8090&tls=0&code=pcp_rot"
+	base := renderQR(t, code)
+	for _, angle := range []int{90, 180, 270} {
+		got, err := DecodeQRImage(rotate(base, angle))
+		if err != nil {
+			t.Fatalf("поворот %d°: %v", angle, err)
+		}
+		if got != code {
+			t.Fatalf("поворот %d°: неверный текст %q", angle, got)
+		}
+	}
+}
+
+// TestDecodeQRImagePhotoLike — «фотография»: код занимает малую часть кадра,
+// фон неровный, снимок больше предела уменьшения.
+func TestDecodeQRImagePhotoLike(t *testing.T) {
+	code := "poscloud://connect?v=1&host=10.1.2.3&port=8090&tls=1&fp=AB&code=pcp_photo"
+	qr := renderQR(t, code)
+	const w, h = 2400, 1600
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			v := uint8(180 + (x*7+y*13)%50)
+			i := img.PixOffset(x, y)
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v, v, v, 255
+		}
+	}
+	draw.Draw(img, image.Rect(1200, 700, 1200+512, 700+512), qr, image.Point{}, draw.Over)
+
+	got, err := DecodeQRImage(rotate(img, 90))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != code {
+		t.Fatalf("неверный текст: %q", got)
+	}
 }

@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"image/png"
@@ -10,7 +10,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/software"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/theme"
 
 	"poscloud-client-android/internal/client"
 )
@@ -21,18 +20,18 @@ func TestBuildUISmoke(t *testing.T) {
 	testApp := test.NewApp()
 	w := testApp.NewWindow("POSCloud Client")
 	ctrl := client.NewController(t.TempDir())
-	ui := buildUI(ctrl, w)
-	if ui.content == nil {
+	st := Build(ctrl, w)
+	if st.Content == nil {
 		t.Fatal("контент интерфейса не создан")
 	}
-	ui.refreshStatic(ctrl)
-	ui.loadFromConfig(ctrl)
+	st.refreshStatic(ctrl)
+	st.loadFromConfig(ctrl)
 
 	// поля заполняются из настроек по умолчанию
-	if ui.hostEntry.Text == "" || ui.portEntry.Text == "" || ui.dirEntry.Text == "" {
-		t.Fatalf("поля подключения не заполнены: host=%q port=%q dir=%q", ui.hostEntry.Text, ui.portEntry.Text, ui.dirEntry.Text)
+	if st.hostEntry.Text == "" || st.portEntry.Text == "" || st.dirEntry.Text == "" {
+		t.Fatalf("поля подключения не заполнены: host=%q port=%q dir=%q", st.hostEntry.Text, st.portEntry.Text, st.dirEntry.Text)
 	}
-	if ui.intervalEntry.Text == "" {
+	if st.intervalEntry.Text == "" {
 		t.Fatal("интервал не заполнен")
 	}
 
@@ -50,8 +49,8 @@ func TestScreenshotRender(t *testing.T) {
 	testApp := test.NewApp()
 	w := testApp.NewWindow("POSCloud Client")
 	ctrl := client.NewController(t.TempDir())
-	ui := buildUI(ctrl, w)
-	ui.loadFromConfig(ctrl)
+	st := Build(ctrl, w)
+	st.loadFromConfig(ctrl)
 	time.Sleep(500 * time.Millisecond)
 
 	outDir := os.Getenv("POSCLOUD_SHOTS")
@@ -59,16 +58,16 @@ func TestScreenshotRender(t *testing.T) {
 
 	names := []string{"status", "connect", "folders", "log"}
 	for i, name := range names {
-		ui.tabs.Select(ui.tabs.Items[i])
+		st.tabs.Select(st.tabs.Items[i])
 		time.Sleep(150 * time.Millisecond)
 
 		c := software.NewCanvas()
 		c.SetPadded(false)
 		c.SetScale(1.0)
-		c.SetContent(ui.content)
+		c.SetContent(st.Content)
 		c.Resize(fyne.NewSize(430, 800))
 		time.Sleep(100 * time.Millisecond)
-		img := software.RenderCanvas(c, posTheme{base: theme.DefaultTheme()})
+		img := software.RenderCanvas(c, Theme())
 		if img == nil {
 			t.Fatalf("вкладка %s: пустой рендер", name)
 		}

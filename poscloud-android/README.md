@@ -22,6 +22,9 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
   token” (a ready-made token is saved as is, without re-issuing on the server);
 - **manual setup**: address, port, token, interval, TLS with verification of
   the SHA-256 fingerprint of a self-signed certificate;
+- **choosing the sync folder**: a folder dialog, the private app folder and the
+  external app folder on shared storage (`Android/data/<package>/files/sync`),
+  which is not wiped with the app data;
 - **selective synchronization**: first-level folders with modes “both ways /
   send only / receive only / do not synchronize” and
   a “no rules” mode;
@@ -33,8 +36,8 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 
 | Path | What it is |
 |---|---|
-| `main.go` | Fyne interface: tabs “Status”, “Connection”, “Folders”, “Log” |
-| `theme.go` | POSCloud brand light theme (blue accent, cards, state colors) |
+| `main.go` | entry point: app setup, autorun, starts the interface from `internal/ui` |
+| `internal/ui/` | Fyne interface: tabs “Status”, “Connection”, “Folders”, “Log”, brand theme |
 | `internal/client/` | controller: settings, engine, log, progress, QR decoder — no UI (tested separately) |
 | `tools/genicon/` | `Icon.png` generator: draws the icon from vector geometry with 4x supersampling — deterministic, the repository is text only |
 | `build.sh` | local APK build: tests, package, signing |

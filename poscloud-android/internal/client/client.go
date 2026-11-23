@@ -60,6 +60,46 @@ func (c *Controller) Root() string { return c.root }
 // DefaultSyncDir — the default sync folder (inside the app directory).
 func (c *Controller) DefaultSyncDir() string { return filepath.Join(c.root, "sync") }
 
+// appID — имя пакета Android: по нему находится внешний каталог приложения
+// на общей памяти (Android/data/<пакет>/files).
+const appID = "io.github.reznikov73.poscloud.client"
+
+// ExternalSyncDir returns the sync folder on shared storage
+// (…/Android/data/<package>/files/sync).
+// Android lets an app write there without extra permissions, and the folder is
+// visible over USB and in file managers — unlike the private app directory.
+// An empty result means no writable shared directory was found.
+func (c *Controller) ExternalSyncDir() string {
+	bases := []string{strings.TrimSpace(os.Getenv("EXTERNAL_STORAGE")), "/storage/emulated/0", "/sdcard"}
+	seen := make(map[string]bool, len(bases))
+	for _, base := range bases {
+		if base == "" || seen[base] {
+			continue
+		}
+		seen[base] = true
+		dir := filepath.Join(base, "Android", "data", appID, "files", "sync")
+		if writableDir(dir) {
+			return dir
+		}
+	}
+	return ""
+}
+
+// writableDir создаёт каталог при необходимости и проверяет запись пробным файлом.
+func writableDir(dir string) bool {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 // Config returns a copy of the current settings.
 func (c *Controller) Config() androidConfig {
 	c.mu.Lock()

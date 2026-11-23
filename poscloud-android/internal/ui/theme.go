@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"image/color"
@@ -7,7 +7,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-// posTheme — фирменная светлая темая POSCloud: синий акцент как на иконке,
+// posTheme — фирменная светлая тема POSCloud: синий акцент как на иконке,
 // мягкий серо-голубой фон, белые карточки, крупные заголовки.
 // Все остальные аспекты (шрифты, иконки, размеры) наследуются от встроенной.
 type posTheme struct {
@@ -15,6 +15,9 @@ type posTheme struct {
 }
 
 var _ fyne.Theme = (*posTheme)(nil)
+
+// Theme возвращает фирменную тему приложения.
+func Theme() fyne.Theme { return posTheme{base: theme.DefaultTheme()} }
 
 func rgb(r, g, b uint8) color.Color {
 	return &color.NRGBA{R: r, G: g, B: b, A: 0xFF}
@@ -75,7 +78,7 @@ func (t posTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 func (t posTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNameHeadingText:
-		return 24
+		return 20
 	case theme.SizeNameText:
 		return 15
 	case theme.SizeNameInnerPadding:
