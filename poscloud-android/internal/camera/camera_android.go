@@ -1,12 +1,13 @@
 //go:build android
 
-// Package camera открывает системную камеру и сохраняет снимок в общую память.
+// Package camera открывает системную камеру и забирает снимок.
 //
 // Java-классов в проекте нет, поэтому всё сделано через JNI: получаем JVM,
 // берём контекст приложения, создаём через MediaStore запись для будущего
 // снимка (content://-URI), отдаём её камере как EXTRA_OUTPUT и запускаем
-// ACTION_IMAGE_CAPTURE. Камера пишет файл сама, а приложение затем читает его
-// по обычному пути — файл сразу лежит в папке синхронизации.
+// ACTION_IMAGE_CAPTURE. Камера пишет файл сама; читать его по обычному пути
+// нельзя (файл принадлежит приложению камеры), поэтому приложение открывает
+// собственную запись MediaStore и копирует содержимое к себе.
 package camera
 
 /*
@@ -57,156 +58,150 @@ static int take_exception(JNIEnv* env, char* err, int len, const char* where) {
 	return 1;
 }
 
-// delete_uri удаляет запись MediaStore (после переноса файла в папку синхронизации).
-static int delete_uri(const char* uri_str, char* err, int errlen) {
+// get_env поднимает JVM и текущий поток.
+static JavaVM* get_vm(char* err, int len) {
 	void* lib = dlopen("libnativehelper.so", RTLD_NOW);
 	if (!lib) {
 		lib = dlopen("libart.so", RTLD_NOW);
 	}
 	if (!lib) {
-		return 1;
+		set_err(err, len, "нет доступа к JVM (libnativehelper)");
+		return NULL;
 	}
 	jni_get_vms_fn get_vms = (jni_get_vms_fn)dlsym(lib, "JNI_GetCreatedJavaVMs");
 	if (!get_vms) {
-		return 2;
+		set_err(err, len, "JNI_GetCreatedJavaVMs не найден");
+		return NULL;
 	}
 	JavaVM* vm = NULL;
 	jsize count = 0;
 	if (get_vms(&vm, 1, &count) != JNI_OK || count < 1 || vm == NULL) {
-		return 3;
+		set_err(err, len, "JVM не запущена");
+		return NULL;
 	}
-	JNIEnv* env = NULL;
-	int attached = 0;
-	jint res = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
-	if (res == JNI_EDETACHED) {
-		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
-			return 4;
-		}
-		attached = 1;
-	}
-	int rc = 0;
-	jobject app = NULL, resolver = NULL, uri = NULL;
-	jstring jUri = NULL;
+	return vm;
+}
+
+// app_context возвращает Application (он же Context).
+static jobject app_context(JNIEnv* env, char* err, int len) {
 	jclass cAT = (*env)->FindClass(env, "android/app/ActivityThread");
+	if (take_exception(env, err, len, "ActivityThread")) {
+		return NULL;
+	}
 	jmethodID current = (*env)->GetStaticMethodID(env, cAT, "currentApplication", "()Landroid/app/Application;");
-	app = (*env)->CallStaticObjectMethod(env, cAT, current);
+	jobject app = (*env)->CallStaticObjectMethod(env, cAT, current);
+	if (take_exception(env, err, len, "currentApplication")) {
+		return NULL;
+	}
+	if (cAT) {
+		(*env)->DeleteLocalRef(env, cAT);
+	}
+	if (!app) {
+		set_err(err, len, "нет контекста приложения");
+	}
+	return app;
+}
+
+// resolver_of возвращает ContentResolver приложения.
+static jobject resolver_of(JNIEnv* env, jobject app, char* err, int len) {
 	jclass cCtx = (*env)->FindClass(env, "android/content/Context");
 	jmethodID getResolver = (*env)->GetMethodID(env, cCtx, "getContentResolver", "()Landroid/content/ContentResolver;");
-	resolver = (*env)->CallObjectMethod(env, app, getResolver);
-	jclass cUriCls = (*env)->FindClass(env, "android/net/Uri");
-	jmethodID parse = (*env)->GetStaticMethodID(env, cUriCls, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-	jUri = (*env)->NewStringUTF(env, uri_str);
-	uri = (*env)->CallStaticObjectMethod(env, cUriCls, parse, jUri);
-	jclass cRes = (*env)->FindClass(env, "android/content/ContentResolver");
-	jmethodID del = (*env)->GetMethodID(env, cRes, "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I");
-	(*env)->CallIntMethod(env, resolver, del, uri, NULL, NULL);
-	if (take_exception(env, err, errlen, "MediaStore.delete")) {
-		rc = 5;
+	jobject resolver = (*env)->CallObjectMethod(env, app, getResolver);
+	if (take_exception(env, err, len, "getContentResolver")) {
+		return NULL;
 	}
-	if (jUri) (*env)->DeleteLocalRef(env, jUri);
-	if (uri) (*env)->DeleteLocalRef(env, uri);
-	if (resolver) (*env)->DeleteLocalRef(env, resolver);
-	if (app) (*env)->DeleteLocalRef(env, app);
-	if (cUriCls) (*env)->DeleteLocalRef(env, cUriCls);
-	if (cRes) (*env)->DeleteLocalRef(env, cRes);
-	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
-	if (cAT) (*env)->DeleteLocalRef(env, cAT);
-	if (attached) {
-		(*vm)->DetachCurrentThread(vm);
+	if (cCtx) {
+		(*env)->DeleteLocalRef(env, cCtx);
 	}
-	return rc;
+	return resolver;
+}
+
+// parse_uri разбирает строку content:// в объект Uri.
+static jobject parse_uri(JNIEnv* env, const char* s, char* err, int len) {
+	jclass cUri = (*env)->FindClass(env, "android/net/Uri");
+	jmethodID parse = (*env)->GetStaticMethodID(env, cUri, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+	jstring jStr = (*env)->NewStringUTF(env, s);
+	jobject uri = (*env)->CallStaticObjectMethod(env, cUri, parse, jStr);
+	if (take_exception(env, err, len, "Uri.parse")) {
+		return NULL;
+	}
+	if (jStr) {
+		(*env)->DeleteLocalRef(env, jStr);
+	}
+	if (cUri) {
+		(*env)->DeleteLocalRef(env, cUri);
+	}
+	return uri;
 }
 
 // start_capture создаёт запись в MediaStore и запускает камеру.
 static int start_capture(const char* display_name, const char* relative_path, char* out_uri, int out_uri_len, char* err, int errlen) {
-	void* lib = dlopen("libnativehelper.so", RTLD_NOW);
-	if (!lib) {
-		lib = dlopen("libart.so", RTLD_NOW);
-	}
-	if (!lib) {
-		set_err(err, errlen, "камера недоступна: нет доступа к JVM");
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
 		return 1;
 	}
-	jni_get_vms_fn get_vms = (jni_get_vms_fn)dlsym(lib, "JNI_GetCreatedJavaVMs");
-	if (!get_vms) {
-		set_err(err, errlen, "камера недоступна: JNI_GetCreatedJavaVMs не найден");
-		return 2;
-	}
-	JavaVM* vm = NULL;
-	jsize count = 0;
-	if (get_vms(&vm, 1, &count) != JNI_OK || count < 1 || vm == NULL) {
-		set_err(err, errlen, "камера недоступна: JVM не запущена");
-		return 3;
-	}
-
 	JNIEnv* env = NULL;
 	int attached = 0;
-	jint res = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
-	if (res == JNI_EDETACHED) {
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
 		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
-			set_err(err, errlen, "камера недоступна: не удалось подключиться к JVM");
-			return 4;
+			set_err(err, errlen, "не удалось подключиться к JVM");
+			return 2;
 		}
 		attached = 1;
-	} else if (res != JNI_OK) {
-		set_err(err, errlen, "камера недоступна: GetEnv");
-		return 5;
 	}
 
 	int rc = 0;
-	jclass cAT = NULL, cCtx = NULL, cCV = NULL, cMS = NULL, cIntent = NULL;
 	jobject app = NULL, resolver = NULL, values = NULL, insertUri = NULL, intent = NULL;
-	jstring jName = NULL, jRel = NULL, jAction = NULL, jKey = NULL;
+	jclass cCV = NULL, cMS = NULL, cIntent = NULL, cCtx = NULL, cRes = NULL;
 
-	cAT = (*env)->FindClass(env, "android/app/ActivityThread");
-	if (take_exception(env, err, errlen, "ActivityThread")) { rc = 10; goto done; }
-	if (!cAT) { set_err(err, errlen, "камера недоступна: ActivityThread"); rc = 10; goto done; }
-
-	{
-		jmethodID current = (*env)->GetStaticMethodID(env, cAT, "currentApplication", "()Landroid/app/Application;");
-		if (take_exception(env, err, errlen, "currentApplication")) { rc = 11; goto done; }
-		app = (*env)->CallStaticObjectMethod(env, cAT, current);
-		if (take_exception(env, err, errlen, "currentApplication()")) { rc = 11; goto done; }
-		if (!app) { set_err(err, errlen, "камера недоступна: нет контекста приложения"); rc = 11; goto done; }
+	app = app_context(env, err, errlen);
+	if (!app) {
+		rc = 3;
+		goto done;
+	}
+	resolver = resolver_of(env, app, err, errlen);
+	if (!resolver) {
+		rc = 4;
+		goto done;
 	}
 
-	cCtx = (*env)->FindClass(env, "android/content/Context");
-	{
-		jmethodID getResolver = (*env)->GetMethodID(env, cCtx, "getContentResolver", "()Landroid/content/ContentResolver;");
-		resolver = (*env)->CallObjectMethod(env, app, getResolver);
-		if (take_exception(env, err, errlen, "getContentResolver")) { rc = 12; goto done; }
-		jmethodID startAct = (*env)->GetMethodID(env, cCtx, "startActivity", "(Landroid/content/Intent;)V");
-		if (!resolver || !startAct) { set_err(err, errlen, "камера недоступна: контекст"); rc = 12; goto done; }
-	}
-
-	// ContentValues: имя файла, тип и папка относительно общей памяти.
 	cCV = (*env)->FindClass(env, "android/content/ContentValues");
 	{
 		jmethodID ctor = (*env)->GetMethodID(env, cCV, "<init>", "()V");
 		jmethodID put = (*env)->GetMethodID(env, cCV, "put", "(Ljava/lang/String;Ljava/lang/String;)V");
 		values = (*env)->NewObject(env, cCV, ctor);
-		jName = (*env)->NewStringUTF(env, display_name);
-		jRel = (*env)->NewStringUTF(env, relative_path);
 		jstring kName = (*env)->NewStringUTF(env, "_display_name");
 		jstring kMime = (*env)->NewStringUTF(env, "mime_type");
 		jstring kRel = (*env)->NewStringUTF(env, "relative_path");
+		jstring vName = (*env)->NewStringUTF(env, display_name);
 		jstring vMime = (*env)->NewStringUTF(env, "image/jpeg");
-		(*env)->CallVoidMethod(env, values, put, kName, jName);
+		jstring vRel = (*env)->NewStringUTF(env, relative_path);
+		(*env)->CallVoidMethod(env, values, put, kName, vName);
 		(*env)->CallVoidMethod(env, values, put, kMime, vMime);
-		(*env)->CallVoidMethod(env, values, put, kRel, jRel);
-		if (take_exception(env, err, errlen, "ContentValues")) { rc = 13; goto done; }
+		(*env)->CallVoidMethod(env, values, put, kRel, vRel);
+		if (take_exception(env, err, errlen, "ContentValues")) {
+			rc = 5;
+			goto done;
+		}
 	}
 
 	cMS = (*env)->FindClass(env, "android/provider/MediaStore$Images$Media");
+	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
 	{
 		jfieldID fUri = (*env)->GetStaticFieldID(env, cMS, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;");
 		jobject collection = (*env)->GetStaticObjectField(env, cMS, fUri);
-		jclass cRes = (*env)->FindClass(env, "android/content/ContentResolver");
 		jmethodID insert = (*env)->GetMethodID(env, cRes, "insert",
 			"(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;");
 		insertUri = (*env)->CallObjectMethod(env, resolver, insert, collection, values);
-		if (take_exception(env, err, errlen, "MediaStore.insert")) { rc = 14; goto done; }
-		if (!insertUri) { set_err(err, errlen, "камера недоступна: не удалось создать файл в MediaStore"); rc = 14; goto done; }
+		if (take_exception(env, err, errlen, "MediaStore.insert")) {
+			rc = 6;
+			goto done;
+		}
+		if (!insertUri) {
+			set_err(err, errlen, "не удалось создать запись в MediaStore");
+			rc = 6;
+			goto done;
+		}
 		if (out_uri && out_uri_len > 0) {
 			jclass cUri = (*env)->FindClass(env, "android/net/Uri");
 			jmethodID toString = (*env)->GetMethodID(env, cUri, "toString", "()Ljava/lang/String;");
@@ -219,49 +214,229 @@ static int start_capture(const char* display_name, const char* relative_path, ch
 				}
 				(*env)->DeleteLocalRef(env, s);
 			}
-			if (cUri) (*env)->DeleteLocalRef(env, cUri);
+			if (cUri) {
+				(*env)->DeleteLocalRef(env, cUri);
+			}
 		}
 	}
 
+	cCtx = (*env)->FindClass(env, "android/content/Context");
 	cIntent = (*env)->FindClass(env, "android/content/Intent");
 	{
 		jmethodID ctor = (*env)->GetMethodID(env, cIntent, "<init>", "(Ljava/lang/String;)V");
-		jAction = (*env)->NewStringUTF(env, "android.media.action.IMAGE_CAPTURE");
-		intent = (*env)->NewObject(env, cIntent, ctor, jAction);
+		jstring action = (*env)->NewStringUTF(env, "android.media.action.IMAGE_CAPTURE");
+		intent = (*env)->NewObject(env, cIntent, ctor, action);
 		jmethodID putExtra = (*env)->GetMethodID(env, cIntent, "putExtra",
 			"(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;");
-		jKey = (*env)->NewStringUTF(env, "output");
-		(*env)->CallObjectMethod(env, intent, putExtra, jKey, insertUri);
-		if (take_exception(env, err, errlen, "Intent.putExtra")) { rc = 15; goto done; }
-
+		jstring key = (*env)->NewStringUTF(env, "output");
+		(*env)->CallObjectMethod(env, intent, putExtra, key, insertUri);
+		if (take_exception(env, err, errlen, "Intent.putExtra")) {
+			rc = 7;
+			goto done;
+		}
 		jmethodID addFlags = (*env)->GetMethodID(env, cIntent, "addFlags", "(I)Landroid/content/Intent;");
 		// FLAG_ACTIVITY_NEW_TASK | FLAG_GRANT_WRITE_URI_PERMISSION | FLAG_GRANT_READ_URI_PERMISSION
 		(*env)->CallObjectMethod(env, intent, addFlags, (jint)(0x10000000 | 0x00000001 | 0x00000002));
-		if (take_exception(env, err, errlen, "Intent.addFlags")) { rc = 15; goto done; }
-
+		if (take_exception(env, err, errlen, "Intent.addFlags")) {
+			rc = 7;
+			goto done;
+		}
 		jmethodID startAct = (*env)->GetMethodID(env, cCtx, "startActivity", "(Landroid/content/Intent;)V");
 		(*env)->CallVoidMethod(env, app, startAct, intent);
-		if (take_exception(env, err, errlen, "startActivity")) { rc = 16; goto done; }
+		if (take_exception(env, err, errlen, "startActivity")) {
+			rc = 8;
+			goto done;
+		}
 	}
 
 done:
-	if (jName) (*env)->DeleteLocalRef(env, jName);
-	if (jRel) (*env)->DeleteLocalRef(env, jRel);
-	if (jAction) (*env)->DeleteLocalRef(env, jAction);
-	if (jKey) (*env)->DeleteLocalRef(env, jKey);
 	if (intent) (*env)->DeleteLocalRef(env, intent);
 	if (insertUri) (*env)->DeleteLocalRef(env, insertUri);
 	if (values) (*env)->DeleteLocalRef(env, values);
 	if (resolver) (*env)->DeleteLocalRef(env, resolver);
 	if (app) (*env)->DeleteLocalRef(env, app);
 	if (cIntent) (*env)->DeleteLocalRef(env, cIntent);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
 	if (cMS) (*env)->DeleteLocalRef(env, cMS);
 	if (cCV) (*env)->DeleteLocalRef(env, cCV);
 	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
-	if (cAT) (*env)->DeleteLocalRef(env, cAT);
-	if (rc != 0 && err && errlen > 0 && err[0] == '\0') {
-		set_err(err, errlen, "камера недоступна");
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
 	}
+	return rc;
+}
+
+// uri_size возвращает размер снимка по записи MediaStore (-1 — ещё нет данных).
+static jlong uri_size(const char* uri_str, char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return -1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return -1;
+		}
+		attached = 1;
+	}
+	jlong size = -1;
+	jobject app = NULL, resolver = NULL, uri = NULL, pfd = NULL;
+	jclass cRes = NULL, cPfd = NULL;
+
+	app = app_context(env, err, errlen);
+	if (!app) {
+		goto done;
+	}
+	resolver = resolver_of(env, app, err, errlen);
+	if (!resolver) {
+		goto done;
+	}
+	uri = parse_uri(env, uri_str, err, errlen);
+	if (!uri) {
+		goto done;
+	}
+	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
+	cPfd = (*env)->FindClass(env, "android/os/ParcelFileDescriptor");
+	{
+		jmethodID openFd = (*env)->GetMethodID(env, cRes, "openFileDescriptor",
+			"(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;");
+		jstring mode = (*env)->NewStringUTF(env, "r");
+		pfd = (*env)->CallObjectMethod(env, resolver, openFd, uri, mode);
+		if (take_exception(env, err, errlen, "openFileDescriptor")) {
+			goto done;
+		}
+		if (pfd) {
+			jmethodID getStat = (*env)->GetMethodID(env, cPfd, "getStatSize", "()J");
+			size = (*env)->CallLongMethod(env, pfd, getStat);
+			jmethodID close = (*env)->GetMethodID(env, cPfd, "close", "()V");
+			(*env)->CallVoidMethod(env, pfd, close);
+		}
+	}
+
+done:
+	if (pfd) (*env)->DeleteLocalRef(env, pfd);
+	if (uri) (*env)->DeleteLocalRef(env, uri);
+	if (cPfd) (*env)->DeleteLocalRef(env, cPfd);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
+	if (resolver) (*env)->DeleteLocalRef(env, resolver);
+	if (app) (*env)->DeleteLocalRef(env, app);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return size;
+}
+
+// open_read_fd отдаёт файловый дескриптор снимка (-1 при ошибке).
+static int open_read_fd(const char* uri_str, char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return -1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return -1;
+		}
+		attached = 1;
+	}
+	int fd = -1;
+	jobject app = NULL, resolver = NULL, uri = NULL, pfd = NULL;
+	jclass cRes = NULL, cPfd = NULL;
+
+	app = app_context(env, err, errlen);
+	if (!app) {
+		goto done;
+	}
+	resolver = resolver_of(env, app, err, errlen);
+	if (!resolver) {
+		goto done;
+	}
+	uri = parse_uri(env, uri_str, err, errlen);
+	if (!uri) {
+		goto done;
+	}
+	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
+	cPfd = (*env)->FindClass(env, "android/os/ParcelFileDescriptor");
+	{
+		jmethodID openFd = (*env)->GetMethodID(env, cRes, "openFileDescriptor",
+			"(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;");
+		jstring mode = (*env)->NewStringUTF(env, "r");
+		pfd = (*env)->CallObjectMethod(env, resolver, openFd, uri, mode);
+		if (take_exception(env, err, errlen, "openFileDescriptor")) {
+			goto done;
+		}
+		if (pfd) {
+			jmethodID detach = (*env)->GetMethodID(env, cPfd, "detachFd", "()I");
+			fd = (int)(*env)->CallIntMethod(env, pfd, detach);
+			if (take_exception(env, err, errlen, "detachFd")) {
+				fd = -1;
+			}
+		}
+	}
+
+done:
+	if (pfd) (*env)->DeleteLocalRef(env, pfd);
+	if (uri) (*env)->DeleteLocalRef(env, uri);
+	if (cPfd) (*env)->DeleteLocalRef(env, cPfd);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
+	if (resolver) (*env)->DeleteLocalRef(env, resolver);
+	if (app) (*env)->DeleteLocalRef(env, app);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return fd;
+}
+
+// delete_uri удаляет запись MediaStore вместе с файлом.
+static int delete_uri(const char* uri_str, char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return 1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return 2;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	jobject app = NULL, resolver = NULL, uri = NULL;
+	jclass cRes = NULL;
+
+	app = app_context(env, err, errlen);
+	if (!app) {
+		rc = 3;
+		goto done;
+	}
+	resolver = resolver_of(env, app, err, errlen);
+	if (!resolver) {
+		rc = 4;
+		goto done;
+	}
+	uri = parse_uri(env, uri_str, err, errlen);
+	if (!uri) {
+		rc = 5;
+		goto done;
+	}
+	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
+	{
+		jmethodID del = (*env)->GetMethodID(env, cRes, "delete",
+			"(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I");
+		(*env)->CallIntMethod(env, resolver, del, uri, NULL, NULL);
+		if (take_exception(env, err, errlen, "MediaStore.delete")) {
+			rc = 6;
+		}
+	}
+
+done:
+	if (uri) (*env)->DeleteLocalRef(env, uri);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
+	if (resolver) (*env)->DeleteLocalRef(env, resolver);
+	if (app) (*env)->DeleteLocalRef(env, app);
 	if (attached) {
 		(*vm)->DetachCurrentThread(vm);
 	}
@@ -272,6 +447,7 @@ import "C"
 
 import (
 	"errors"
+	"os"
 	"unsafe"
 )
 
@@ -299,8 +475,32 @@ func Capture(displayName, relativePath string) (string, error) {
 	return C.GoString((*C.char)(unsafe.Pointer(&uriBuf[0]))), nil
 }
 
-// Delete убирает запись MediaStore после переноса снимка в папку синхронизации,
-// чтобы в галерее не оставался битый миниатюр.
+// Size возвращает размер готового снимка; -1 — данных ещё нет.
+func Size(uri string) int64 {
+	cURI := C.CString(uri)
+	defer C.free(unsafe.Pointer(cURI))
+	errBuf := make([]byte, 256)
+	return int64(C.uri_size(cURI, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))))
+}
+
+// Open отдаёт файл снимка на чтение (по записи MediaStore, а не по пути:
+// файл принадлежит приложению камеры, и обычное открытие даёт permission denied).
+func Open(uri string) (*os.File, error) {
+	cURI := C.CString(uri)
+	defer C.free(unsafe.Pointer(cURI))
+	errBuf := make([]byte, 256)
+	fd := C.open_read_fd(cURI, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	if fd < 0 {
+		msg := C.GoString((*C.char)(unsafe.Pointer(&errBuf[0])))
+		if msg == "" {
+			msg = "не удалось открыть снимок"
+		}
+		return nil, errors.New(msg)
+	}
+	return os.NewFile(uintptr(fd), "poscloud-photo"), nil
+}
+
+// Delete убирает запись MediaStore вместе с исходным файлом.
 func Delete(uri string) error {
 	if uri == "" {
 		return nil

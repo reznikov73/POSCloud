@@ -498,7 +498,6 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 		return
 	}
 	name := "POSCloud-" + time.Now().Format("20060102-150405") + ".jpg"
-	capturePath := filepath.Join(captureDir, name)
 
 	wait := dialog.NewCustomWithoutButtons("Камера", container.NewVBox(
 		widget.NewLabel("Открываем камеру и ждём снимок…"),
@@ -518,36 +517,45 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 		deadline := time.Now().Add(3 * time.Minute)
 		var size int64
 		for time.Now().Before(deadline) {
-			if fi, err := os.Stat(capturePath); err == nil && fi.Size() > 0 {
-				size = fi.Size()
+			if s := camera.Size(uri); s > 0 {
+				size = s
 				break
 			}
 			time.Sleep(300 * time.Millisecond)
 		}
 		fyne.Do(func() { wait.Hide() })
-		if size == 0 {
+		if size <= 0 {
+			_ = camera.Delete(uri)
 			fyne.Do(func() {
 				dialog.ShowInformation("Камера", "Снимок не появился — съёмка отменена.", ui.win)
 			})
 			return
 		}
 
-		// Снимок должен оказаться в папке синхронизации.
-		target := capturePath
-		moved := false
-		if captureDir != dir {
-			_ = os.MkdirAll(dir, 0o755)
-			dst := filepath.Join(dir, name)
-			if err := moveFile(capturePath, dst); err == nil {
-				target = dst
-				moved = true
+		// Файл создаёт приложение камеры, поэтому читаем его через свою запись
+		// MediaStore, а не по пути, и сохраняем копию в папку синхронизации.
+		src, openErr := camera.Open(uri)
+		if openErr != nil {
+			fyne.Do(func() { dialog.ShowError(openErr, ui.win) })
+			return
+		}
+		_ = os.MkdirAll(dir, 0o755)
+		target := filepath.Join(dir, name)
+		out, createErr := os.Create(target)
+		copyErr := createErr
+		if copyErr == nil {
+			_, copyErr = io.Copy(out, src)
+			if cerr := out.Close(); copyErr == nil {
+				copyErr = cerr
 			}
 		}
-		// Если файл ушёл из Pictures, убираем запись MediaStore, чтобы в галерее
-		// не оставался битый миниатюр.
-		if moved {
-			_ = camera.Delete(uri)
+		_ = src.Close()
+		_ = camera.Delete(uri)
+		if copyErr != nil {
+			fyne.Do(func() { dialog.ShowError(copyErr, ui.win) })
+			return
 		}
+
 		f, err := os.Open(target)
 		if err != nil {
 			fyne.Do(func() { dialog.ShowError(err, ui.win) })
