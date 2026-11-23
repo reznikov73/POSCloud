@@ -32,6 +32,8 @@ var (
 	colText        = rgb(0x0F, 0x17, 0x2A) // основной текст
 	colMuted       = rgb(0x64, 0x74, 0x8B) // второстепенный текст
 	colBorder      = rgb(0xDB, 0xE2, 0xEF) // рамки
+	colTrackOff    = rgb(0xD3, 0xDC, 0xEA) // дорожка выключенного переключателя
+	colTrackEdge   = rgb(0xC3, 0xCE, 0xDF) // обводка ползунка на светлой дорожке
 	colSuccess     = rgb(0x15, 0x9D, 0x4B)
 	colDanger      = rgb(0xDC, 0x26, 0x26)
 	colWarn        = rgb(0xB4, 0x53, 0x09)

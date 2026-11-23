@@ -100,6 +100,19 @@ func (c *Controller) ExternalSyncDir() string {
 	return ""
 }
 
+// writableSyncDir возвращает папку, в которую действительно можно писать:
+// выбранную, а если она недоступна — папку приложения. Ошибка — когда писать
+// некуда совсем.
+func (c *Controller) writableSyncDir(dir string) (string, error) {
+	if writableDir(dir) {
+		return dir, nil
+	}
+	if def := c.DefaultSyncDir(); dir != def && writableDir(def) {
+		return def, nil
+	}
+	return "", fmt.Errorf("папка синхронизации недоступна для записи: %s", dir)
+}
+
 // writableDir создаёт каталог при необходимости и проверяет запись пробным файлом.
 func writableDir(dir string) bool {
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -295,6 +308,18 @@ func (c *Controller) Start(host string, port int, dir string, interval int, toke
 	}
 	if host = strings.TrimSpace(host); host == "" {
 		host = "localhost"
+	}
+	// Внешняя папка (например /storage/emulated/0/…) на Android 11+ может быть
+	// доступна только на чтение: без разрешения системы писать в общую память
+	// нельзя. Тогда работаем в папке приложения — она всегда доступна, — иначе
+	// синхронизация «работает», а файлы не идут (так было в BlueStacks).
+	want := strings.TrimSpace(dir)
+	dir, err := c.writableSyncDir(want)
+	if err != nil {
+		return err
+	}
+	if dir != want {
+		c.Log("папка " + want + " недоступна для записи — синхронизация будет в папке приложения: " + dir)
 	}
 	c.mu.Lock()
 	if c.running {
@@ -498,10 +523,12 @@ func (c *Controller) Resync() { go c.syn.Resync() }
 
 // ---------- снимки экрана ----------
 
-// screenshotsState — какие снимки экрана уже скопированы (имя -> размер)
-// и сколько раз просили разрешение на чтение фото.
+// screenshotsState — какие снимки экрана уже скопированы (имя -> размер),
+// какие из них потом удалили из папки (их больше не переносим) и сколько раз
+// просили разрешение на чтение фото.
 type screenshotsState struct {
 	Copied   map[string]int64 `json:"copied"`
+	Gone     map[string]int64 `json:"gone,omitempty"`
 	PermAsks int              `json:"perm_asks"`
 }
 
@@ -536,12 +563,23 @@ func (c *Controller) ImportScreenshots() int {
 	st := c.loadScreenshotState()
 	changed, copied := false, 0
 
+	// Снимок, который уже переносили, но которого больше нет в папке, удалили —
+	// вручную или синхронизацией с компьютера. Запоминаем это: иначе удалённые
+	// на ПК снимки возвращались бы с телефона снова и снова.
+	for _, name := range forgetMissing(dstDir, &st) {
+		changed = true
+		c.Log("снимок экрана удалён из папки — повторно не переносим: " + name)
+	}
+
 	// Основной путь — MediaStore: только он даёт доступ к чужим файлам
 	// (скриншот принадлежит системному приложению).
 	shots, listErr := camera.Screenshots()
 	c.setShotErr(listErr)
 	if listErr == nil {
 		for _, sh := range shots {
+			if _, gone := st.Gone[sh.Name]; gone {
+				continue
+			}
 			if st.Copied[sh.Name] == sh.Size {
 				continue
 			}
@@ -567,6 +605,30 @@ func (c *Controller) ImportScreenshots() int {
 		c.saveScreenshotState(st)
 	}
 	return copied
+}
+
+// forgetMissing переносит записи о снимках, которых больше нет в папке, в
+// список «повторно не переносить»: файл удалили на этом телефоне или
+// синхронизация удалила его вслед за компьютером. Возвращает имена, которые
+// так перенеслись (для журнала).
+func forgetMissing(dstDir string, st *screenshotsState) []string {
+	if len(st.Copied) == 0 {
+		return nil
+	}
+	var gone []string
+	for name, size := range st.Copied {
+		if _, err := os.Stat(filepath.Join(dstDir, name)); err == nil || !os.IsNotExist(err) {
+			continue
+		}
+		delete(st.Copied, name)
+		if st.Gone == nil {
+			st.Gone = map[string]int64{}
+		}
+		st.Gone[name] = size
+		gone = append(gone, name)
+	}
+	sort.Strings(gone)
+	return gone
 }
 
 // setShotErr запоминает текущую ошибку списка снимков и пишет её в журнал
@@ -640,19 +702,24 @@ func (c *Controller) loadScreenshotState() screenshotsState {
 	if st.Copied == nil {
 		st.Copied = map[string]int64{}
 	}
+	if st.Gone == nil {
+		st.Gone = map[string]int64{}
+	}
 	return st
 }
 
 // saveScreenshotState сохраняет список; старые записи отбрасываются.
 func (c *Controller) saveScreenshotState(st screenshotsState) {
-	if len(st.Copied) > 1000 {
-		n := 0
-		for name := range st.Copied {
-			delete(st.Copied, name)
-			n++
-			if n >= 200 {
-				break
-			}
+	// Список «повторно не переносить» растёт медленно: держим последние 4000
+	// имён (в именах снимков есть дата, поэтому старые — первые по алфавиту).
+	if len(st.Gone) > 4000 {
+		names := make([]string, 0, len(st.Gone))
+		for name := range st.Gone {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names[:len(names)-4000] {
+			delete(st.Gone, name)
 		}
 	}
 	b, err := json.MarshalIndent(st, "", "  ")

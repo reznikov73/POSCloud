@@ -16,7 +16,10 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
   “Снимки экрана” inside the sync folder. Android shows another app's files to
   MediaStore only with the photo permission, so the app asks for it at first
   launch (the “Status” tab has the button when the permission is missing); after
-  the dialog is declined twice the button opens the app settings;
+  the dialog is declined twice the button opens the app settings. A screenshot that was
+  already copied but then disappeared from the folder (deleted by hand or by
+  synchronization from a computer) is remembered and never copied again —
+  otherwise screenshots deleted on the PC to free space would keep coming back;
 - **two-way folder synchronization with the server**: polling at an interval,
   file watching (inotify works on internal storage) and a subscription to
   server changes (SSE `/events`) — just like the desktop client;
@@ -65,7 +68,9 @@ repository — see `.gitignore`; the APK is built locally with `build.sh`, CI ch
   intentional limitation of the first version (pure Go without Java wrappers);
 - writing to arbitrary external directories (`/storage/emulated/0/...`) on
   Android 11+ is restricted by the system: you can specify a path, but without
-  the “All files access” permission it will not work.
+  the “All files access” permission it will not work. The app checks the folder on
+  start and, if it is read-only, switches to its own folder (this is written to the
+  log and is visible on the “Status” tab) instead of “working” while nothing is transferred;
 
 ## Building the APK
 

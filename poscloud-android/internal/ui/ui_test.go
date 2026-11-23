@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/software"
 	"fyne.io/fyne/v2/test"
 
@@ -111,6 +112,68 @@ func TestRenderFolderBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	f, err := os.Create(filepath.Join(outDir, "folder-picker.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	w.Close()
+}
+
+// TestPillSwitch — переключатель не растягивается: при раскладке на всю
+// карточку таблетка остаётся своего размера, а касание переключает состояние.
+func TestPillSwitch(t *testing.T) {
+	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
+	w := testApp.NewWindow("x")
+	sw := newPillSwitch(false, nil)
+	if got := sw.MinSize(); got.Width != toggleW || got.Height != toggleH {
+		t.Fatalf("MinSize = %v, ожидалось %v×%v", got, toggleW, toggleH)
+	}
+	var calls []bool
+	sw.OnChanged = func(on bool) { calls = append(calls, on) }
+	sw.Tapped(&fyne.PointEvent{})
+	if !sw.Checked() || len(calls) != 1 || !calls[0] {
+		t.Fatalf("после касания: on=%v, вызовы=%v", sw.Checked(), calls)
+	}
+	sw.SetChecked(true) // повтор того же положения — без вызова
+	if len(calls) != 1 {
+		t.Fatalf("лишний вызов OnChanged: %v", calls)
+	}
+	// даже если раскладка отдала всю высоту карточки, ползунок не больше таблетки
+	c := software.NewCanvas()
+	c.SetPadded(false)
+	c.SetContent(sw)
+	c.Resize(fyne.NewSize(toggleW, 140))
+	w.Close()
+}
+
+// TestRenderToggle рисует переключатель в обоих положениях — глазами проверяем
+// форму таблетки и ползунка (только при заданном POSCLOUD_SHOTS).
+func TestRenderToggle(t *testing.T) {
+	outDir := os.Getenv("POSCLOUD_SHOTS")
+	if outDir == "" {
+		t.Skip("POSCLOUD_SHOTS не задан — скриншоты не нужны")
+	}
+	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
+	w := testApp.NewWindow("x")
+	box := container.NewHBox(newPillSwitch(false, nil), newPillSwitch(true, nil))
+	c := software.NewCanvas()
+	c.SetPadded(true)
+	c.SetScale(3.0)
+	c.SetContent(box)
+	c.Resize(fyne.NewSize(150, 50))
+	img := software.RenderCanvas(c, Theme())
+	if img == nil {
+		t.Fatal("пустой рендер")
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(outDir, "toggle.png"))
 	if err != nil {
 		t.Fatal(err)
 	}

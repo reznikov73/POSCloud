@@ -176,8 +176,11 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		}
 	}
 	ui.swSync.OnChanged = ui.onToggle
+	// Переключатель держим в окошке своего размера: BorderLayout растянул бы его
+	// на всю высоту карточки, и ползунок стал бы огромным кругом.
+	swBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(toggleW, toggleH)), ui.swSync)
 	syncCard := container.NewPadded(widget.NewCard("", "", container.NewBorder(nil, nil,
-		container.NewVBox(ui.stateTitle, ui.stateSub), ui.swSync)))
+		container.NewVBox(ui.stateTitle, ui.stateSub), swBox)))
 
 	ui.btnNow = widget.NewButtonWithIcon("Синхронизировать сейчас", theme.ViewRefreshIcon(), func() { ctrl.SyncNow() })
 	ui.btnNow.Importance = widget.HighImportance
@@ -705,6 +708,8 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			stateTxt := "остановлена"
 			if running {
 				switch {
+				case st.DirErr != "":
+					stateTxt = "папка недоступна для записи"
 				case st.Online && st.LastSync != "":
 					stateTxt = "работает · цикл " + st.LastSync
 				case st.Online:
@@ -746,7 +751,10 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 				ui.serverValue.SetText(eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
 				ui.folderValue.SetText(cfg.Dir)
 				ui.countValue.SetText(countTxt)
-				if st.ErrMsg != "" {
+				if st.DirErr != "" {
+					ui.errLabel.SetText("Папка синхронизации недоступна для записи: " + st.DirErr + "\nВыберите другую папку на вкладке «Связь».")
+					ui.errLabel.Show()
+				} else if st.ErrMsg != "" {
 					ui.errLabel.SetText(st.ErrMsg)
 					ui.errLabel.Show()
 				} else {

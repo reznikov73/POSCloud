@@ -1,13 +1,20 @@
 package ui
 
 import (
+	"image/color"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/widget"
 )
 
-// pillSwitch — переключатель «вкл/выкл» в стиле мобильных настроек:
-// крупный (64×36), срабатывает одним касанием. В Fyne 2.8 готового Switch нет.
+// pillSwitch — переключатель «вкл/выкл» в стиле мобильных настроек: таблетка
+// с круглым ползунком, срабатывает одним касанием. В Fyne 2.8 готового Switch нет.
+//
+// Размер у переключателя постоянный: раскладка может отдать ему хоть всю
+// карточку по высоте (BorderLayout растягивает правое поле), а рисуется всё
+// равно таблетка toggleW×toggleH по центру — иначе ползунок превращался в
+// огромный белый круг на весь экран.
 type pillSwitch struct {
 	widget.BaseWidget
 	OnChanged func(bool)
@@ -18,19 +25,25 @@ type pillSwitch struct {
 }
 
 const (
-	toggleW   = 64
-	toggleH   = 36
-	togglePad = 4
+	toggleW   = 56 // ширина таблетки, dp
+	toggleH   = 32 // высота таблетки, dp
+	togglePad = 4  // отступ ползунка от края таблетки, dp
 )
 
 func newPillSwitch(on bool, changed func(bool)) *pillSwitch {
 	t := &pillSwitch{
 		OnChanged: changed,
 		on:        on,
-		bg:        canvas.NewRectangle(colBorder),
+		bg:        canvas.NewRectangle(colTrackOff),
 		knob:      canvas.NewCircle(colCard),
 	}
 	t.bg.CornerRadius = toggleH / 2
+	t.knob.StrokeWidth = 1
+	t.knob.Shadow = canvas.Shadow{
+		Color:      color.NRGBA{R: 0x0F, G: 0x17, B: 0x2A, A: 0x24},
+		BlurRadius: 3,
+		Offset:     fyne.NewPos(0, 1),
+	}
 	t.ExtendBaseWidget(t)
 	return t
 }
@@ -53,7 +66,7 @@ func (t *pillSwitch) SetChecked(on bool) {
 // Tapped переключает по касанию.
 func (t *pillSwitch) Tapped(*fyne.PointEvent) { t.SetChecked(!t.on) }
 
-// MinSize — размер под палец.
+// MinSize — размер таблетки: касание попадает по всей площади.
 func (t *pillSwitch) MinSize() fyne.Size { return fyne.NewSize(toggleW, toggleH) }
 
 // CreateRenderer возвращает отрисовщик из фона-«таблетки» и кружка-ползунка.
@@ -73,24 +86,50 @@ func (r *pillRenderer) Destroy()                     {}
 func (r *pillRenderer) Objects() []fyne.CanvasObject { return r.objs }
 func (r *pillRenderer) MinSize() fyne.Size           { return r.t.MinSize() }
 
-// Layout растягивает фон и ставит ползунок влево («выкл») или вправо («вкл»).
+// Layout рисует таблетку постоянного размера по центру отведённого места и
+// ставит ползунок влево («выкл») или вправо («вкл»).
 func (r *pillRenderer) Layout(size fyne.Size) {
-	r.t.bg.Resize(size)
-	d := size.Height - 2*togglePad
-	x := float32(togglePad)
+	w, h := float32(toggleW), float32(toggleH)
+	// если места меньше таблетки — уменьшаем пропорционально, но не растягиваем
+	if size.Width > 0 && size.Width < w {
+		w = size.Width
+		h = w * toggleH / toggleW
+	}
+	if size.Height > 0 && size.Height < h {
+		h = size.Height
+		w = h * toggleW / toggleH
+	}
+	x0 := (size.Width - w) / 2
+	y0 := (size.Height - h) / 2
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+
+	r.t.bg.Resize(fyne.NewSize(w, h))
+	r.t.bg.CornerRadius = h / 2
+	r.t.bg.Move(fyne.NewPos(x0, y0))
+
+	pad := h * togglePad / toggleH
+	d := h - 2*pad
+	x := x0 + pad
 	if r.t.on {
-		x = size.Width - d - togglePad
+		x = x0 + w - d - pad
 	}
 	r.t.knob.Resize(fyne.NewSize(d, d))
-	r.t.knob.Move(fyne.NewPos(x, togglePad))
+	r.t.knob.Move(fyne.NewPos(x, y0+pad))
 }
 
 // Refresh перекрашивает фон: зелёный — включено, серый — выключено.
 func (r *pillRenderer) Refresh() {
 	if r.t.on {
 		r.t.bg.FillColor = colSuccess
+		r.t.knob.StrokeColor = colSuccess
 	} else {
-		r.t.bg.FillColor = colMuted
+		r.t.bg.FillColor = colTrackOff
+		r.t.knob.StrokeColor = colTrackEdge
 	}
 	canvas.Refresh(r.t.bg)
 	canvas.Refresh(r.t.knob)

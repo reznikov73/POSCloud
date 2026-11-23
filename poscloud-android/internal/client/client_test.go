@@ -56,6 +56,56 @@ func TestDeviceNameFallback(t *testing.T) {
 	}
 }
 
+// TestForgetMissing — снимок, удалённый из папки (вручную или синхронизацией
+// с компьютера), больше не считается новым: иначе он возвращался бы с телефона.
+func TestForgetMissing(t *testing.T) {
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, "keep.jpg"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := screenshotsState{
+		Copied: map[string]int64{"keep.jpg": 1, "gone2.jpg": 2, "gone1.jpg": 3},
+		Gone:   map[string]int64{},
+	}
+	got := forgetMissing(dst, &st)
+	if len(got) != 2 || got[0] != "gone1.jpg" || got[1] != "gone2.jpg" {
+		t.Fatalf("forgetMissing = %v, ожидалось [gone1.jpg gone2.jpg]", got)
+	}
+	if _, ok := st.Copied["keep.jpg"]; !ok || len(st.Copied) != 1 {
+		t.Fatalf("в copied должен остаться только keep.jpg: %v", st.Copied)
+	}
+	if st.Gone["gone1.jpg"] != 3 || st.Gone["gone2.jpg"] != 2 {
+		t.Fatalf("удалённые снимки не запомнены: %v", st.Gone)
+	}
+	if again := forgetMissing(dst, &st); len(again) != 0 {
+		t.Fatalf("повторный вызов ничего не должен находить: %v", again)
+	}
+}
+
+// TestWritableSyncDir — недоступную для записи папку заменяем папкой
+// приложения: иначе на Android 11+ с внешней папкой синхронизация «работает»,
+// а файлы не идут.
+func TestWritableSyncDir(t *testing.T) {
+	root := t.TempDir()
+	c := NewController(root)
+	blocker := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// родитель — файл: каталог не создать, запись невозможна
+	got, err := c.writableSyncDir(filepath.Join(blocker, "sync"))
+	if err != nil {
+		t.Fatalf("writableSyncDir: %v", err)
+	}
+	if got != c.DefaultSyncDir() {
+		t.Fatalf("папка не заменена: %q, ожидалась %q", got, c.DefaultSyncDir())
+	}
+	// доступная папка остаётся как есть
+	if got, err := c.writableSyncDir(root); err != nil || got != root {
+		t.Fatalf("доступная папка изменена: %q, %v", got, err)
+	}
+}
+
 // TestTransfers checks the transfer progress receiver.
 func TestTransfers(t *testing.T) {
 	s := &TransferStore{m: map[string]*transferState{}}
