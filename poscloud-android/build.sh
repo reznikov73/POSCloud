@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 
 APPID=io.github.reznikov73.poscloud.client
 NAME="POSCloud Client"
-VERSION=${APP_VERSION:-1.0.0}
+VERSION=${APP_VERSION:-$(cat ../installer/version.txt 2>/dev/null || echo 1.0.0)}
 BUILD=${APP_BUILD:-1}
 
 command -v fyne >/dev/null 2>&1 || {

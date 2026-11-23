@@ -10,7 +10,8 @@
 закрытие окна не завершает программу. Написаны на Go (Wails: WebView2 в Windows,
 WebKitGTK в Linux), всё крутится на своих устройствах — внешние сервисы не нужны.
 
-**Сервер собирается и работает под Windows и Linux**; клиент и Lite — пока только под Windows.
+**Сервер собирается и работает под Windows и Linux**; клиент и Lite — пока только под Windows,
+для Android есть отдельный клиент в папке [`poscloud-android`](poscloud-android).
 Отличия платформ (автозапуск, защита токенов, освобождение порта) описаны в
 [`poscloud-server/README.md`](poscloud-server/README.md), раздел «Linux».
 

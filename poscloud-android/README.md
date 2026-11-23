@@ -41,7 +41,7 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 | `../engine` | the shared sync engine (included via `replace` in `go.mod`) |
 
 Build artifacts (`Icon.png`, `*.apk`, signing keys) never get into the
-repository — see `.gitignore`; the APK is built by CI (workflow `android-apk.yml`).
+repository — see `.gitignore`; the APK is built locally with `build.sh`, CI checks the module's tests (job `android-unit`).
 
 ## How it works on Android
 
@@ -107,7 +107,7 @@ keytool -genkeypair -v -keystore poscloud-release.keystore \
   -alias poscloud -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-CI (`android-apk.yml`) builds the APK with an fyne debug signature — you can
+`build.sh` signs the APK with an fyne debug signature by default — you can
 install it, but it will not install on top of a release signature. For publishing to
 the Play Store use your own key and an `.aab` via `bundletool`.
 
@@ -118,6 +118,9 @@ go test ./internal/...          # controller logic: settings, log, progress
 go test -run TestBuildUISmoke . # the interface on the Fyne test driver
 POSCLOUD_SHOTS=/tmp/shots go test -run TestScreenshotRender .  # tab screenshots
 ```
+
+CI runs `go test ./internal/...` and `go vet ./internal/...` for this module
+(job `android-unit`).
 
 A desktop Linux build for debugging requires system GL libraries
 (`libgl1-mesa-dev libwayland-dev libxkbcommon-dev` and X11 dev); for Android
