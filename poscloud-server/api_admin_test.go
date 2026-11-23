@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -90,9 +91,13 @@ func TestAdminStorePersistence(t *testing.T) {
 		t.Fatalf("файл admin.json не создан: %v", err)
 	}
 	// Права 0600: хеш не должен читаться другими пользователями.
-	if fi, err := os.Stat(p); err == nil {
-		if perm := fi.Mode().Perm(); perm != 0600 {
-			t.Fatalf("права на admin.json = %o, ожидались 0600", perm)
+	// Windows не хранит POSIX-права: os.Chmod там переключает только признак
+	// «только чтение», а os.Stat всегда отдаёт 0666. Проверяем на Unix.
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(p); err == nil {
+			if perm := fi.Mode().Perm(); perm != 0600 {
+				t.Fatalf("права на admin.json = %o, ожидались 0600", perm)
+			}
 		}
 	}
 
