@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"image/color"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
@@ -24,75 +26,101 @@ func (s *State) pickFolder(ctrl *client.Controller) {
 	if !isDir(start) {
 		start = ctrl.DefaultSyncDir()
 	}
-	cur := start
+	browser := newFolderBrowser(ctrl, start, s.win)
 
-	pathLabel := widget.NewLabel(start)
-	pathLabel.Wrapping = fyne.TextWrapBreak
-
-	list := container.NewVBox()
-	var load func(string)
-	load = func(dir string) {
-		cur = dir
-		pathLabel.SetText(dir)
-		list.Objects = nil
-
-		if parent := filepath.Dir(dir); parent != dir {
-			list.Add(widget.NewButtonWithIcon("На уровень выше", theme.NavigateBackIcon(), func() {
-				load(parent)
-			}))
-		}
-
-		names, err := subdirs(dir)
-		if err != nil {
-			list.Add(caption("Нет доступа: " + err.Error()))
-			list.Refresh()
-			return
-		}
-		if len(names) == 0 {
-			list.Add(caption("Подкаталогов нет"))
-		}
-		for _, name := range names {
-			path := filepath.Join(dir, name)
-			list.Add(widget.NewButtonWithIcon(name, theme.FolderIcon(), func() {
-				load(path)
-			}))
-		}
-		list.Refresh()
-	}
-
-	// Быстрые переходы: приватный каталог, внешний каталог приложения и
-	// корень общей памяти (последний доступен не на всех прошивках).
-	quick := container.NewHBox(
-		widget.NewButton("Приложение", func() { load(ctrl.DefaultSyncDir()) }),
-		widget.NewButton("На карте", func() {
-			dir := ctrl.ExternalSyncDir()
-			if dir == "" {
-				dialog.ShowInformation("Папка на карте",
-					"Android не дал доступ к общей памяти. Оставьте папку приложения.", s.win)
-				return
-			}
-			load(dir)
-		}),
-		widget.NewButton("Память", func() { load(sharedRoot()) }),
-	)
-
-	content := container.NewBorder(
-		container.NewVBox(pathLabel, quick, widget.NewSeparator()),
-		nil, nil, nil,
-		container.NewVScroll(list),
-	)
-
-	d := dialog.NewCustom("Папка синхронизации", "Отмена", content, s.win)
+	d := dialog.NewCustom("Папка синхронизации", "Отмена", browser.object(), s.win)
 	d.SetButtons([]fyne.CanvasObject{
 		widget.NewButton("Отмена", func() { d.Hide() }),
 		widget.NewButtonWithIcon("Выбрать эту папку", theme.ConfirmIcon(), func() {
-			s.setDir(cur)
+			s.setDir(browser.current())
 			d.Hide()
 		}),
 	})
 	d.Resize(fyne.NewSize(420, 560))
-	load(start)
 	d.Show()
+}
+
+// folderBrowser — состояние браузера каталогов: текущий путь и список.
+type folderBrowser struct {
+	ctrl *client.Controller
+	win  fyne.Window
+	cur  string
+	path *widget.Label
+	list *fyne.Container
+}
+
+func newFolderBrowser(ctrl *client.Controller, start string, win fyne.Window) *folderBrowser {
+	b := &folderBrowser{ctrl: ctrl, win: win}
+	b.path = widget.NewLabel(start)
+	b.path.Wrapping = fyne.TextWrapBreak
+	b.list = container.NewVBox()
+	b.load(start)
+	return b
+}
+
+// current — выбранный сейчас каталог.
+func (b *folderBrowser) current() string { return b.cur }
+
+// object собирает браузер: путь сверху, быстрые переходы, список каталогов.
+func (b *folderBrowser) object() fyne.CanvasObject {
+	quick := container.NewHBox(
+		dialogRow("Приложение", theme.HomeIcon(), func() { b.load(b.ctrl.DefaultSyncDir()) }),
+		dialogRow("На карте", theme.StorageIcon(), func() {
+			dir := b.ctrl.ExternalSyncDir()
+			if dir == "" {
+				dialog.ShowInformation("Папка на карте",
+					"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
+				return
+			}
+			b.load(dir)
+		}),
+		dialogRow("Память", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
+	)
+	return container.NewBorder(
+		container.NewVBox(b.path, quick, widget.NewSeparator()),
+		nil, nil, nil,
+		container.NewVScroll(b.list),
+	)
+}
+
+// load перестраивает список каталогов.
+func (b *folderBrowser) load(dir string) {
+	b.cur = dir
+	b.path.SetText(dir)
+	b.list.Objects = nil
+
+	if parent := filepath.Dir(dir); parent != dir {
+		b.list.Add(dialogRow("На уровень выше", theme.NavigateBackIcon(), func() {
+			b.load(parent)
+		}))
+	}
+
+	names, err := subdirs(dir)
+	if err != nil {
+		b.list.Add(caption("Нет доступа: " + err.Error()))
+		b.list.Refresh()
+		return
+	}
+	if len(names) == 0 {
+		b.list.Add(caption("Подкаталогов нет"))
+	}
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		b.list.Add(dialogRow(name, theme.FolderIcon(), func() {
+			b.load(path)
+		}))
+	}
+	b.list.Refresh()
+}
+
+// dialogRow — строка списка каталогов: высокая (палец попадает), текст слева,
+// иконка в начале. Обычная кнопка Fyne центрирует текст и мельче.
+func dialogRow(text string, icon fyne.Resource, tapped func()) fyne.CanvasObject {
+	btn := widget.NewButtonWithIcon(text, icon, tapped)
+	btn.Alignment = widget.ButtonAlignLeading
+	bg := canvas.NewRectangle(color.Transparent)
+	bg.SetMinSize(fyne.NewSize(0, 48))
+	return container.NewStack(bg, btn)
 }
 
 // subdirs возвращает имена подкаталогов без скрытых, по алфавиту.

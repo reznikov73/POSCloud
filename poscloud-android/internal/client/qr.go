@@ -33,7 +33,7 @@ func DecodeQRImage(img image.Image) (string, error) {
 	small := resizeMax(img, maxDecodeSide)
 
 	// Порядок попыток — от дешёвой к дорогой.
-	stages := [][]image.Image{rotations(small), rotations(binarize(small)), rotations(sharpen(small))}
+	stages := [][]image.Image{rotations(small), rotations(binarize(small)), rotations(sharpen(small)), rotations(invert(small))}
 	if small.Bounds() != img.Bounds() {
 		stages = append(stages, rotations(img))
 	}
@@ -185,6 +185,19 @@ func sharpen(src image.Image) image.Image {
 			}
 			dst.Pix[di+3] = 255
 		}
+	}
+	return dst
+}
+
+// invert даёт негатив: светлый код на тёмном фоне так читается.
+func invert(src image.Image) image.Image {
+	s := toRGBA(src)
+	dst := image.NewRGBA(s.Rect)
+	for i := 0; i < len(s.Pix); i += 4 {
+		dst.Pix[i] = 255 - s.Pix[i]
+		dst.Pix[i+1] = 255 - s.Pix[i+1]
+		dst.Pix[i+2] = 255 - s.Pix[i+2]
+		dst.Pix[i+3] = 255
 	}
 	return dst
 }

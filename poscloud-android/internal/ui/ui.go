@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -334,9 +335,11 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// Форма для узкого экрана: подпись над полем, поля и кнопки — на всю ширину.
 	// Классическая форма Fyne держит подписи в отдельной колонке слева и на
 	// телефоне оставляет полям слишком мало места.
+	// Адрес и порт — на одной горизонтали: порт узкий, адрес занимает остальное.
+	portBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(96, 46)), ui.portEntry)
+
 	form := container.NewVBox(
-		formRow("Сервер", ui.hostEntry),
-		formRow("Порт", ui.portEntry),
+		container.NewBorder(nil, nil, nil, formRow("Порт", portBox), formRow("Адрес сервера", ui.hostEntry)),
 		formRow("Токен", ui.tokenEntry),
 		formRow("Имя устройства", ui.deviceEntry),
 		formRow("Папка", container.NewVBox(ui.dirLabel, pickBtn)),

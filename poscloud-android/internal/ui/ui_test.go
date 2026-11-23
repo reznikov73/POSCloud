@@ -80,6 +80,47 @@ func TestSubdirs(t *testing.T) {
 	}
 }
 
+// TestRenderFolderBrowser рендерит список каталогов: проверяем высоту строк
+// и выравнивание текста влево без запуска приложения.
+func TestRenderFolderBrowser(t *testing.T) {
+	outDir := os.Getenv("POSCLOUD_SHOTS")
+	if outDir == "" {
+		t.Skip("POSCLOUD_SHOTS не задан — скриншоты не нужны")
+	}
+	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
+	w := testApp.NewWindow("x")
+	ctrl := client.NewController(t.TempDir())
+	root := ctrl.DefaultSyncDir()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	browser := newFolderBrowser(ctrl, root, w)
+
+	c := software.NewCanvas()
+	c.SetPadded(false)
+	c.SetContent(browser.object())
+	c.Resize(fyne.NewSize(430, 560))
+	img := software.RenderCanvas(c, Theme())
+	if img == nil {
+		t.Fatal("пустой рендер")
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(outDir, "folder-picker.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	w.Close()
+}
+
 // TestScreenshotRender рендерит интерфейс (фирменная светлая тема)
 // в картинки — это скриншоты вкладок без запуска приложения.
 func TestScreenshotRender(t *testing.T) {

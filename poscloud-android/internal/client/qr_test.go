@@ -146,6 +146,18 @@ func TestDecodeQRImageRotated(t *testing.T) {
 	}
 }
 
+// TestDecodeQRImageInverted — светлый код на тёмном фоне (негатив).
+func TestDecodeQRImageInverted(t *testing.T) {
+	code := "poscloud://connect?v=1&host=10.0.0.7&port=8090&tls=0&code=pcp_inv"
+	got, err := DecodeQRImage(invert(renderQR(t, code)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != code {
+		t.Fatalf("неверный текст: %q", got)
+	}
+}
+
 // TestDecodeQRImagePhotoLike — «фотография»: код занимает малую часть кадра,
 // фон неровный, снимок больше предела уменьшения.
 func TestDecodeQRImagePhotoLike(t *testing.T) {
