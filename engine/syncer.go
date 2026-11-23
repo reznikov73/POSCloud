@@ -664,7 +664,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					s.log("вниз удаление: " + name)
 				} else {
 					cf := ConflictName(name)
-					_ = os.Rename(LocalPath(dir, name), LocalPath(dir, cf))
+					_ = moveFile(LocalPath(dir, name), LocalPath(dir, cf))
 					if mode == FolderBoth {
 						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
@@ -766,7 +766,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 				case FolderDown:
 					// «только получать»: ставим серверную версию, локальные правки сохраняем копией
 					cf := ConflictName(name)
-					_ = os.Rename(LocalPath(dir, name), LocalPath(dir, cf))
+					_ = moveFile(LocalPath(dir, name), LocalPath(dir, cf))
 					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++

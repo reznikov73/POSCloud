@@ -377,7 +377,7 @@ func downloadFileBlockwise(base, dir, name string, mtime int64, token string, bl
 			return fmt.Errorf("размер собранного файла не совпал")
 		}
 	}
-	if err := os.Rename(tn, dst); err != nil {
+	if err := moveFile(tn, dst); err != nil {
 		os.Remove(tn)
 		return err
 	}

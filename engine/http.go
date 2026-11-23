@@ -283,7 +283,7 @@ func DownloadFile(base, dir, name string, mtime int64, token string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, dst); err != nil {
+	if err := moveFile(tmp, dst); err != nil {
 		os.Remove(tmp)
 		return err
 	}

@@ -97,7 +97,9 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := os.Chmod(tmp, perm); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	// На Android в общей памяти переименование может быть запрещено — тогда
+	// ставим файл копированием (без атомарности, но с .bak на случай обрыва).
+	if err := moveFile(tmp, path); err != nil {
 		return err
 	}
 	ok = true
