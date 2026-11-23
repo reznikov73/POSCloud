@@ -81,43 +81,9 @@ func hint(text string) fyne.CanvasObject {
 	return rt
 }
 
-// statusDot — цветной индикатор состояния.
-type statusDot struct {
-	dot  *canvas.Circle
-	text *widget.Label
-}
-
-func newStatusDot() *statusDot {
-	d := &statusDot{
-		dot:  canvas.NewCircle(colMuted),
-		text: widget.NewLabelWithStyle("Синхронизация остановлена", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-	}
-	d.text.Wrapping = fyne.TextWrapWord
-	d.dot.StrokeWidth = 0
-	return d
-}
-
-func (s *statusDot) object() fyne.CanvasObject {
-	return container.NewHBox(container.NewPadded(s.dot), s.text)
-}
-
-func (s *statusDot) set(running, online bool, errMsg string) {
-	switch {
-	case running && online:
-		s.dot.FillColor = colSuccess
-		s.text.SetText("Синхронизация работает")
-	case running:
-		s.dot.FillColor = colWarn
-		if errMsg != "" {
-			s.text.SetText("Проблема связи: " + errMsg)
-		} else {
-			s.text.SetText("Синхронизация работает — ждём сервер")
-		}
-	default:
-		s.dot.FillColor = colMuted
-		s.text.SetText("Синхронизация остановлена")
-	}
-	canvas.Refresh(s.dot)
+// tile — плитка «подпись + крупное значение» для сетки 2×2.
+func tile(label string, value *widget.Label) fyne.CanvasObject {
+	return widget.NewCard("", "", container.NewVBox(caption(label), value))
 }
 
 // ---------- состояние интерфейса ----------
@@ -127,12 +93,16 @@ type State struct {
 	Content fyne.CanvasObject
 
 	// статус
-	dot          *statusDot
+	stateTitle   *widget.Label
+	stateSub     *widget.Label
+	swSync       *pillSwitch
+	onToggle     func(bool)
 	serverValue  *widget.Label
 	onlineValue  *widget.Label
 	folderValue  *widget.Label
-	syncValue    *widget.Label
 	countValue   *widget.Label
+	upValue      *widget.Label
+	downValue    *widget.Label
 	errLabel     *widget.Label
 	transferText *widget.Label
 	transferBar  *widget.ProgressBar
@@ -141,9 +111,7 @@ type State struct {
 	shotLabel    *widget.Label
 	btnShotPerm  *widget.Button
 
-	btnStart *widget.Button
-	btnStop  *widget.Button
-	btnNow   *widget.Button
+	btnNow *widget.Button
 
 	// подключение (поля читает «Запустить»)
 	hostEntry     *widget.Entry
@@ -179,27 +147,46 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	cfg := ctrl.Config()
 
 	// ===== вкладка «Статус» =====
-	ui.dot = newStatusDot()
-
+	// Макет B: главное действие — переключатель «Синхронизация» (как Wi-Fi в
+	// настройках телефона), под ним одна крупная кнопка «сейчас», цифры —
+	// плитками 2×2. Кнопки и плитки — в высоту пальца.
 	ui.serverValue = widget.NewLabel(eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
-	ui.onlineValue = widget.NewLabel("неизвестно")
+	ui.onlineValue = widget.NewLabel("—")
 	ui.folderValue = widget.NewLabel(cfg.Dir)
-	ui.syncValue = widget.NewLabel("—")
 	ui.countValue = widget.NewLabel("—")
-	for _, l := range []*widget.Label{ui.serverValue, ui.onlineValue, ui.folderValue, ui.syncValue, ui.countValue} {
-		l.Wrapping = fyne.TextWrapWord
-	}
+	ui.upValue = widget.NewLabel("0 Б")
+	ui.downValue = widget.NewLabel("0 Б")
 	// Путь к папке — одна длинная строка без пробелов: переносим её в любом месте,
 	// иначе карточка требует ширину больше экрана телефона.
 	ui.folderValue.Wrapping = fyne.TextWrapBreak
+	for _, l := range []*widget.Label{ui.onlineValue, ui.countValue, ui.upValue, ui.downValue} {
+		l.TextStyle = fyne.TextStyle{Bold: true}
+		l.SizeName = theme.SizeNameHeadingText
+	}
 
-	stateCard := widget.NewCard("Состояние", "", container.NewVBox(
-		fieldRow("Адрес", ui.serverValue),
-		fieldRow("Связь", ui.onlineValue),
-		fieldRow("Папка", ui.folderValue),
-		fieldRow("Файлов", ui.countValue),
-		fieldRow("Последний цикл", ui.syncValue),
-	))
+	ui.stateTitle = widget.NewLabelWithStyle("Синхронизация", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	ui.stateTitle.SizeName = theme.SizeNameHeadingText
+	ui.stateSub = caption("остановлена")
+	ui.swSync = newPillSwitch(false, nil)
+	ui.onToggle = func(on bool) {
+		if on {
+			ui.startSync(ctrl)
+		} else {
+			ctrl.Stop()
+		}
+	}
+	ui.swSync.OnChanged = ui.onToggle
+	syncCard := container.NewPadded(widget.NewCard("", "", container.NewBorder(nil, nil,
+		container.NewVBox(ui.stateTitle, ui.stateSub), ui.swSync)))
+
+	ui.btnNow = widget.NewButtonWithIcon("Синхронизировать сейчас", theme.ViewRefreshIcon(), func() { ctrl.SyncNow() })
+	ui.btnNow.Importance = widget.HighImportance
+	ui.btnNow.Disable()
+
+	tiles := container.NewGridWithColumns(2,
+		tile("Связь", ui.onlineValue), tile("Файлов", ui.countValue),
+		tile("Отправлено", ui.upValue), tile("Получено", ui.downValue),
+	)
 
 	ui.errLabel = widget.NewLabel("")
 	ui.errLabel.Wrapping = fyne.TextWrapWord
@@ -224,42 +211,21 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.shotBox = container.NewVBox(ui.shotLabel, ui.btnShotPerm)
 	ui.shotBox.Hide()
 
-	ui.btnStart = widget.NewButtonWithIcon("Запустить", theme.MediaPlayIcon(), func() {
-		host := strings.TrimSpace(ui.hostEntry.Text)
-		port := atoiDefault(ui.portEntry.Text, cfg.Port)
-		interval := atoiDefault(ui.intervalEntry.Text, cfg.Interval)
-		if err := ctrl.Start(host, port, cleanPath(ui.dirValue), interval,
-			ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fpEntry.Text); err != nil {
-			dialog.ShowError(err, w)
-			return
-		}
-		ui.refreshStatic(ctrl)
-	})
-	ui.btnStart.Importance = widget.HighImportance
-
-	ui.btnStop = widget.NewButtonWithIcon("Остановить", theme.MediaStopIcon(), func() {
-		ctrl.Stop()
-	})
-	ui.btnNow = widget.NewButtonWithIcon("Синхронизировать", theme.ViewRefreshIcon(), func() { ctrl.SyncNow() })
-
-	// Кнопки — сразу под состоянием: на телефоне до них не нужно
-	// докручивать карточки, а нижняя граница прокрутки их не срезает.
-	actions := container.NewVBox(
-		ui.btnStart,
-		container.NewGridWithColumns(2, ui.btnStop, ui.btnNow),
-	)
-	statusSpacer := canvas.NewRectangle(colBg)
-	statusSpacer.SetMinSize(fyne.NewSize(0, 8))
+	serverCard := widget.NewCard("", "", container.NewVBox(
+		fieldRow("Сервер", ui.serverValue),
+		fieldRow("Папка", ui.folderValue),
+	))
 
 	statusCard := container.NewVBox(
-		ui.dot.object(),
-		actions,
+		heading("POSCloud"),
+		syncCard,
+		ui.btnNow,
 		ui.shotBox,
-		stateCard,
+		tiles,
+		serverCard,
 		transferCard,
 		ui.errLabel,
 		container.NewPadded(caption("Синхронизация работает, пока приложение открыто; для фоновой работы держите его в недавних.")),
-		statusSpacer,
 	)
 
 	// ===== вкладка «Подключение» =====
@@ -475,7 +441,14 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.Content = tabs
 
 	ui.refreshStatic(ctrl)
-	refreshFolders(ctrl, ui)
+	// Список папок запрашиваем только при настроенном подключении: без токена
+	// сервер отвечает отказом, а горутина запроса не должна переживать сборку
+	// интерфейса (в тестах это даёт гонку в шейпере текста).
+	if ctrl.HasCredentials() {
+		refreshFolders(ctrl, ui)
+	} else {
+		ui.foldersState.SetText("Подключитесь к серверу — здесь появятся папки для выборочной синхронизации.")
+	}
 	return ui
 }
 
@@ -617,6 +590,7 @@ func (ui *State) pairConnect(ctrl *client.Controller, code string) {
 			}
 			ui.loadFromConfig(ctrl)
 			ui.refreshStatic(ctrl)
+			refreshFolders(ctrl, ui)
 			// у формы с готовым токеном устройства нет имени пользователя
 			lines := fmt.Sprintf("Сервер: %s\nУстройство: %s",
 				eng.BaseURL(ctrl.Config().Host, ctrl.Config().Port, ctrl.Config().TLS), res.DeviceName)
@@ -650,6 +624,30 @@ func (ui *State) loadFromConfig(ctrl *client.Controller) {
 		ui.fpEntry.SetText(cfg.TLSFingerprint)
 	}
 	ui.autoRunCheck.SetChecked(ctrl.AutoRunEnabled())
+}
+
+// setSwitch выставляет переключатель синхронизации, не вызывая его обработчик:
+// таймер обновляет положение каждую секунду по факту, а не по желанию.
+func (ui *State) setSwitch(on bool) {
+	ui.swSync.OnChanged = nil
+	ui.swSync.SetChecked(on)
+	ui.swSync.OnChanged = ui.onToggle
+}
+
+// startSync запускает синхронизацию по полям вкладки «Подключение»; при
+// ошибке возвращает переключатель в положение «выкл».
+func (ui *State) startSync(ctrl *client.Controller) {
+	host := strings.TrimSpace(ui.hostEntry.Text)
+	port := atoiDefault(ui.portEntry.Text, ctrl.Config().Port)
+	interval := atoiDefault(ui.intervalEntry.Text, ctrl.Config().Interval)
+	if err := ctrl.Start(host, port, cleanPath(ui.dirValue), interval,
+		ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fpEntry.Text); err != nil {
+		ui.setSwitch(false)
+		dialog.ShowError(err, ui.win)
+		return
+	}
+	ui.refreshStatic(ctrl)
+	refreshFolders(ctrl, ui)
 }
 
 // refreshStatic обновляет статические подписи (сервер, папка).
@@ -690,21 +688,31 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			running := ctrl.Running()
 			tr := client.Transfers.Snapshot()
 
-			onlineTxt := "неизвестно"
+			onlineTxt := "—"
 			if running {
 				if st.Online {
 					onlineTxt = "есть"
 				} else if st.ErrMsg != "" {
-					onlineTxt = st.ErrMsg
+					onlineTxt = "нет"
 				} else {
-					onlineTxt = "ожидание"
+					onlineTxt = "ждём"
 				}
 			}
-			syncTxt := "—"
-			if st.LastSync != "" {
-				syncTxt = st.LastSync
+			stateTxt := "остановлена"
+			if running {
+				switch {
+				case st.Online && st.LastSync != "":
+					stateTxt = "работает · цикл " + st.LastSync
+				case st.Online:
+					stateTxt = "работает"
+				case st.ErrMsg != "":
+					stateTxt = "проблема связи: " + st.ErrMsg
+				default:
+					stateTxt = "работает — ждём сервер"
+				}
 			}
 			countTxt := fmt.Sprintf("%d", st.Count)
+			up, down := client.Transfers.Totals()
 
 			var logTxt string
 			if ctrl.LogDirtyAndReset() {
@@ -717,7 +725,10 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			}
 
 			fyne.Do(func() {
-				ui.dot.set(running, st.Online, st.ErrMsg)
+				ui.setSwitch(running)
+				ui.stateSub.SetText(stateTxt)
+				ui.upValue.SetText(humanBytes(up))
+				ui.downValue.SetText(humanBytes(down))
 				if photoGranted {
 					ui.shotBox.Hide()
 				} else {
@@ -730,7 +741,6 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 				ui.onlineValue.SetText(onlineTxt)
 				ui.serverValue.SetText(eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
 				ui.folderValue.SetText(cfg.Dir)
-				ui.syncValue.SetText(syncTxt)
 				ui.countValue.SetText(countTxt)
 				if st.ErrMsg != "" {
 					ui.errLabel.SetText(st.ErrMsg)
@@ -739,12 +749,8 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 					ui.errLabel.Hide()
 				}
 				if running {
-					ui.btnStart.Disable()
-					ui.btnStop.Enable()
 					ui.btnNow.Enable()
 				} else {
-					ui.btnStart.Enable()
-					ui.btnStop.Disable()
 					ui.btnNow.Disable()
 				}
 				if len(tr) == 0 {

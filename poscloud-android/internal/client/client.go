@@ -754,8 +754,10 @@ type transferState struct {
 
 // transferStore receives engine events about file transfer progress.
 type TransferStore struct {
-	mu sync.Mutex
-	m  map[string]*transferState
+	mu   sync.Mutex
+	m    map[string]*transferState
+	up   int64 // отправлено байт с момента запуска
+	down int64 // получено байт с момента запуска
 }
 
 // Transfers — the global progress receiver; assigned to engine.Progress.
@@ -777,8 +779,22 @@ func (s *TransferStore) Add(name string, n int64) {
 		if t.done > t.total {
 			t.done = t.total
 		}
+		if n > 0 {
+			if t.dir == "down" {
+				s.down += n
+			} else {
+				s.up += n
+			}
+		}
 	}
 	s.mu.Unlock()
+}
+
+// Totals returns bytes sent and received since the app launch.
+func (s *TransferStore) Totals() (up, down int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.up, s.down
 }
 
 func (s *TransferStore) End(name string) {

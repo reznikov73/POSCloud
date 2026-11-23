@@ -74,23 +74,24 @@ func (t posTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 	return t.base.Icon(name)
 }
 
-// Size задаёт компактную вёрстку для экрана телефона.
+// Size задаёт размеры для пальца на экране телефона: кнопки и поля — не ниже
+// 48 px, текст читаемый, нижняя панель вкладок — высокая.
 func (t posTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNameHeadingText:
-		return 18
+		return 22
 	case theme.SizeNameText:
-		return 14
+		return 16
 	case theme.SizeNameInnerPadding:
-		return 4
+		return 8
 	case theme.SizeNamePadding:
-		return 2
+		return 8
 	case theme.SizeNameLineSpacing:
-		return 2
+		return 3
 	case theme.SizeNameCardRadius:
-		return 12
+		return 14
 	case theme.SizeNameButtonRadius:
-		return 10
+		return 14
 	case theme.SizeNameInputBorder:
 		return 1
 	case theme.SizeNameSeparatorThickness:
