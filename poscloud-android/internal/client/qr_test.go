@@ -158,6 +158,56 @@ func TestDecodeQRImageInverted(t *testing.T) {
 	}
 }
 
+// renderQRSized рисует QR заданного размера — для плотных кодов с длинным
+// содержимым, которые не помещаются в 512 px.
+func renderQRSized(t *testing.T, text string, size int) image.Image {
+	t.Helper()
+	mat, err := qrcode.NewQRCodeWriter().Encode(text, gozxing.BarcodeFormat_QR_CODE, size, size, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			if mat.Get(x, y) {
+				img.Set(x, y, color.Black)
+			} else {
+				img.Set(x, y, color.White)
+			}
+		}
+	}
+	return img
+}
+
+// TestDecodeQRImageDense — плотный код с фотографии экрана: на крупном
+// масштабе даёт муар, читается на уменьшенном (800–1200 px). Раньше
+// конвейер начинал с 1600 px и такой снимок не распознавался.
+func TestDecodeQRImageDense(t *testing.T) {
+	code := "poscloud://connect?v=1&host=193.7.203.222&port=8090&tls=1&fp=" +
+		"58005596BA86C6940F77E3C386981EE41D62ACFFAB30084E9&code=pcp_" +
+		"AVh4r_6TB_Noa4a_doaME9yoNKCNVi7E7"
+	qr := renderQRSized(t, code, 1000)
+
+	const w, h = 2400, 1600
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			v := uint8(190 + (x*3+y*5)%30)
+			i := img.PixOffset(x, y)
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v, v, v, 255
+		}
+	}
+	draw.Draw(img, image.Rect(700, 300, 700+1000, 300+1000), qr, image.Point{}, draw.Over)
+
+	got, err := DecodeQRImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != code {
+		t.Fatalf("неверный текст: %q", got)
+	}
+}
+
 // TestDecodeQRImagePhotoLike — «фотография»: код занимает малую часть кадра,
 // фон неровный, снимок больше предела уменьшения.
 func TestDecodeQRImagePhotoLike(t *testing.T) {

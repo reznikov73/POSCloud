@@ -14,9 +14,13 @@ import (
 )
 
 // maxDecodeSide ограничивает сторону снимка при распознавании: gozxing
-// перебирает пиксели, и фотография 4000×3000 ищется в разы дольше, хотя
-// для QR-кода достаточно 1600 px.
+// перебирает пиксели, и фотография 4000×3000 ищется в разы дольше.
 const maxDecodeSide = 1600
+
+// decodeScales — размеры, на которых пробуем распознать код. Плотный QR,
+// снятый с экрана, на 1600 px даёт муар и не читается, а на 800–1200 px
+// читается уверенно; слишком мелкий масштаб теряет модули.
+var decodeScales = []int{800, 1200, maxDecodeSide}
 
 // DecodeQRImage looks for a QR code in an image and returns its text.
 // Used for connecting via code: the server shows a QR, the phone
@@ -24,27 +28,55 @@ const maxDecodeSide = 1600
 //
 // Снимок с камеры приходит с EXIF-ориентацией, которую image.Decode не
 // применяет, поэтому код на фото может оказаться повёрнутым на 90°.
-// Перебираем повороты, а для снимков с экрана (блики, серый фон) — ещё и
-// чёрно-белый вариант.
+// Перебираем повороты, масштабы и варианты обработки (ч/б, резкость, негатив).
 func DecodeQRImage(img image.Image) (string, error) {
 	if img == nil {
 		return "", fmt.Errorf("пустое изображение")
 	}
-	small := resizeMax(img, maxDecodeSide)
+	variants := []func(image.Image) image.Image{nil, binarize, sharpen, invert}
 
-	// Порядок попыток — от дешёвой к дорогой.
-	stages := [][]image.Image{rotations(small), rotations(binarize(small)), rotations(sharpen(small)), rotations(invert(small))}
-	if small.Bounds() != img.Bounds() {
-		stages = append(stages, rotations(img))
-	}
-	for _, stage := range stages {
-		for _, candidate := range stage {
-			if txt, err := decodeQR(candidate); err == nil && txt != "" {
+	tried := map[[2]int]bool{}
+	for _, side := range decodeScales {
+		im := resizeMax(img, side)
+		b := im.Bounds()
+		key := [2]int{b.Dx(), b.Dy()}
+		if tried[key] {
+			continue
+		}
+		tried[key] = true
+		for _, variant := range variants {
+			src := im
+			if variant != nil {
+				src = variant(im)
+			}
+			if txt, ok := decodeRotations(src); ok {
 				return txt, nil
 			}
 		}
 	}
+
+	// Последняя попытка — исходное разрешение (только без поворота и с одним
+	// поворотом на 90°: полные копии 12-мегапиксельного снимка дороги по памяти).
+	b := img.Bounds()
+	if b.Dx()*b.Dy() <= 16<<20 {
+		if txt, err := decodeQR(img); err == nil && txt != "" {
+			return txt, nil
+		}
+		if txt, err := decodeQR(rotate(img, 90)); err == nil && txt != "" {
+			return txt, nil
+		}
+	}
 	return "", fmt.Errorf("QR-код не найден — снимите код крупнее и резче")
+}
+
+// decodeRotations пробует декодировать изображение в четырёх поворотах.
+func decodeRotations(img image.Image) (string, bool) {
+	for _, angle := range []int{0, 90, 180, 270} {
+		if txt, err := decodeQR(rotate(img, angle)); err == nil && txt != "" {
+			return txt, true
+		}
+	}
+	return "", false
 }
 
 // decodeQR — одна попытка распознавания с подсказкой «искать тщательнее».
@@ -79,11 +111,6 @@ func DecodeQRReader(r io.Reader) (string, error) {
 		return "", fmt.Errorf("не удалось прочитать файл: %w", err)
 	}
 	return DecodeQRBytes(data)
-}
-
-// rotations возвращает изображение и три его поворота на 90°.
-func rotations(img image.Image) []image.Image {
-	return []image.Image{img, rotate(img, 90), rotate(img, 180), rotate(img, 270)}
 }
 
 // rotate поворачивает изображение на угол, кратный 90° (по часовой стрелке).
