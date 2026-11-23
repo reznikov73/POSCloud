@@ -70,15 +70,21 @@ repository — see `.gitignore`; the APK is built locally with `build.sh`, CI ch
 ## Building the APK
 
 Requires: Go 1.25+, Java JDK 11+, Android SDK (platform-tools, platforms;android-34,
-build-tools;34.0.0), Android NDK and the `fyne` utility
-(`go install fyne.io/tools/cmd/fyne@latest`).
+build-tools;34.0.0 — release signing with `zipalign -P 16` needs build-tools 35+),
+Android NDK and the `fyne` utility (`go install fyne.io/tools/cmd/fyne@latest`).
+
+The build links the native library with 16 KB page alignment (`CGO_LDFLAGS` in
+`build.sh`) so the APK starts on Android 15+ devices with 16 KB memory pages,
+and derives `versionCode` from the version (`1.0.29` → `10029`), so a newer
+build always installs over an older one. `build.sh` checks the ELF alignment
+with `llvm-readelf` from the NDK and stops if it regressed.
 
 ```bash
 # environment variables
 export ANDROID_HOME=/path/to/android-sdk
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
 
-# quick debug APK (fyne debug signature, installs right away)
+# quick debug APK (fyne debug signature — v1 only, for your own devices)
 sh ./build.sh
 
 # release build with your own key (environment variables, not arguments)
@@ -89,15 +95,16 @@ The same manually (`build.sh` does all of this itself — including repacking an
 
 ```bash
 go run ./tools/genicon                    # restore Icon.png
+export CGO_LDFLAGS="-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"  # 16 KB pages
 fyne package --release --target android/arm64 \
   --appID io.github.reznikov73.poscloud.client \
-  --name "POSCloud Client" --app-version 1.0.0 --app-build 1 \
+  --name "POSCloud Client" --app-version 1.0.0 --app-build 10000 \
   --icon Icon.png                         # --release: .so without debug info
 
 # release signing: drop the debug META-INF, resources.arsc — uncompressed,
 align and sign (targetSdk 30+ requires an uncompressed resources.arsc)
-BT=$ANDROID_HOME/build-tools/34.0.0
-$BT/zipalign -f 4 POSCloud_Client.apk aligned.apk
+BT=$ANDROID_HOME/build-tools/35.0.0
+$BT/zipalign -P 16 -f 4 POSCloud_Client.apk aligned.apk
 $BT/apksigner sign --ks poscloud-release.keystore --ks-key-alias poscloud \
   --ks-pass pass:<password> --key-pass pass:<password> \
   --out POSCloud-Client-1.0.0-android-arm64.apk aligned.apk
@@ -126,7 +133,7 @@ the Play Store use your own key and an `.aab` via `bundletool`.
 
 ```bash
 go test ./internal/...          # controller logic: settings, log, progress
-go test -run TestBuildUISmoke . # the interface on the Fyne test driver
+go test -run TestBuildUISmoke ./internal/ui # the interface on the Fyne test driver
 POSCLOUD_SHOTS=/tmp/shots go test -run TestScreenshotRender .  # tab screenshots
 ```
 

@@ -172,24 +172,45 @@ static int list_screenshots(char* out, int out_len, char* err, int errlen) {
 	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
 	cCursor = (*env)->FindClass(env, "android/database/Cursor");
 	cStr = (*env)->FindClass(env, "java/lang/String");
+	(*env)->EnsureLocalCapacity(env, 48);
 	{
 		jfieldID fUri = (*env)->GetStaticFieldID(env, cMS, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;");
 		jobject collection = (*env)->GetStaticObjectField(env, cMS, fUri);
+
+		// relative_path появился в Android 10 (API 29); на старых версиях путь
+		// берём из _data. Отбираем только подпапки Screenshots, без чужих снимков.
+		jint sdk = 0;
+		jclass cVer = (*env)->FindClass(env, "android/os/Build$VERSION");
+		if (cVer) {
+			jfieldID fSdk = (*env)->GetStaticFieldID(env, cVer, "SDK_INT", "I");
+			if (fSdk) {
+				sdk = (*env)->GetStaticIntField(env, cVer, fSdk);
+			}
+			(*env)->DeleteLocalRef(env, cVer);
+		}
+		const char* path_col = sdk >= 29 ? "relative_path" : "_data";
+		const char* a0 = sdk >= 29 ? "Pictures/Screenshots%" : "%Pictures/Screenshots/%";
+		const char* a1 = sdk >= 29 ? "DCIM/Screenshots%" : "%DCIM/Screenshots/%";
 
 		proj = (*env)->NewObjectArray(env, 4, cStr, NULL);
 		(*env)->SetObjectArrayElement(env, proj, 0, (*env)->NewStringUTF(env, "_id"));
 		(*env)->SetObjectArrayElement(env, proj, 1, (*env)->NewStringUTF(env, "_display_name"));
 		(*env)->SetObjectArrayElement(env, proj, 2, (*env)->NewStringUTF(env, "_size"));
-		(*env)->SetObjectArrayElement(env, proj, 3, (*env)->NewStringUTF(env, "relative_path"));
+		(*env)->SetObjectArrayElement(env, proj, 3, (*env)->NewStringUTF(env, path_col));
 
 		args = (*env)->NewObjectArray(env, 2, cStr, NULL);
-		(*env)->SetObjectArrayElement(env, args, 0, (*env)->NewStringUTF(env, "Pictures/Screenshots%"));
-		(*env)->SetObjectArrayElement(env, args, 1, (*env)->NewStringUTF(env, "DCIM/Screenshots%"));
-		sel = (*env)->NewStringUTF(env, "relative_path LIKE ? OR relative_path LIKE ?");
+		(*env)->SetObjectArrayElement(env, args, 0, (*env)->NewStringUTF(env, a0));
+		(*env)->SetObjectArrayElement(env, args, 1, (*env)->NewStringUTF(env, a1));
+		sel = (*env)->NewStringUTF(env, sdk >= 29 ? "relative_path LIKE ? OR relative_path LIKE ?"
+			: "_data LIKE ? OR _data LIKE ?");
 
 		jmethodID query = (*env)->GetMethodID(env, cRes, "query",
 			"(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;");
-		cursor = (*env)->CallObjectMethod(env, resolver, query, collection, proj, sel, args, NULL);
+		// Свежие снимки — первыми и не больше 200: иначе после двухсот снимков
+		// новые никогда не попадают в выборку.
+		jstring order = (*env)->NewStringUTF(env, "date_added DESC LIMIT 200");
+		cursor = (*env)->CallObjectMethod(env, resolver, query, collection, proj, sel, args, order);
+		(*env)->DeleteLocalRef(env, order);
 		if (take_exception(env, err, errlen, "MediaStore.query")) {
 			rc = 5;
 			goto done;
@@ -240,6 +261,17 @@ static int list_screenshots(char* out, int out_len, char* err, int errlen) {
 	}
 
 	done:
+	// Cursor — нативный ресурс (CursorWindow): без close() он живёт до финализатора,
+	// и при опросе каждые 30 с в logcat сыпется «A resource failed to call Cursor.close».
+	if (cursor && cCursor) {
+		jmethodID close = (*env)->GetMethodID(env, cCursor, "close", "()V");
+		if (close) {
+			(*env)->CallVoidMethod(env, cursor, close);
+			if ((*env)->ExceptionCheck(env)) {
+				(*env)->ExceptionClear(env);
+			}
+		}
+	}
 	if (cursor) (*env)->DeleteLocalRef(env, cursor);
 	if (proj) (*env)->DeleteLocalRef(env, proj);
 	if (args) (*env)->DeleteLocalRef(env, args);

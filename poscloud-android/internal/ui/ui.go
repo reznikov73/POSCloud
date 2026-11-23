@@ -313,7 +313,11 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.intervalEntry = widget.NewEntry()
 	ui.intervalEntry.SetPlaceHolder("3")
 	ui.tlsCheck = widget.NewCheck("TLS (самоподписанный сертификат)", nil)
-	ui.fpEntry = widget.NewEntry()
+	// Отпечаток — 64 hex-символа: в одну строку не влезает, поэтому поле многострочное
+	// с переносом в любом месте (минимум две строки).
+	ui.fpEntry = widget.NewMultiLineEntry()
+	ui.fpEntry.Wrapping = fyne.TextWrapBreak
+	ui.fpEntry.SetMinRowsVisible(2)
 	ui.fpEntry.SetPlaceHolder("SHA-256")
 	ui.fpEntry.Hide()
 	ui.tlsCheck.OnChanged = func(on bool) {
@@ -348,7 +352,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		go func() {
 			res := ctrl.TestConnection(strings.TrimSpace(ui.hostEntry.Text),
 				atoiDefault(ui.portEntry.Text, cfg.Port), ui.tokenEntry.Text,
-				ui.tlsCheck.Checked, ui.fpEntry.Text)
+				ui.tlsCheck.Checked, ui.fingerprint())
 			fyne.Do(func() {
 				d.Hide()
 				title := "Связь установлена"
@@ -364,7 +368,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 			atoiDefault(ui.portEntry.Text, cfg.Port),
 			cleanPath(ui.dirValue),
 			atoiDefault(ui.intervalEntry.Text, cfg.Interval),
-			ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fpEntry.Text,
+			ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fingerprint(),
 			ui.deviceEntry.Text, ui.autoRunCheck.Checked)
 		ui.refreshStatic(ctrl)
 		dialog.ShowInformation("Настройки", "Настройки сохранены.", w)
@@ -485,10 +489,10 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 		dialog.ShowError(err, ui.win)
 		return
 	}
-	if err := os.MkdirAll(filepath.Join("/storage/emulated/0", captureRel), 0o755); err != nil {
-		dialog.ShowError(err, ui.win)
-		return
-	}
+	// Каталог DCIM/POScloud на Android 10+ через файловый API не создаётся
+	// (scoped storage, EACCES) — его создаёт MediaStore при вставке снимка;
+	// mkdir нужен только старым версиям Android, поэтому ошибка не критична.
+	_ = os.MkdirAll(filepath.Join("/storage/emulated/0", captureRel), 0o755)
 	name := "POSCloud-" + time.Now().Format("20060102-150405") + ".jpg"
 
 	wait := dialog.NewCustomWithoutButtons("Камера", container.NewVBox(
@@ -641,7 +645,7 @@ func (ui *State) startSync(ctrl *client.Controller) {
 	port := atoiDefault(ui.portEntry.Text, ctrl.Config().Port)
 	interval := atoiDefault(ui.intervalEntry.Text, ctrl.Config().Interval)
 	if err := ctrl.Start(host, port, cleanPath(ui.dirValue), interval,
-		ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fpEntry.Text); err != nil {
+		ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fingerprint()); err != nil {
 		ui.setSwitch(false)
 		dialog.ShowError(err, ui.win)
 		return
@@ -810,11 +814,17 @@ func refreshFolders(ctrl *client.Controller, ui *State) {
 	}()
 }
 
+// fingerprint возвращает отпечаток без пробелов и переносов строк (поле
+// многострочное, а в hex-строке пробелов быть не должно).
+func (ui *State) fingerprint() string {
+	return strings.Join(strings.Fields(ui.fpEntry.Text), "")
+}
+
 // folderRow строит карточку папки: имя, статистика и выбор режима.
 func folderRow(ctrl *client.Controller, ui *State, n eng.ServerFolderNode) fyne.CanvasObject {
-	info := fmt.Sprintf("на сервере: %d файлов (%s)", n.Files, humanBytes(n.Bytes))
+	info := fmt.Sprintf("на сервере: %s (%s)", pluralFiles(n.Files), humanBytes(n.Bytes))
 	if n.LocFiles > 0 || n.Local {
-		info += fmt.Sprintf("\nздесь: %d файлов (%s)", n.LocFiles, humanBytes(n.LocBytes))
+		info += fmt.Sprintf("\nздесь: %s (%s)", pluralFiles(n.LocFiles), humanBytes(n.LocBytes))
 	} else {
 		info += "\nздесь: нет копии"
 	}
@@ -921,6 +931,18 @@ func humanBytes(b int64) string {
 		return fmt.Sprintf("%.1f КБ", float64(b)/(1<<10))
 	default:
 		return fmt.Sprintf("%d Б", b)
+	}
+}
+
+// pluralFiles склоняет «файл» по русским правилам: 1 файл, 2 файла, 5 файлов, 11 файлов.
+func pluralFiles(n int) string {
+	switch {
+	case n%10 == 1 && n%100 != 11:
+		return fmt.Sprintf("%d файл", n)
+	case n%10 >= 2 && n%10 <= 4 && (n%100 < 12 || n%100 > 14):
+		return fmt.Sprintf("%d файла", n)
+	default:
+		return fmt.Sprintf("%d файлов", n)
 	}
 }
 

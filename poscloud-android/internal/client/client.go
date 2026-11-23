@@ -42,6 +42,8 @@ type Controller struct {
 	permAsks int // сколько раз просили разрешение на чтение фото
 
 	logDirty bool
+	fileMu   sync.Mutex // client.json и screenshots.json пишутся строго по очереди и целиком
+	shotMu   sync.Mutex // один импорт снимков экрана одновременно
 }
 
 // NewController creates a controller in the app data directory root:
@@ -161,7 +163,15 @@ func (c *Controller) loadConfig() {
 		return
 	}
 	var cfg androidConfig
-	if json.Unmarshal(data, &cfg) != nil {
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		// Файл побился (запись оборвалась, диск переполнился): не даём следующему
+		// сохранению его затереть — откладываем рядом, настройки берём по умолчанию.
+		p := filepath.Join(c.root, "client.json")
+		if os.Rename(p, p+".bad") == nil {
+			c.Log("client.json не читается (" + err.Error() + "): сохранён как client.json.bad, настройки по умолчанию")
+		} else {
+			c.Log("client.json не читается: " + err.Error())
+		}
 		return
 	}
 	c.mu.Lock()
@@ -214,7 +224,12 @@ func (c *Controller) persist() {
 	}
 	p := filepath.Join(c.root, "client.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	_ = os.WriteFile(p, b, 0644)
+	c.fileMu.Lock()
+	err = writeFileAtomic(p, b, 0644)
+	c.fileMu.Unlock()
+	if err != nil {
+		c.Log("настройки не сохранены: " + err.Error())
+	}
 }
 
 // engineConfig assembles engine settings from the controller fields, transferring rules
@@ -501,6 +516,12 @@ func ScreenshotDirs() []string {
 // ImportScreenshots копирует новые снимки экрана в подпапку «Снимки экрана»
 // папки синхронизации и возвращает число скопированных файлов.
 func (c *Controller) ImportScreenshots() int {
+	// Импорт запускают и таймер, и кнопка: две копии не должны писать
+	// один screenshots.json одновременно.
+	if !c.shotMu.TryLock() {
+		return 0
+	}
+	defer c.shotMu.Unlock()
 	cfg := c.Config()
 	if strings.TrimSpace(cfg.Dir) == "" {
 		return 0
@@ -638,7 +659,42 @@ func (c *Controller) saveScreenshotState(st screenshotsState) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(c.root, "screenshots.json"), b, 0644)
+	p := filepath.Join(c.root, "screenshots.json")
+	c.fileMu.Lock()
+	err = writeFileAtomic(p, b, 0644)
+	c.fileMu.Unlock()
+	if err != nil {
+		c.Log("список снимков экрана не сохранён: " + err.Error())
+	}
+}
+
+// writeFileAtomic пишет файл целиком: сначала во временный файл рядом, затем
+// переименование — на месте всегда лежит либо старая, либо новая версия.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // copyFile копирует файл, создавая каталог назначения.
