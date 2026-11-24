@@ -84,3 +84,5 @@ func MimeFor(path string) string {
 func OpenFile(path string) error {
 	return errors.New("открытие файлов доступно только на Android")
 }
+// AppVersion доступен только на Android.
+func AppVersion(pkg string) string { return "" }

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -746,6 +747,91 @@ func (c *Controller) setShotErr(err error) {
 	if msg != "" && msg != prev {
 		c.Log("снимки экрана: " + msg)
 	}
+}
+
+// ---------- обновление приложения ----------
+
+// AppVersion — версия установленного приложения (из манифеста).
+func (c *Controller) AppVersion() string { return camera.AppVersion(appID) }
+
+// CheckUpdate ищет в папке синхронизации APK новее установленного (настольный
+// клиент кладёт сборки в подпапку POSCloud) и возвращает версию и путь.
+// Пустая версия — обновления нет.
+func (c *Controller) CheckUpdate() (string, string) {
+	cur := c.AppVersion()
+	if cur == "" {
+		return "", ""
+	}
+	return findApkUpdate(strings.TrimSpace(c.Config().Dir), cur)
+}
+
+// findApkUpdate ищет в папке синхронизации и её подпапке POSCloud самый новый
+// APK, версия которого больше cur.
+func findApkUpdate(dir, cur string) (version, path string) {
+	if dir == "" {
+		return "", ""
+	}
+	dirs := []string{dir, filepath.Join(dir, "POSCloud")}
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".apk") {
+				continue
+			}
+			v := versionFromName(e.Name())
+			if v == "" || compareVersions(v, cur) <= 0 || compareVersions(v, version) <= 0 {
+				continue
+			}
+			version, path = v, filepath.Join(d, e.Name())
+		}
+	}
+	return version, path
+}
+
+// versionFromName вытаскивает из имени файла версию вида 1.2.3.
+func versionFromName(name string) string {
+	for i := 0; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			continue
+		}
+		j, dots := i, 0
+		for j < len(name) && (name[j] >= '0' && name[j] <= '9' || name[j] == '.') {
+			if name[j] == '.' {
+				dots++
+			}
+			j++
+		}
+		cand := strings.Trim(name[i:j], ".")
+		if dots >= 2 && cand != "" {
+			return cand
+		}
+		i = j
+	}
+	return ""
+}
+
+// compareVersions сравнивает версии по числовым частям: -1, 0, 1.
+func compareVersions(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		x, y := 0, 0
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 // ---------- разрешение на чтение фото ----------

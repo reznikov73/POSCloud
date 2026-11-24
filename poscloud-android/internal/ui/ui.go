@@ -113,6 +113,11 @@ type State struct {
 
 	btnNow *widget.Button
 
+	// обновление
+	updateInfo *widget.Label
+	updateAPK  string
+	btnInstall *widget.Button
+
 	// подключение (поля читает «Запустить»)
 	hostEntry     *widget.Entry
 	portEntry     *widget.Entry
@@ -226,6 +231,29 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		fieldRow("Папка", ui.folderValue),
 	))
 
+	// обновление: версию берём из манифеста, APK ищем в папке синхронизации
+	ui.updateInfo = caption("")
+	ui.btnInstall = widget.NewButtonWithIcon("Установить", theme.DownloadIcon(), func() {
+		path := ui.updateAPK
+		if path == "" {
+			return
+		}
+		go func() {
+			if err := camera.OpenFile(path); err != nil {
+				fyne.Do(func() { dialog.ShowError(err, ui.win) })
+			}
+		}()
+	})
+	ui.btnInstall.Importance = widget.HighImportance
+	ui.btnInstall.Hide()
+	updateCard := widget.NewCard("Обновление", "", container.NewVBox(
+		ui.updateInfo,
+		widget.NewButtonWithIcon("Проверить обновление", theme.ViewRefreshIcon(), func() {
+			ui.checkUpdate(ctrl, true)
+		}),
+		ui.btnInstall,
+	))
+
 	statusCard := container.NewVBox(
 		heading("POSCloud"),
 		syncCard,
@@ -235,6 +263,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		serverCard,
 		transferCard,
 		ui.errLabel,
+		updateCard,
 		container.NewPadded(caption("Синхронизация работает, пока приложение открыто; для фоновой работы держите его в недавних.")),
 	)
 
@@ -728,6 +757,10 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			}
 			shotAsks := ctrl.PhotoPermissionAsks()
 			// Раз в 30 секунд забираем новые снимки экрана в папку синхронизации.
+			if ticks == 6 {
+				// автопроверка обновления: тихо, баннер появится сам
+				ui.checkUpdate(ctrl, false)
+			}
 			if ticks%30 == 0 {
 				go ctrl.ImportScreenshots()
 			}
@@ -1009,3 +1042,43 @@ func pluralFiles(n int) string {
 }
 
 // unusedImageImport — image/png и image/jpeg нужны для декодирования снимков.
+
+// checkUpdate проверяет, нет ли в папке синхронизации APK новее установленного.
+// manual — нажали кнопку (тогда показываем ответ диалогом даже без обновления).
+func (ui *State) checkUpdate(ctrl *client.Controller, manual bool) {
+	go func() {
+		v, path := ctrl.CheckUpdate()
+		cur := ctrl.AppVersion()
+		fyne.Do(func() {
+			if cur == "" {
+				ui.updateInfo.SetText("Версия приложения не определена (сборка не из APK)")
+				return
+			}
+			if v == "" {
+				ui.updateInfo.SetText("Установлена версия " + cur + " — обновлений нет")
+				ui.btnInstall.Hide()
+				if manual {
+					dialog.ShowInformation("Обновление", "Установлена последняя версия "+cur+".", ui.win)
+				}
+				return
+			}
+			ui.updateAPK = path
+			ui.updateInfo.SetText("Доступно " + v + " (сейчас " + cur + ")")
+			ui.btnInstall.Show()
+			if manual {
+				dialog.ShowConfirm("Доступно обновление "+v,
+					"Скачанный APK лежит в папке синхронизации.\\nУстановить сейчас?",
+					func(ok bool) {
+						if !ok {
+							return
+						}
+						go func() {
+							if err := camera.OpenFile(path); err != nil {
+								fyne.Do(func() { dialog.ShowError(err, ui.win) })
+							}
+						}()
+					}, ui.win)
+			}
+		})
+	}()
+}

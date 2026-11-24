@@ -267,6 +267,84 @@ done:
 	return rc;
 }
 
+// app_version читает versionName пакета из PackageManager: его проставляет
+// build.sh в манифесте, и приложение знает свою версию без ldflags (у fyne
+// package их нет).
+static int app_version(const char* pkg, char* out, int outlen, char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return 1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return 1;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	jobject app = NULL, pm = NULL, info = NULL;
+	jclass cCtx = NULL, cPM = NULL, cPI = NULL;
+	jstring name = NULL;
+	(*env)->EnsureLocalCapacity(env, 32);
+
+	app = app_context(env, err, errlen);
+	if (!app) { rc = 2; goto done; }
+	cCtx = (*env)->FindClass(env, "android/content/Context");
+	cPM = (*env)->FindClass(env, "android/content/pm/PackageManager");
+	cPI = (*env)->FindClass(env, "android/content/pm/PackageInfo");
+	if (!cCtx || !cPM || !cPI) {
+		set_err(err, errlen, "классы PackageManager не найдены");
+		rc = 3;
+		goto done;
+	}
+	{
+		jmethodID getPM = (*env)->GetMethodID(env, cCtx, "getPackageManager", "()Landroid/content/pm/PackageManager;");
+		pm = (*env)->CallObjectMethod(env, app, getPM);
+		if (take_exception(env, err, errlen, "getPackageManager")) { rc = 4; goto done; }
+	}
+	{
+		jmethodID getInfo = (*env)->GetMethodID(env, cPM, "getPackageInfo",
+			"(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+		jstring jPkg = (*env)->NewStringUTF(env, pkg);
+		info = (*env)->CallObjectMethod(env, pm, getInfo, jPkg, (jint)0);
+		(*env)->DeleteLocalRef(env, jPkg);
+		if (take_exception(env, err, errlen, "getPackageInfo")) { rc = 5; goto done; }
+	}
+	{
+		jfieldID fVersion = (*env)->GetFieldID(env, cPI, "versionName", "Ljava/lang/String;");
+		name = (jstring)(*env)->GetObjectField(env, info, fVersion);
+		if (take_exception(env, err, errlen, "PackageInfo.versionName")) { rc = 6; goto done; }
+		if (!name) {
+			set_err(err, errlen, "в манифесте нет versionName");
+			rc = 7;
+			goto done;
+		}
+		const char* utf = (*env)->GetStringUTFChars(env, name, NULL);
+		if (!utf) {
+			set_err(err, errlen, "версия не прочитана");
+			rc = 8;
+			goto done;
+		}
+		snprintf(out, outlen, "%s", utf);
+		(*env)->ReleaseStringUTFChars(env, name, utf);
+	}
+
+done:
+	if (name) (*env)->DeleteLocalRef(env, name);
+	if (info) (*env)->DeleteLocalRef(env, info);
+	if (pm) (*env)->DeleteLocalRef(env, pm);
+	if (app) (*env)->DeleteLocalRef(env, app);
+	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
+	if (cPM) (*env)->DeleteLocalRef(env, cPM);
+	if (cPI) (*env)->DeleteLocalRef(env, cPI);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
+
 // list_screenshots перечисляет снимки экрана из MediaStore:
 // строки «id\tимя\tразмер\n» (не больше 200 штук).
 static int list_screenshots(char* out, int out_len, char* err, int errlen) {
@@ -1189,4 +1267,19 @@ func OpenFile(path string) error {
 		return errors.New(msg)
 	}
 	return nil
+}
+
+// AppVersion — версия приложения из манифеста (пустая, если прочитать не удалось).
+func AppVersion(pkg string) string {
+	buf := make([]byte, 64)
+	errBuf := make([]byte, 256)
+	cPkg := C.CString(pkg)
+	defer C.free(unsafe.Pointer(cPkg))
+	code := C.app_version(cPkg,
+		(*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)),
+		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	if code != 0 {
+		return ""
+	}
+	return strings.TrimSpace(C.GoString((*C.char)(unsafe.Pointer(&buf[0]))))
 }

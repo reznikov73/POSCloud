@@ -193,6 +193,57 @@ func TestSaveLogCopy(t *testing.T) {
 	}
 }
 
+// TestVersionHelpers — разбор версии из имени файла и сравнение версий.
+func TestVersionHelpers(t *testing.T) {
+	cases := map[string]string{
+		"POSCloud-Client-1.0.34-android.apk":             "1.0.34",
+		"POSCloud-Client-1.0.34-android-arm64-debug.apk": "1.0.34",
+		"проверка-обмена-2.apk":                          "",
+		"file.apk":                                       "",
+		"POSCloud-Client-10.20.30-android.apk":           "10.20.30",
+	}
+	for name, want := range cases {
+		if got := versionFromName(name); got != want {
+			t.Errorf("versionFromName(%q) = %q, ожидалось %q", name, got, want)
+		}
+	}
+	if compareVersions("1.0.34", "1.0.34") != 0 || compareVersions("1.0.35", "1.0.34") != 1 || compareVersions("1.0.9", "1.0.10") != -1 {
+		t.Fatal("compareVersions работает неверно")
+	}
+}
+
+// TestFindApkUpdate — из папки берётся самый новый APK, версия сравнивается с текущей.
+func TestFindApkUpdate(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "POSCloud")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{
+		"POSCloud-Client-1.0.34-android.apk",
+		"POSCloud-Client-1.0.36-android.apk",
+		"POSCloud-Client-1.0.35-android-arm64-debug.apk",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// в подпапке — только старый APK
+	if err := os.WriteFile(filepath.Join(sub, "POSCloud-Client-1.0.30-android.apk"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, p := findApkUpdate(dir, "1.0.34")
+	if v != "1.0.36" || !strings.HasSuffix(p, "POSCloud-Client-1.0.36-android.apk") {
+		t.Fatalf("найдено %q (%q), ожидалась 1.0.36", v, p)
+	}
+	if v, _ := findApkUpdate(dir, "1.0.36"); v != "" {
+		t.Fatalf("обновление найдено при равной версии: %q", v)
+	}
+	if v, _ := findApkUpdate("", "1.0.34"); v != "" {
+		t.Fatalf("пустая папка дала обновление: %q", v)
+	}
+}
+
 // TestTransfers checks the transfer progress receiver.
 func TestTransfers(t *testing.T) {
 	s := &TransferStore{m: map[string]*transferState{}}
