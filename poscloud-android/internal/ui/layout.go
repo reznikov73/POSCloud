@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -250,7 +251,37 @@ func (e *formEntry) FocusGained() {
 	e.ensureVisible()
 }
 
+// formScrollRetry — когда повторяем прокрутку после фокуса: клавиатура
+// появляется с анимацией, и окно ужимается под неё не сразу.
+var formScrollRetry = []time.Duration{300 * time.Millisecond, 700 * time.Millisecond}
+
+// ensureVisible прокручивает форму к полю — сразу и ещё два раза, когда
+// раскладка устоится. Первый расчёт упирается в прежний максимум прокрутки
+// (окно ещё не ужалось под клавиатуру), и поле внизу длинной формы остаётся
+// под ней — так на эмуляторе не показывался «Лимит скачивания». Повторы
+// безопасны: поле не в фокусе или уже видно — ничего не происходит.
 func (e *formEntry) ensureVisible() {
+	if e.scroll == nil {
+		return
+	}
+	e.scrollToField()
+	if !e.isFocused() {
+		return
+	}
+	for _, delay := range formScrollRetry {
+		time.AfterFunc(delay, func() {
+			fyne.Do(func() {
+				if e.isFocused() {
+					e.scrollToField()
+				}
+			})
+		})
+	}
+}
+
+// scrollToField прокручивает форму так, чтобы поле было видно целиком;
+// если оно уже видно с отступом — ничего не делает.
+func (e *formEntry) scrollToField() {
 	if e.scroll == nil || e.Size().Width <= 0 {
 		return
 	}
@@ -258,13 +289,33 @@ func (e *formEntry) ensureVisible() {
 	if drv == nil {
 		return
 	}
+	s := e.scroll
 	y := drv.AbsolutePositionForObject(e).Y
-	top := drv.AbsolutePositionForObject(e.scroll).Y
-	target := e.scroll.Offset.Y + (y - top) - 3*spaceL
+	top := drv.AbsolutePositionForObject(s).Y
+	if y == 0 && top > 0 {
+		// драйвер возвращает (0,0) для объектов, которых нет на канве
+		// (скрытые поля): прокрутка к «нулю» уводила форму к началу
+		return
+	}
+	if y >= top+spaceS && y+e.Size().Height <= top+s.Size().Height-spaceS {
+		return
+	}
+	target := s.Offset.Y + (y - top) - 3*spaceL
 	if target < 0 {
 		target = 0
 	}
-	e.scroll.ScrollToOffset(fyne.NewPos(e.scroll.Offset.X, target))
+	s.ScrollToOffset(fyne.NewPos(s.Offset.X, target))
+}
+
+// isFocused — стоит ли фокус канвы на этом поле (повтор прокрутки нужен
+// только пока пользователь не ушёл на другое поле).
+func (e *formEntry) isFocused() bool {
+	drv := fyne.CurrentApp().Driver()
+	if drv == nil {
+		return false
+	}
+	c := drv.CanvasForObject(e)
+	return c != nil && c.Focused() == fyne.Focusable(e)
 }
 
 // setScroll привязывает поле к прокручиваемой форме (для FocusGained).

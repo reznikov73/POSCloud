@@ -40,3 +40,39 @@ func TestFormEntryFocusAndType(t *testing.T) {
 		t.Fatalf("клавиатура не цифровая: %v", e.Keyboard())
 	}
 }
+
+// TestFormEntryScrollsToField — фокус на последнем поле длинной формы
+// прокручивает его в видимую область; повторная прокрутка ничего не двигает.
+func TestFormEntryScrollsToField(t *testing.T) {
+	a := test.NewApp()
+	a.Settings().SetTheme(Theme())
+	w := a.NewWindow("x")
+	box := container.NewVBox()
+	var last *formEntry
+	for i := 0; i < 12; i++ {
+		e := newFormEntry(false)
+		box.Add(e)
+		last = e
+	}
+	sc := container.NewVScroll(box)
+	last.setScroll(sc)
+	w.SetContent(sc)
+	w.Resize(fyne.NewSize(320, 300))
+
+	w.Canvas().Focus(last)
+	if sc.Offset.Y == 0 {
+		t.Fatal("форма не прокрутилась к последнему полю")
+	}
+	drv := a.Driver()
+	pos := drv.AbsolutePositionForObject(last)
+	top := drv.AbsolutePositionForObject(sc)
+	if pos.Y < top.Y || pos.Y+last.Size().Height > top.Y+sc.Size().Height {
+		t.Fatalf("поле не видно целиком: поле %v..%v, прокрутка %v..%v", pos.Y, pos.Y+last.Size().Height, top.Y, top.Y+sc.Size().Height)
+	}
+	before := sc.Offset.Y
+	last.scrollToField()
+	if sc.Offset.Y != before {
+		t.Fatalf("повторная прокрутка сдвинула форму: %v → %v", before, sc.Offset.Y)
+	}
+	w.Close()
+}

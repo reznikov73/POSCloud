@@ -415,11 +415,17 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.quietFrom = newFormEntry(false)
 	ui.quietFrom.SetPlaceHolder("23:00")
 	ui.quietFrom.Validator = clockValidator
-	ui.quietFrom.OnChanged = func(string) { clockFilter(ui.quietFrom.Entry) }
+	ui.quietFrom.OnChanged = func(string) {
+		clockFilter(ui.quietFrom.Entry)
+		setFieldError(ui.quietErr, nil) // правка поля снимает прежнюю ошибку
+	}
 	ui.quietTo = newFormEntry(false)
 	ui.quietTo.SetPlaceHolder("07:00")
 	ui.quietTo.Validator = clockValidator
-	ui.quietTo.OnChanged = func(string) { clockFilter(ui.quietTo.Entry) }
+	ui.quietTo.OnChanged = func(string) {
+		clockFilter(ui.quietTo.Entry)
+		setFieldError(ui.quietErr, nil)
+	}
 	ui.quietErr = fieldErrorLabel()
 	quietFields := container.NewGridWithColumns(2,
 		container.NewVBox(fieldLabel("с"), fieldFill(ui.quietFrom)),
@@ -427,12 +433,18 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	)
 	ui.quietRow = container.NewVBox(quietFields, ui.quietErr)
 	ui.quietRow.Hide()
-	ui.quietSwitch.OnChanged = func(on bool) { showIf(ui.quietRow, on) }
+	ui.quietSwitch.OnChanged = func(on bool) {
+		showIf(ui.quietRow, on)
+		ui.chainAll() // поля тихих часов появляются/прячутся — цепочка «Далее» перестраивается
+	}
 
 	ui.maxDownEntr = newFormEntry(true)
 	ui.maxDownEntr.SetPlaceHolder("0")
 	ui.maxDownEntr.Validator = limitValidator
-	ui.maxDownEntr.OnChanged = func(string) { digitsFilter(ui.maxDownEntr.Entry, 5) }
+	ui.maxDownEntr.OnChanged = func(string) {
+		digitsFilter(ui.maxDownEntr.Entry, 5)
+		setFieldError(ui.limitErr, nil)
+	}
 	ui.limitErr = fieldErrorLabel()
 	limitRow := container.NewHBox(fieldBox(colNarrow, ui.maxDownEntr), helpText("МБ"))
 
@@ -678,9 +690,21 @@ func (ui *State) setFormScroll(s *container.Scroll) {
 			e.setScroll(s)
 		}
 	}
-	// «Далее» ведёт по форме сверху вниз, последнее поле закрывает клавиатуру.
-	chain(ui.hostEntry, ui.portEntry, ui.tokenEntry, ui.deviceEntry,
-		ui.intervalEntry, ui.quietFrom, ui.quietTo, ui.maxDownEntr)
+	ui.chainAll()
+}
+
+// chainAll связывает поля цепочкой «Далее» сверху вниз; последнее поле
+// закрывает клавиатуру. Поля тихих часов входят в цепочку, только когда
+// видимы: иначе «Далее» уводило фокус в скрытое поле — на экране ничего не
+// менялось, а ввод уходил в невидимое поле.
+func (ui *State) chainAll() {
+	entries := []*formEntry{ui.hostEntry, ui.portEntry, ui.tokenEntry,
+		ui.deviceEntry, ui.intervalEntry}
+	if ui.quietRow != nil && ui.quietRow.Visible() {
+		entries = append(entries, ui.quietFrom, ui.quietTo)
+	}
+	entries = append(entries, ui.maxDownEntr)
+	chain(entries...)
 }
 
 // scanQR — выбор способа сканирования: снять камерой или взять готовый снимок.
@@ -1243,12 +1267,18 @@ func folderRow(ctrl *client.Controller, ui *State, n eng.ServerFolderNode) fyne.
 
 // showModeDialog — выбор режима папки: четыре варианта крупными строками
 // вместо выпадающего списка (на телефоне он требует точного попадания).
+// Текущий режим отмечен; диалог компактный — под четырьмя строками не нужно
+// пустой площади на пол-экрана.
 func showModeDialog(ctrl *client.Controller, ui *State, n eng.ServerFolderNode) {
 	var d *dialog.CustomDialog
 	rows := container.NewVBox()
 	for _, p := range modePairs {
 		mode := p.mode
-		rows.Add(dialogRow(modeTitle(mode), theme.ConfirmIcon(), func() {
+		icon := theme.RadioButtonIcon()
+		if mode == n.Mode {
+			icon = theme.RadioButtonCheckedIcon()
+		}
+		rows.Add(dialogRow(modeTitle(mode), icon, func() {
 			d.Hide()
 			if err := ctrl.SetFolderRule(n.Path, mode); err != nil {
 				dialog.ShowError(err, ui.win)
@@ -1257,7 +1287,7 @@ func showModeDialog(ctrl *client.Controller, ui *State, n eng.ServerFolderNode) 
 		}))
 	}
 	d = dialog.NewCustom(n.Path, "Отмена", rows, ui.win)
-	d.Resize(dialogSize(ui.win))
+	d.Resize(dialogSizeCompact(ui.win))
 	d.Show()
 }
 
