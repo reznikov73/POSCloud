@@ -77,12 +77,16 @@ func (c *conflictsCard) show() {
 		if title == "" {
 			title = pair.Conflict
 		}
-		text := fmt.Sprintf("%s — %s, %s", filepath.Base(title),
-			humanBytes(pair.Size), time.Unix(pair.MTime, 0).Format("02.01.2006 15:04"))
-		rows.Add(dialogRow(text, theme.FileIcon(), func() {
+		// В списке — имя оригинала и дата копии: полное имя конфликтной
+		// копии в строку не влезает и читать его тяжело.
+		sub := "копия " + time.Unix(pair.MTime, 0).Format("02.01.2006 15:04") +
+			" · " + humanBytes(pair.Size)
+		row := newListRow(func() {
 			d.Hide()
 			c.choose(pair)
-		}))
+		})
+		row.set(theme.FileIcon(), filepath.Base(title), sub)
+		rows.Add(row)
 	}
 	d = dialog.NewCustom("Конфликтные копии", "Закрыть", container.NewVScroll(rows), c.win)
 	d.Resize(fyne.NewSize(420, 560))
@@ -95,11 +99,15 @@ func (c *conflictsCard) choose(pair eng.ConflictPair) {
 	if orig == "" {
 		orig = pair.Conflict
 	}
-	what := fmt.Sprintf("Файл «%s» правили на двух устройствах. Моя версия — копия «%s» (%s), серверная — то, что лежит под именем файла.",
-		filepath.Base(orig), filepath.Base(pair.Conflict), humanBytes(pair.Size))
+	// Короткий заголовок и три отдельные строки вместо одной длинной фразы:
+	// в заголовок диалога длинное имя файла не влезает, а в сплошном тексте
+	// два похожих имени сливаются.
 	var d *dialog.CustomDialog
 	rows := container.NewVBox(
-		caption(what),
+		caption("Файл «"+filepath.Base(orig)+"» правили на двух устройствах:"),
+		caption("Моя версия — копия от "+time.Unix(pair.MTime, 0).Format("02.01.2006 15:04")+
+			" ("+humanBytes(pair.Size)+")."),
+		caption("Серверная — то, что сейчас лежит под именем файла."),
 		widget.NewSeparator(),
 		dialogRow("Оставить мою версию", theme.DocumentIcon(), func() {
 			d.Hide()
@@ -110,8 +118,8 @@ func (c *conflictsCard) choose(pair eng.ConflictPair) {
 			c.apply(pair, "server")
 		}),
 	)
-	d = dialog.NewCustom(filepath.Base(orig), "Закрыть", rows, c.win)
-	d.Resize(fyne.NewSize(420, 420))
+	d = dialog.NewCustom("Какую версию оставить?", "Закрыть", rows, c.win)
+	d.Resize(fyne.NewSize(420, 460))
 	d.Show()
 }
 

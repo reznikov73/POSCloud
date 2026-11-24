@@ -131,7 +131,8 @@ func TestFilesPageSearch(t *testing.T) {
 		t.Fatal("актуальный запрос не должен отбрасываться")
 	}
 	kids := p.childUIDs(filesRootUID)
-	want := []string{"root/a.txt", "root/alpha/BA.doc", "root/beta/ab.md"}
+	// находки сгруппированы по папкам: файл из корня и две папки-группы
+	want := []string{"root/a.txt", "root/alpha", "root/beta"}
 	if len(kids) != len(want) {
 		t.Fatalf("находки: %v, ожидалось %v", kids, want)
 	}
@@ -140,8 +141,14 @@ func TestFilesPageSearch(t *testing.T) {
 			t.Fatalf("находки: %v, ожидалось %v", kids, want)
 		}
 	}
+	if got := p.childUIDs("root/alpha"); len(got) != 1 || string(got[0]) != "root/alpha/BA.doc" {
+		t.Fatalf("содержимое группы alpha: %v", got)
+	}
 	if p.isBranch("root/a.txt") {
 		t.Fatal("находка не должна быть веткой")
+	}
+	if !p.isBranch("root/alpha") {
+		t.Fatal("папка-группа должна быть веткой")
 	}
 	if !p.isBranch(filesRootUID) {
 		t.Fatal("корень должен оставаться веткой")

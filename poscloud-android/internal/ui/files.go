@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -100,14 +101,38 @@ func (p *filesPage) Refresh() {
 		p.tree.Refresh()
 		return
 	}
-	n, bytes := eng.DirStats(p.root)
-	p.state.SetText(pluralFiles(n) + ", " + humanBytes(bytes) + " · нажмите на файл для действий")
+	p.updateState()
 	// при активном поиске папка могла измениться — перезапускаем обход,
 	// иначе дерево покажет устаревший кеш
 	if p.filtering() {
 		p.scheduleSearch()
 	}
 	p.tree.Refresh()
+}
+
+// updateState — строка под поиском: без поиска размер папки, с поиском —
+// ход обхода или число находок (раньше там всегда висел размер всей папки).
+func (p *filesPage) updateState() {
+	if p.root == "" {
+		p.state.SetText("")
+		return
+	}
+	if p.filtering() {
+		p.searchMu.Lock()
+		loading, n := p.searchLoading, len(p.results)
+		p.searchMu.Unlock()
+		switch {
+		case loading:
+			p.state.SetText("Ищем…")
+		case n == 0:
+			p.state.SetText("Ничего не найдено — измените запрос")
+		default:
+			p.state.SetText(fmt.Sprintf("Найдено: %d · нажмите на файл для действий", n))
+		}
+		return
+	}
+	n, bytes := eng.DirStats(p.root)
+	p.state.SetText(pluralFiles(n) + ", " + humanBytes(bytes) + " · нажмите на файл для действий")
 }
 
 // absPath переводит узел дерева в путь на диске.
@@ -142,6 +167,7 @@ func (p *filesPage) scheduleSearch() {
 		p.searchLoading = false
 		p.searchMu.Unlock()
 		p.tree.Refresh()
+		p.updateState()
 		return
 	}
 	q := strings.ToLower(strings.TrimSpace(p.search.Text))
@@ -163,7 +189,11 @@ func (p *filesPage) runSearch(q, root string) {
 	p.searchMu.Unlock()
 	go func() {
 		p.doSearch(q, root, gen)
-		fyne.Do(func() { p.tree.Refresh() })
+		fyne.Do(func() {
+			p.tree.OpenAllBranches()
+			p.tree.Refresh()
+			p.updateState()
+		})
 	}()
 }
 
@@ -227,14 +257,41 @@ func (p *filesPage) searchResults() []widget.TreeNodeID {
 	return append([]widget.TreeNodeID(nil), p.results...)
 }
 
+// searchChildUIDs отдаёт находки, сгруппированные по папкам: в корне —
+// папки с находками (и файлы из самого корня), внутри папки — её находки.
+// Плоский список с относительным путём в строке не помещался по ширине:
+// строка становилась шире экрана и обрезалась краем окна.
+func (p *filesPage) searchChildUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
+	res := p.searchResults()
+	var out []widget.TreeNodeID
+	if string(uid) == filesRootUID {
+		seen := map[string]bool{}
+		for _, f := range res {
+			d := path.Dir(string(f))
+			if d == string(uid) {
+				out = append(out, f)
+				continue
+			}
+			if !seen[d] {
+				seen[d] = true
+				out = append(out, widget.TreeNodeID(d))
+			}
+		}
+		return out
+	}
+	for _, f := range res {
+		if path.Dir(string(f)) == string(uid) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // childUIDs отдаёт содержимое каталога: сначала папки, потом файлы, по алфавиту.
-// Во время поиска — плоский список находок из кеша.
+// Во время поиска — находки, сгруппированные по папкам.
 func (p *filesPage) childUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
 	if p.filtering() {
-		if string(uid) != filesRootUID {
-			return nil
-		}
-		return p.searchResults()
+		return p.searchChildUIDs(uid)
 	}
 	entries, err := os.ReadDir(p.absPath(uid))
 	if err != nil {
@@ -259,10 +316,19 @@ func (p *filesPage) childUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
 }
 
 // isBranch — папка ли это (у неё есть треугольник раскрытия).
-// Во время поиска все находки — листья.
+// Во время поиска ветка — корень и папки с находками.
 func (p *filesPage) isBranch(uid widget.TreeNodeID) bool {
 	if p.filtering() {
-		return string(uid) == filesRootUID
+		if string(uid) == filesRootUID {
+			return true
+		}
+		// папка-группа в результатах поиска
+		for _, f := range p.searchResults() {
+			if path.Dir(string(f)) == string(uid) {
+				return true
+			}
+		}
+		return false
 	}
 	fi, err := os.Stat(p.absPath(uid))
 	return err == nil && fi.IsDir()
@@ -298,12 +364,14 @@ func (p *filesPage) updateNode(uid widget.TreeNodeID, branch bool, o fyne.Canvas
 		return
 	}
 	if p.filtering() {
-		info := ""
-		if fi, err := os.Stat(abs); err == nil && !fi.IsDir() {
-			info = humanBytes(fi.Size())
+		base := filepath.Base(abs)
+		if fi, err := os.Stat(abs); err == nil && fi.IsDir() {
+			n.set(base, true, fmt.Sprintf("%d", len(p.searchChildUIDs(uid))))
+			return
 		}
-		// при поиске показываем относительный путь: находки из разных папок
-		n.set(strings.TrimPrefix(string(uid), filesRootUID+"/"), false, info)
+		// Размер в результатах не показываем: дерево Fyne отдаёт строке
+		// ширину больше видимой, и правый столбец обрезался краем экрана.
+		n.set(clipMiddle(base, 34), false, "")
 		return
 	}
 	fi, err := os.Stat(abs)
@@ -337,12 +405,13 @@ func nameOf(uid widget.TreeNodeID) string {
 // если размер уже разложен, и длинные имена налезали на соседние подписи.
 type fileNode struct {
 	widget.BaseWidget
-	uid   widget.TreeNodeID
-	icon  *widget.Icon
-	name  *widget.Label
-	info  *widget.Label
-	full  string
-	onTap func()
+	uid      widget.TreeNodeID
+	icon     *widget.Icon
+	name     *widget.Label
+	info     *widget.Label
+	full     string
+	fullInfo string
+	onTap    func()
 }
 
 const (
@@ -360,6 +429,9 @@ func newFileNode(onTap func()) *fileNode {
 	n.name.TextStyle = fyne.TextStyle{}
 	n.info.SizeName = theme.SizeNameCaptionText
 	n.info.Alignment = fyne.TextAlignTrailing
+	// Подпись справа не переносится: при узком месте перенос превращал
+	// путь папки в три строки поверх имени файла (видно при поиске).
+	n.info.Wrapping = fyne.TextWrapOff
 	n.ExtendBaseWidget(n)
 	return n
 }
@@ -372,6 +444,7 @@ func (n *fileNode) set(name string, folder bool, info string) {
 		n.icon.SetResource(theme.FileIcon())
 	}
 	n.full = name
+	n.fullInfo = info
 	n.name.SetText(name)
 	n.info.SetText(info)
 }
@@ -403,7 +476,14 @@ type fileNodeRenderer struct {
 func (r *fileNodeRenderer) Destroy()                     {}
 func (r *fileNodeRenderer) Objects() []fyne.CanvasObject { return r.objs }
 func (r *fileNodeRenderer) MinSize() fyne.Size           { return r.obj.MinSize() }
-func (r *fileNodeRenderer) Refresh()                     { canvas.Refresh(r.obj) }
+
+// Refresh пересчитывает раскладку: дерево Fyne переиспользует строки и после
+// updateNode может не звать Layout заново, а без него имя оставалось полным
+// и налезало на размер справа (видно в результатах поиска).
+func (r *fileNodeRenderer) Refresh() {
+	r.Layout(r.obj.Size())
+	canvas.Refresh(r.obj)
+}
 
 // Layout: иконка слева, размер справа, имя — в остатке ширины с обрезкой.
 func (r *fileNodeRenderer) Layout(size fyne.Size) {
@@ -416,27 +496,42 @@ func (r *fileNodeRenderer) Layout(size fyne.Size) {
 	n.icon.Move(fyne.NewPos(0, (size.Height-iconSize)/2))
 
 	infoW := float32(0)
-	if n.info.Text != "" {
-		infoW = n.info.MinSize().Width
+	if n.fullInfo != "" {
+		captionSize := theme.CurrentForWidget(n).Size(theme.SizeNameCaptionText)
+		infoW = fyne.MeasureText(n.fullInfo, captionSize, fyne.TextStyle{}).Width + 8
 		if infoW > size.Width*0.45 {
 			infoW = size.Width * 0.45
 		}
+		setTextIfChanged(n.info, ellipsize(n.fullInfo, infoW, captionSize))
 		n.info.Resize(fyne.NewSize(infoW, n.info.MinSize().Height))
 		n.info.Move(fyne.NewPos(size.Width-infoW, (size.Height-n.info.MinSize().Height)/2))
 	}
 
 	left := iconSize + nodePad
-	nameW := size.Width - left - infoW - nodePad
+	nameW := size.Width - left - infoW - nodePad*2
 	if nameW < 0 {
 		nameW = 0
 	}
-	text := ellipsize(n.full, nameW, theme.CurrentForWidget(n).Size(theme.SizeNameText))
+	text := ellipsize(n.full, nameW-6, theme.CurrentForWidget(n).Size(theme.SizeNameText))
 	if n.name.Text != text {
 		n.name.SetText(text)
 	}
 	nameH := n.name.MinSize().Height
 	n.name.Resize(fyne.NewSize(nameW, nameH))
 	n.name.Move(fyne.NewPos(left, (size.Height-nameH)/2))
+}
+
+// clipMiddle сжимает строку до max символов, оставляя начало и конец.
+// Нужна там, где ширина ещё неизвестна (строка дерева переиспользуется
+// Fyne): текст получает безопасную длину сразу, до раскладки.
+func clipMiddle(s string, max int) string {
+	r := []rune(s)
+	if max < 5 || len(r) <= max {
+		return s
+	}
+	head := max / 2
+	tail := max - head - 1
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
 }
 
 // ellipsize сжимает текст до ширины, оставляя начало и конец: у снимков

@@ -94,8 +94,12 @@ func (p *recentPage) row(ev eng.ChangeEvent) fyne.CanvasObject {
 	if base := filepath.Base(ev.Name); base != "" {
 		name = base
 	}
-	text := fmt.Sprintf("%s · %s", name, time.Unix(ev.Time, 0).Format("02.01.2006 15:04"))
-	return dialogRow(text, icon, func() { p.details(ev, op) })
+	// Операция словами, а не только значком: у стрелки вниз и вверх
+	// значение читается только после легенды, которую никто не читает.
+	sub := op + " · " + time.Unix(ev.Time, 0).Format("02.01.2006 15:04")
+	row := newListRow(func() { p.details(ev, op) })
+	row.set(icon, name, sub)
+	return row
 }
 
 // details показывает полное имя файла и предлагает перейти к «Файлам».
