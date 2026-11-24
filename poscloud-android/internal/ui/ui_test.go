@@ -325,8 +325,8 @@ func TestScreenshotRender(t *testing.T) {
 	outDir := os.Getenv("POSCLOUD_SHOTS")
 	_ = os.MkdirAll(outDir, 0755)
 
-	names := []string{"status", "connect", "folders", "files", "log"}
-	tabTitles := map[string]string{"status": "Статус", "connect": "Связь", "folders": "Папки", "files": "Файлы", "log": "Журнал"}
+	names := []string{"status", "connect", "folders", "files", "recent", "log"}
+	tabTitles := map[string]string{"status": "Статус", "connect": "Связь", "folders": "Папки", "files": "Файлы", "recent": "Лента", "log": "Журнал"}
 	for _, name := range names {
 		st.pager.SelectByName(tabTitles[name])
 		time.Sleep(150 * time.Millisecond)

@@ -78,6 +78,14 @@ func (p *pager) Select(i int) {
 	}
 }
 
+// Current — подпись выбранной страницы ("" — ничего не выбрано).
+func (p *pager) Current() string {
+	if p.cur < 0 || p.cur >= len(p.items) {
+		return ""
+	}
+	return p.items[p.cur].name
+}
+
 // SelectByName выбирает страницу по подписи (для тестов и горячих клавиш).
 func (p *pager) SelectByName(name string) {
 	for i, it := range p.items {

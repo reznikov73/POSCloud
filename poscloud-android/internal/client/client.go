@@ -50,6 +50,8 @@ type Controller struct {
 	fileMu   sync.Mutex // client.json и screenshots.json пишутся строго по очереди и целиком
 	shotMu   sync.Mutex // один импорт снимков экрана одновременно
 
+	events      []eng.ChangeEvent // лента «Недавние»: что прилетело/уехало/удалено
+	eventsDirty bool              // новые события с последнего показа
 }
 
 // NewController creates a controller in the app data directory root:
@@ -70,6 +72,9 @@ func NewController(root string) *Controller {
 		}
 	}
 	c.syn = eng.NewSyncer(c.cfg.Config, c.Log, func(eng.Config) { c.persist() })
+	// лента «Недавние»: движок отдаёт события об изменениях одной пачкой
+	c.syn.SetChangeFunc(c.recordEvents)
+	c.events = c.loadEventsState().Events
 	c.ensureInstallID()
 	c.permAsks = c.loadScreenshotState().PermAsks
 	c.Log("Клиент POSCloud для Android запущен; данные: " + root)
@@ -639,6 +644,87 @@ func (c *Controller) RulesFreeEnabled() bool { return c.syn.RulesFreeEnabled() }
 
 // Resync re-reads the full list of server files and synchronizes.
 func (c *Controller) Resync() { go c.syn.Resync() }
+
+// ---------- лента «Недавние» ----------
+
+// eventsState — история изменений для ленты «Недавние» (переживает перезапуск).
+type eventsState struct {
+	Events []eng.ChangeEvent `json:"events"`
+}
+
+// recentEventsLimit — сколько событий храним: лента на телефоне, больше и не нужно.
+const recentEventsLimit = 500
+
+// recordEvents принимает от движка пачку событий об изменениях: файл пришёл,
+// уехал или удалён. Движок вызывает в конце цикла, не чаще раза в интервал.
+func (c *Controller) recordEvents(evts []eng.ChangeEvent) {
+	if len(evts) == 0 {
+		return
+	}
+	c.mu.Lock()
+	c.events = append(c.events, evts...)
+	if len(c.events) > recentEventsLimit {
+		c.events = c.events[len(c.events)-recentEventsLimit:]
+	}
+	c.eventsDirty = true
+	c.mu.Unlock()
+	c.saveEventsState()
+}
+
+// RecentEvents возвращает копию истории (старые в начале, новые в конце).
+func (c *Controller) RecentEvents() []eng.ChangeEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]eng.ChangeEvent, len(c.events))
+	copy(out, c.events)
+	return out
+}
+
+// EventsDirtyAndReset возвращает true, если с последнего опроса были новые
+// события, и сбрасывает флаг (интерфейс перечитывает ленту только тогда).
+func (c *Controller) EventsDirtyAndReset() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d := c.eventsDirty
+	c.eventsDirty = false
+	return d
+}
+
+// ClearRecentEvents очищает историю ленты.
+func (c *Controller) ClearRecentEvents() {
+	c.mu.Lock()
+	c.events = nil
+	c.mu.Unlock()
+	c.saveEventsState()
+}
+
+// loadEventsState читает историю ленты из events.json.
+func (c *Controller) loadEventsState() eventsState {
+	var st eventsState
+	data, err := os.ReadFile(filepath.Join(c.root, "events.json"))
+	if err == nil {
+		_ = json.Unmarshal(data, &st)
+	}
+	return st
+}
+
+// saveEventsState сохраняет историю ленты целиком и атомарно.
+func (c *Controller) saveEventsState() {
+	c.mu.Lock()
+	st := eventsState{Events: append([]eng.ChangeEvent(nil), c.events...)}
+	c.mu.Unlock()
+	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return
+	}
+	p := filepath.Join(c.root, "events.json")
+	c.fileMu.Lock()
+	err = writeFileAtomic(p, b, 0644)
+	c.fileMu.Unlock()
+	if err != nil {
+		c.Log("история «Недавние» не сохранена: " + err.Error())
+	}
+}
 
 // ---------- конфликты ----------
 

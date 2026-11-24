@@ -83,6 +83,8 @@ type Syncer struct {
 
 	manualSync int32 // >0, пока идёт ручная синхронизация (atomic): работает и в тихие часы
 
+	eventFn func([]ChangeEvent) // приёмник событий об изменениях (лента «Недавние»)
+
 	crashf func(string) // дополнительный приёмник стеков паник (crash.log клиента)
 }
 
@@ -672,6 +674,12 @@ func (s *Syncer) SyncOnce(verbose bool) {
 
 	next := State{ServerVersion: st.ServerVersion, Files: map[string]StateFile{}}
 	up, down, del, skipped := 0, 0, 0, 0
+	// события об изменениях собираются за цикл и отдаются одной пачкой
+	// (приёмник — лента «Недавние», см. SetChangeFunc)
+	var events []ChangeEvent
+	noteEvent := func(name, op string) {
+		events = append(events, ChangeEvent{Name: name, Op: op, Time: time.Now().Unix()})
+	}
 
 	for name := range names {
 		ls, hasLocal := local[name]
@@ -729,6 +737,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					_ = os.Remove(LocalPath(dir, name))
 					PruneEmptyDirs(dir, LocalPath(dir, name))
 					del++
+					noteEvent(name, "delete")
 					s.log("вниз удаление: " + name)
 				} else {
 					cf := ConflictName(name)
@@ -737,6 +746,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
 							up++
+							noteEvent(cf, "up")
 						}
 					}
 					s.log("конфликт (удаление vs правка): " + name + " -> " + cf)
@@ -752,6 +762,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if hasState {
 						if err := DeleteRemote(base, name, tok); err == nil {
 							del++
+							noteEvent(name, "delete")
 							s.log("вверх удаление: " + name)
 						} else {
 							carry()
@@ -763,6 +774,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 				if ok, err := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); err == nil && ok {
 					next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 					down++
+					noteEvent(name, "down")
 					s.log("вниз: " + name)
 				} else {
 					carry()
@@ -777,6 +789,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
+						noteEvent(name, "up")
 						s.logUpload(name, "")
 					}
 				case FolderDown:
@@ -788,6 +801,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
+						noteEvent(name, "down")
 					}
 					s.log("конфликт (первый синк, получающая папка): " + name + " -> " + cf)
 				default:
@@ -798,11 +812,13 @@ func (s *Syncer) SyncOnce(verbose bool) {
 						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
 							up++
+							noteEvent(cf, "up")
 						}
 					}
 					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
+						noteEvent(name, "down")
 					}
 					s.log("конфликт (первый синк): " + name + " -> " + cf)
 				}
@@ -812,6 +828,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if ok, err := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); err == nil && ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
+						noteEvent(name, "down")
 						s.log("вниз: " + name)
 					} else {
 						carry()
@@ -829,6 +846,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
+						noteEvent(name, "up")
 						s.logUpload(name, "приоритет устройства")
 					}
 				case FolderDown:
@@ -838,6 +856,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
+						noteEvent(name, "down")
 					}
 					s.log("конфликт (получающая папка): " + name + " -> " + cf)
 				default:
@@ -848,11 +867,13 @@ func (s *Syncer) SyncOnce(verbose bool) {
 						if h, v, mt, err := s.upload(base, dir, cf, tok); err == nil {
 							next.Files[cf] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, cf)), MTime: mt, Version: v}
 							up++
+							noteEvent(cf, "up")
 						}
 					}
 					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
+						noteEvent(name, "down")
 					}
 					s.log("конфликт (правки): " + name + " -> " + cf)
 				}
@@ -862,6 +883,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
+						noteEvent(name, "up")
 						s.logUpload(name, "")
 					} else {
 						carry()
@@ -871,6 +893,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if ok, err := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); err == nil && ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
+						noteEvent(name, "down")
 						s.log("вниз (восстановление): " + name)
 					} else {
 						carry()
@@ -887,6 +910,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
+						noteEvent(name, "up")
 						s.logUpload(name, "")
 					} else {
 						carry()
@@ -896,6 +920,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if ok, err := s.downloadLR(ss.Size, base, dir, name, ss.MTime, tok); err == nil && ok {
 						next.Files[name] = ss
 						down++
+						noteEvent(name, "down")
 						s.log("вниз (восстановление): " + name)
 					} else {
 						carry()
@@ -910,6 +935,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					// локально удалён, сервер не менял -> удаляем на сервере (tombstone)
 					if err := DeleteRemote(base, name, tok); err == nil {
 						del++
+						noteEvent(name, "delete")
 						s.log("вверх удаление: " + name)
 						PruneEmptyDirs(dir, LocalPath(dir, name))
 					} else {
@@ -920,6 +946,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if ok, err := s.downloadLR(ss.Size, base, dir, name, ss.MTime, tok); err == nil && ok {
 						next.Files[name] = ss
 						down++
+						noteEvent(name, "down")
 						s.log("вниз (восстановление): " + name)
 					} else if err != nil && strings.Contains(err.Error(), "404") {
 						// файла на сервере уже нет — считаем, что удаление состоялось
@@ -931,6 +958,10 @@ func (s *Syncer) SyncOnce(verbose bool) {
 			}
 		}
 	}
+
+	// события об изменениях отдаём приёмнику одной пачкой — до обработки папок,
+	// чтобы лента «Недавние» обновилась, даже если цикл прервётся ниже
+	s.deliverChangeEvents(events)
 
 	// ==== папки: перенос пустых каталогов ====
 	for n := range dirNames {

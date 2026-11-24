@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,7 @@ type filesPage struct {
 	tree      *widget.Tree
 	path      *widget.Label
 	state     *widget.Label
+	search    *widget.Entry // поиск по имени: дерево становится плоским списком находок
 	conflicts *conflictsCard
 	nodes     map[fyne.CanvasObject]*fileNode // строки дерева: объект → подписи
 }
@@ -43,6 +45,9 @@ func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
 	p.path = widget.NewLabel("")
 	p.path.Wrapping = fyne.TextWrapBreak
 	p.state = caption("")
+	p.search = widget.NewEntry()
+	p.search.SetPlaceHolder("Поиск по имени…")
+	p.search.OnChanged = func(string) { p.tree.Refresh() }
 	p.conflicts = newConflictsCard(ctrl, p, win)
 	p.tree = widget.NewTree(p.childUIDs, p.isBranch, p.createNode, p.updateNode)
 	p.tree.Root = filesRootUID
@@ -50,12 +55,13 @@ func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
 	return p
 }
 
-// object собирает страницу: путь, итог, карточка конфликтов, кнопка
+// object собирает страницу: путь, поиск, итог, карточка конфликтов, кнопка
 // обновления и само дерево.
 func (p *filesPage) object() fyne.CanvasObject {
 	top := container.NewVBox(
 		heading("Файлы"),
 		p.path,
+		p.search,
 		container.NewBorder(nil, nil, nil,
 			widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() { p.Refresh() }),
 			p.state,
@@ -97,8 +103,58 @@ func (p *filesPage) absPath(uid widget.TreeNodeID) string {
 	return filepath.Join(p.root, filepath.FromSlash(rel))
 }
 
+// filtering — идёт ли поиск по имени: дерево показывает плоский список находок.
+func (p *filesPage) filtering() bool {
+	return p.root != "" && strings.TrimSpace(p.search.Text) != ""
+}
+
+// searchResults ищет файлы по имени (без учёта регистра) во всей папке,
+// включая свёрнутые папки, и возвращает узлы дерева для плоского списка.
+func (p *filesPage) searchResults() []widget.TreeNodeID {
+	q := strings.ToLower(strings.TrimSpace(p.search.Text))
+	if q == "" {
+		return nil
+	}
+	var out []widget.TreeNodeID
+	_ = filepath.WalkDir(p.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != p.root && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		if !strings.Contains(strings.ToLower(d.Name()), q) {
+			return nil
+		}
+		rel, rerr := filepath.Rel(p.root, path)
+		if rerr != nil {
+			return nil
+		}
+		out = append(out, widget.TreeNodeID(filesRootUID+"/"+filepath.ToSlash(rel)))
+		if len(out) >= 300 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // childUIDs отдаёт содержимое каталога: сначала папки, потом файлы, по алфавиту.
+// Во время поиска — плоский список находок от корня.
 func (p *filesPage) childUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
+	if p.filtering() {
+		if string(uid) != filesRootUID {
+			return nil
+		}
+		return p.searchResults()
+	}
 	entries, err := os.ReadDir(p.absPath(uid))
 	if err != nil {
 		return nil
@@ -122,7 +178,11 @@ func (p *filesPage) childUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
 }
 
 // isBranch — папка ли это (у неё есть треугольник раскрытия).
+// Во время поиска все находки — листья.
 func (p *filesPage) isBranch(uid widget.TreeNodeID) bool {
+	if p.filtering() {
+		return string(uid) == filesRootUID
+	}
 	fi, err := os.Stat(p.absPath(uid))
 	return err == nil && fi.IsDir()
 }
@@ -142,7 +202,20 @@ func (p *filesPage) updateNode(uid widget.TreeNodeID, branch bool, o fyne.Canvas
 	n.uid = uid
 	abs := p.absPath(uid)
 	if string(uid) == filesRootUID {
-		n.set(filepath.Base(p.root), true, "")
+		if p.filtering() {
+			n.set("Результаты поиска", true, "")
+		} else {
+			n.set(filepath.Base(p.root), true, "")
+		}
+		return
+	}
+	if p.filtering() {
+		info := ""
+		if fi, err := os.Stat(abs); err == nil && !fi.IsDir() {
+			info = humanBytes(fi.Size())
+		}
+		// при поиске показываем относительный путь: находки из разных папок
+		n.set(strings.TrimPrefix(string(uid), filesRootUID+"/"), false, info)
 		return
 	}
 	fi, err := os.Stat(abs)

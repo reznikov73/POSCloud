@@ -155,6 +155,9 @@ type State struct {
 	// файлы
 	files *filesPage
 
+	// лента «Недавние»
+	recent *recentPage
+
 	// вкладки
 	pager *pager
 
@@ -564,6 +567,9 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// ===== вкладка «Файлы» =====
 	ui.files = newFilesPage(ctrl, w)
 
+	// ===== вкладка «Лента» =====
+	ui.recent = newRecentPage(ctrl, w)
+
 	// Нижняя панель — своя (см. pager.go): пять стандартных вкладок Fyne на
 	// экране телефона не влезают, и «Файлы» с «Журналом» уезжали бы в «…».
 	pg := newPager()
@@ -571,13 +577,19 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	pg.Add("Связь", theme.SettingsIcon(), withBottomInset(container.NewScroll(connectCard)))
 	pg.Add("Папки", theme.FolderOpenIcon(), withBottomInset(foldersCard))
 	pg.Add("Файлы", theme.ListIcon(), withBottomInset(ui.files.object()))
+	pg.Add("Лента", theme.HistoryIcon(), withBottomInset(ui.recent.object()))
 	pg.Add("Журнал", theme.DocumentIcon(), withBottomInset(logCard))
-	// дерево файлов перечитываем при открытии страницы
+	// дерево файлов и ленту перечитываем при открытии страницы
 	pg.OnSelect = func(name string) {
 		if name == "Файлы" {
 			ui.files.Refresh()
 		}
+		if name == "Лента" {
+			ui.recent.Refresh()
+		}
 	}
+	// переход из ленты к дереву файлов
+	ui.recent.goFiles = func() { pg.SelectByName("Файлы") }
 	ui.pager = pg
 	ui.Content = pg.object()
 
@@ -847,6 +859,9 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			cfg := ctrl.Config()
 			running := ctrl.Running()
 			tr := client.Transfers.Snapshot()
+			// ленту «Недавние» перечитываем только когда она открыта и пришли
+			// новые события — иначе зря перерисовываем список
+			feedDirty := ui.pager.Current() == "Лента" && ctrl.EventsDirtyAndReset()
 
 			onlineTxt := "—"
 			if running {
@@ -940,6 +955,9 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 				}
 				if logTxt != "" {
 					ui.logLabel.SetText(lastLog)
+				}
+				if feedDirty {
+					ui.recent.Refresh()
 				}
 				// куда пишется журнал: полный — в данных приложения, копия — в папке
 				if ticks%5 == 0 {

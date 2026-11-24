@@ -38,6 +38,15 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
   “Оставить серверную” (the copy is deleted, the file keeps the server
   version). Offline, choosing “my version” is postponed with an error — the
   conflict stays in the list;
+- **“Недавние” feed (the “Лента” tab)**: what changed in the sync folder —
+  received from the server, sent to it, deleted — appears on its own after
+  every sync cycle (the engine hands the applied changes to the UI in one
+  batch). The history lives in `events.json`, survives an app restart and is
+  capped at 500 entries; tapping an entry shows the full path and jumps to
+  the “Файлы” tab;
+- **file search**: the “Поиск по имени…” field on the “Файлы” tab finds files
+  by name across the whole folder (case-insensitive, including collapsed
+  folders); while searching, the tree turns into a flat list of matches;
 - **manual setup**: address, port, token, interval, TLS with verification of
   the SHA-256 fingerprint of a self-signed certificate;
 - **choosing the sync folder**: a folder dialog, the private app folder and the
@@ -57,6 +66,7 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 | `main.go` | entry point: app setup, autorun, starts the interface from `internal/ui` |
 | `internal/ui/` | Fyne interface: tabs “Status”, “Connection”, “Folders”, “Log”, brand theme |
 | `internal/ui/conflicts.go` | conflict resolution card: list of “ (конфликт …)” copies, choice of version |
+| `internal/ui/recent.go` | the “Лента” (Недавние) tab: what changed in the folder, with history |
 | `internal/client/` | controller: settings, engine, log, progress, QR decoder — no UI (tested separately) |
 | `tools/genicon/` | `Icon.png` generator: draws the icon from vector geometry with 4x supersampling — deterministic, the repository is text only |
 | `build.sh` | local APK build: tests, package, signing |
