@@ -237,8 +237,14 @@ func StateCoversDir(files map[string]StateFile, dir string) bool {
 	return false
 }
 
-// ConflictName строит имя конфликтной копии файла.
+// ConflictName строит имя конфликтной копии файла. Если файл уже конфликтная
+// копия, старый суффикс заменяется новым, а не дописывается вторым: иначе
+// после каждой правки имя растёт («… (конфликт A) (конфликт B)») и его
+// невозможно прочитать в списке файлов и в диалоге выбора версии.
 func ConflictName(name string) string {
+	if orig, ok := ConflictOriginalName(name); ok {
+		name = orig
+	}
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
 	return base + " (конфликт " + time.Now().Format("2006-01-02_15-04-05") + ")" + ext

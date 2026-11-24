@@ -9,10 +9,25 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// TestConflictNameReplacesSuffix — повторный конфликт не достраивает второй
+// суффикс: имя остаётся читаемым и разбирается как одна копия.
+func TestConflictNameReplacesSuffix(t *testing.T) {
+	stamp := time.Date(2026, 11, 24, 10, 11, 12, 0, time.Local).Format(conflictStampLayout)
+	nested := "папка/заметка (конфликт " + stamp + ").md"
+	cf := ConflictName(nested)
+	if strings.Count(cf, conflictMark) != 1 {
+		t.Fatalf("суффикс задвоен: %q", cf)
+	}
+	if orig, ok := ConflictOriginalName(cf); !ok || orig != "папка/заметка.md" {
+		t.Fatalf("разбор %q: %q, %v", cf, orig, ok)
+	}
+}
 
 // TestConflictOriginalNameStrict — разбор суффикса « (конфликт …)» строгий:
 // правильная метка времени распознаётся, слово «конфликт» в обычном имени — нет.
