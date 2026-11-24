@@ -31,6 +31,13 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
   manually type ~250 characters of code. Both kinds of QR are supported: “Connection
   code” (a one-time secret is exchanged for a token) and “Device
   token” (a ready-made token is saved as is, without re-issuing on the server);
+- **conflict resolution**: a “Конфликты” card on the “Файлы” tab lists the
+  “ (конфликт …)” copies the engine saves when versions diverge; one tap picks
+  the winner — “Оставить мою версию” (the copy replaces the file and is
+  uploaded, the losing copy is deleted locally and on the server) or
+  “Оставить серверную” (the copy is deleted, the file keeps the server
+  version). Offline, choosing “my version” is postponed with an error — the
+  conflict stays in the list;
 - **manual setup**: address, port, token, interval, TLS with verification of
   the SHA-256 fingerprint of a self-signed certificate;
 - **choosing the sync folder**: a folder dialog, the private app folder and the
@@ -49,6 +56,7 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 |---|---|
 | `main.go` | entry point: app setup, autorun, starts the interface from `internal/ui` |
 | `internal/ui/` | Fyne interface: tabs “Status”, “Connection”, “Folders”, “Log”, brand theme |
+| `internal/ui/conflicts.go` | conflict resolution card: list of “ (конфликт …)” copies, choice of version |
 | `internal/client/` | controller: settings, engine, log, progress, QR decoder — no UI (tested separately) |
 | `tools/genicon/` | `Icon.png` generator: draws the icon from vector geometry with 4x supersampling — deterministic, the repository is text only |
 | `build.sh` | local APK build: tests, package, signing |

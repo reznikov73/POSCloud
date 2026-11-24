@@ -50,3 +50,5 @@ USER.md
 .opencode/
 .gigacode_vsc/
 *-capability.json
+
+memory/

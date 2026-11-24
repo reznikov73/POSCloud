@@ -25,13 +25,14 @@ import (
 // Можно раскрывать папки, открывать файлы системными приложениями, копировать,
 // переименовывать и удалять — сами настройки синхронизации при этом не меняются.
 type filesPage struct {
-	ctrl  *client.Controller
-	win   fyne.Window
-	root  string // абсолютный путь папки синхронизации
-	tree  *widget.Tree
-	path  *widget.Label
-	state *widget.Label
-	nodes map[fyne.CanvasObject]*fileNode // строки дерева: объект → подписи
+	ctrl      *client.Controller
+	win       fyne.Window
+	root      string // абсолютный путь папки синхронизации
+	tree      *widget.Tree
+	path      *widget.Label
+	state     *widget.Label
+	conflicts *conflictsCard
+	nodes     map[fyne.CanvasObject]*fileNode // строки дерева: объект → подписи
 }
 
 // filesRootUID — корневой узел дерева: сама папка синхронизации.
@@ -42,13 +43,15 @@ func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
 	p.path = widget.NewLabel("")
 	p.path.Wrapping = fyne.TextWrapBreak
 	p.state = caption("")
+	p.conflicts = newConflictsCard(ctrl, p, win)
 	p.tree = widget.NewTree(p.childUIDs, p.isBranch, p.createNode, p.updateNode)
 	p.tree.Root = filesRootUID
 	p.tree.HideSeparators = true
 	return p
 }
 
-// object собирает страницу: путь, итог, кнопка обновления и само дерево.
+// object собирает страницу: путь, итог, карточка конфликтов, кнопка
+// обновления и само дерево.
 func (p *filesPage) object() fyne.CanvasObject {
 	top := container.NewVBox(
 		heading("Файлы"),
@@ -57,14 +60,17 @@ func (p *filesPage) object() fyne.CanvasObject {
 			widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() { p.Refresh() }),
 			p.state,
 		),
+		p.conflicts.object(),
 		widget.NewSeparator(),
 	)
 	return container.NewBorder(top, nil, nil, nil, p.tree)
 }
 
-// Refresh перечитывает папку синхронизации (её путь мог измениться) и дерево.
+// Refresh перечитывает папку синхронизации (её путь мог измениться), дерево
+// и список конфликтных копий.
 func (p *filesPage) Refresh() {
 	p.root = strings.TrimSpace(p.ctrl.Config().Dir)
+	p.conflicts.Refresh()
 	if p.root == "" {
 		p.path.SetText("папка синхронизации не выбрана")
 		p.state.SetText("")

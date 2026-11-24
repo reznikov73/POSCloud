@@ -640,6 +640,27 @@ func (c *Controller) RulesFreeEnabled() bool { return c.syn.RulesFreeEnabled() }
 // Resync re-reads the full list of server files and synchronizes.
 func (c *Controller) Resync() { go c.syn.Resync() }
 
+// ---------- конфликты ----------
+
+// Conflicts returns the conflict copies in the sync folder: file versions
+// diverged between devices, and the engine saved both — the local edit lives
+// in a copy marked " (конфликт …)" until the person picks a side.
+func (c *Controller) Conflicts() []eng.ConflictPair { return c.syn.Conflicts() }
+
+// ResolveConflict resolves a conflict copy: mode "local" keeps my version
+// (the copy's content replaces the file and is uploaded), "server" keeps the
+// server's (the copy is deleted here and on the server).
+func (c *Controller) ResolveConflict(name, mode string) error {
+	switch mode {
+	case "local":
+		return c.syn.ResolveConflictKeepLocal(name)
+	case "server":
+		return c.syn.ResolveConflictKeepServer(name)
+	default:
+		return fmt.Errorf("неизвестный режим разрешения конфликта: %s", mode)
+	}
+}
+
 // ---------- снимки экрана ----------
 
 // screenshotsState — какие снимки экрана уже скопированы (имя -> размер),
