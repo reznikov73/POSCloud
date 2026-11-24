@@ -106,6 +106,92 @@ func TestWritableSyncDir(t *testing.T) {
 	}
 }
 
+// TestInstallID — номер установки создаётся один раз и переживает перезапуск:
+// по нему различаются журналы телефона и эмулятора с одинаковым именем.
+func TestInstallID(t *testing.T) {
+	root := t.TempDir()
+	c := NewController(root)
+	id := c.InstallID()
+	if id == "" {
+		t.Fatal("номер установки не создан")
+	}
+	c2 := NewController(root)
+	if c2.InstallID() != id {
+		t.Fatalf("номер не сохранился: %q и %q", id, c2.InstallID())
+	}
+	if len(NewController(t.TempDir()).InstallID()) != 8 {
+		t.Fatal("ожидается 8 hex-символов")
+	}
+}
+
+// TestLogMirrorPath — имя зеркала журнала безопасно для файловой системы и
+// различается у устройств с одинаковым именем.
+func TestLogMirrorPath(t *testing.T) {
+	root := t.TempDir()
+	c := NewController(root)
+	c.mu.Lock()
+	c.cfg.Dir = filepath.Join(root, "sync")
+	c.cfg.DeviceName = "Мой телефон"
+	c.mu.Unlock()
+	p := c.LogMirrorPath()
+	if filepath.Dir(p) != filepath.Join(root, "sync") {
+		t.Fatalf("зеркало должно лежать в корне папки синхронизации: %q", p)
+	}
+	if !strings.HasPrefix(filepath.Base(p), "POSCloud-журнал-") {
+		t.Fatalf("неожиданное имя зеркала: %q", filepath.Base(p))
+	}
+	if strings.ContainsAny(filepath.Base(p), " \\/:") {
+		t.Fatalf("небезопасное имя файла: %q", filepath.Base(p))
+	}
+	c2 := NewController(t.TempDir())
+	c2.mu.Lock()
+	c2.cfg.Dir = c.Config().Dir
+	c2.mu.Unlock()
+	if filepath.Base(c.LogMirrorPath()) == filepath.Base(c2.LogMirrorPath()) {
+		t.Fatal("одинаковые имена зеркал у разных установок")
+	}
+}
+
+// TestMirrorLog — журнал копируется в папку синхронизации и обновляется
+// только при изменении.
+func TestMirrorLog(t *testing.T) {
+	root := t.TempDir()
+	c := NewController(root)
+	dir := filepath.Join(root, "sync")
+	c.mu.Lock()
+	c.cfg.Dir = dir
+	c.mu.Unlock()
+	c.Log("первая строка")
+	c.MirrorLog()
+	p := c.LogMirrorPath()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("зеркало не создано: %v", err)
+	}
+	if !strings.Contains(string(b), "первая строка") {
+		t.Fatalf("в зеркале нет строки журнала: %q", b)
+	}
+	// без изменений — файл не трогаем
+	before, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.MirrorLog()
+	after, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("зеркало обновилось без изменения журнала")
+	}
+	c.Log("вторая строка")
+	c.MirrorLog()
+	b, err = os.ReadFile(p)
+	if err != nil || !strings.Contains(string(b), "вторая строка") {
+		t.Fatalf("зеркало не обновилось: %q, %v", b, err)
+	}
+}
+
 // TestTransfers checks the transfer progress receiver.
 func TestTransfers(t *testing.T) {
 	s := &TransferStore{m: map[string]*transferState{}}

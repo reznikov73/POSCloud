@@ -134,7 +134,9 @@ type State struct {
 	btnRefreshFld *widget.Button
 
 	// журнал
-	logLabel *widget.Label
+	logLabel     *widget.Label
+	logPathLabel *widget.Label
+	logPathValue string
 
 	// вкладки
 	tabs *container.AppTabs
@@ -424,12 +426,19 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// ===== вкладка «Журнал» =====
 	ui.logLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 	ui.logLabel.Wrapping = fyne.TextWrapWord
+	// куда пишется журнал — вопрос возникает сразу, как только что-то не работает:
+	// полный журнал в каталоге приложения (на телефоне без root не прочитать),
+	// а копия — в папке синхронизации, её видно на компьютере.
+	ui.logPathLabel = caption("")
+	ui.logPathLabel.Wrapping = fyne.TextWrapBreak
+	ui.logPathValue = logPathText(ctrl)
+	ui.logPathLabel.SetText(ui.logPathValue)
 	clearBtn := widget.NewButtonWithIcon("Очистить журнал", theme.DeleteIcon(), func() {
 		ctrl.ClearLogs()
 		ui.logLabel.SetText("")
 	})
 	logCard := container.NewBorder(
-		container.NewVBox(heading("Журнал"), clearBtn),
+		container.NewVBox(heading("Журнал"), clearBtn, ui.logPathLabel),
 		nil, nil, nil,
 		container.NewScroll(ui.logLabel),
 	)
@@ -689,6 +698,9 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			// Раз в 30 секунд забираем новые снимки экрана в папку синхронизации.
 			if ticks%30 == 0 {
 				go ctrl.ImportScreenshots()
+				// копия журнала — в папку синхронизации: на компьютере её можно
+				// открыть и посмотреть, что происходило на телефоне
+				go ctrl.MirrorLog()
 			}
 			st := ctrl.Status()
 			cfg := ctrl.Config()
@@ -788,9 +800,22 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 				if logTxt != "" {
 					ui.logLabel.SetText(lastLog)
 				}
+				// куда пишется журнал: полный — в данных приложения, копия — в папке
+				if ticks%5 == 0 {
+					if txt := logPathText(ctrl); txt != ui.logPathValue {
+						ui.logPathValue = txt
+						ui.logPathLabel.SetText(txt)
+					}
+				}
 			})
 		}
 	}
+}
+
+// logPathText — подпись на вкладке «Журнал»: где лежит полный журнал и его копия.
+func logPathText(ctrl *client.Controller) string {
+	return "Журнал: " + filepath.Join(ctrl.Root(), "client.log") +
+		"\nКопия для компьютера: " + ctrl.LogMirrorPath()
 }
 
 // refreshFolders запрашивает у движка список папок первого уровня и строит строки.

@@ -5,6 +5,9 @@
 package client
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +31,7 @@ type androidConfig struct {
 	eng.Config
 	AutoRun    *bool  `json:"autoRun,omitempty"`    // start synchronization when the app launches
 	DeviceName string `json:"deviceName,omitempty"` // device name when connecting via code
+	InstallID  string `json:"installId,omitempty"`  // короткий номер установки: различает устройства с одинаковым именем (журналы)
 }
 
 // Controller links the sync engine with settings and the log.
@@ -44,6 +48,10 @@ type Controller struct {
 	logDirty bool
 	fileMu   sync.Mutex // client.json и screenshots.json пишутся строго по очереди и целиком
 	shotMu   sync.Mutex // один импорт снимков экрана одновременно
+
+	logMu        sync.Mutex // зеркало журнала: последнее содержимое и последняя ошибка
+	logMirror    []byte
+	logMirrorErr string
 }
 
 // NewController creates a controller in the app data directory root:
@@ -64,6 +72,7 @@ func NewController(root string) *Controller {
 		}
 	}
 	c.syn = eng.NewSyncer(c.cfg.Config, c.Log, func(eng.Config) { c.persist() })
+	c.ensureInstallID()
 	c.permAsks = c.loadScreenshotState().PermAsks
 	c.Log("Клиент POSCloud для Android запущен; данные: " + root)
 	return c
@@ -71,6 +80,119 @@ func NewController(root string) *Controller {
 
 // Root returns the app data directory.
 func (c *Controller) Root() string { return c.root }
+
+// ensureInstallID присваивает короткий номер установки, если его ещё нет:
+// по нему различают журналы устройств с одинаковым именем (телефон и
+// эмулятор оба представляются «Android»).
+func (c *Controller) ensureInstallID() {
+	c.mu.Lock()
+	id := c.cfg.InstallID
+	c.mu.Unlock()
+	if id != "" {
+		return
+	}
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		id = fmt.Sprintf("%x", time.Now().UnixNano()&0xffffffff)
+	} else {
+		id = hex.EncodeToString(b)
+	}
+	c.mu.Lock()
+	c.cfg.InstallID = id
+	c.mu.Unlock()
+	c.persist()
+}
+
+// InstallID возвращает номер этой установки (для имени зеркала журнала).
+func (c *Controller) InstallID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cfg.InstallID
+}
+
+// ---------- зеркало журнала в папке синхронизации ----------
+
+// mirrorLogTail — сколько байт журнала уходит в зеркало: журнал на телефоне
+// недоступен без root, а зеркало синхронизируется на компьютер.
+const mirrorLogTail = 128 << 10
+
+// logNamePart приводит имя устройства к безопасному для имени файла виду.
+func logNamePart(name string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "устройство"
+	}
+	return b.String()
+}
+
+// LogMirrorPath — путь зеркала журнала в папке синхронизации. Файл лежит в
+// корне (файлы в корне синхронизируются всегда, в обе стороны — на подпапки
+// действуют правила, и большинство папок у пользователя выключено), поэтому
+// журнал сразу виден на компьютере.
+func (c *Controller) LogMirrorPath() string {
+	cfg := c.Config()
+	name := "POSCloud-журнал-" + logNamePart(c.DeviceName()) + "-" + c.InstallID() + ".log"
+	return filepath.Join(strings.TrimSpace(cfg.Dir), name)
+}
+
+// MirrorLog копирует журнал в папку синхронизации (вызывается таймером
+// интерфейса). Обновляет только при изменении и не чаще, чем меняется журнал;
+// ошибку пишет в журнал один раз на каждое новое сообщение.
+func (c *Controller) MirrorLog() {
+	cfg := c.Config()
+	if strings.TrimSpace(cfg.Dir) == "" {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(c.root, "client.log"))
+	if err != nil {
+		return // журнала ещё нет — копировать нечего
+	}
+	if len(data) > mirrorLogTail {
+		data = data[len(data)-mirrorLogTail:]
+		if i := bytes.IndexByte(data, '\n'); i >= 0 && i+1 < len(data) {
+			data = data[i+1:] // не начинаем с обрывка строки
+		}
+	}
+	c.logMu.Lock()
+	same := bytes.Equal(c.logMirror, data)
+	c.logMirror = data
+	c.logMu.Unlock()
+	if same {
+		return
+	}
+	dst := c.LogMirrorPath()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		c.noteMirrorErr(err)
+		return
+	}
+	c.fileMu.Lock()
+	err = writeFileAtomic(dst, data, 0o644)
+	c.fileMu.Unlock()
+	c.noteMirrorErr(err)
+}
+
+// noteMirrorErr пишет ошибку зеркала журнала один раз на каждое новое сообщение.
+func (c *Controller) noteMirrorErr(err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	c.logMu.Lock()
+	prev := c.logMirrorErr
+	c.logMirrorErr = msg
+	c.logMu.Unlock()
+	if msg != "" && msg != prev {
+		c.Log("журнал не скопирован в папку синхронизации: " + msg)
+	}
+}
 
 // DefaultSyncDir — the default sync folder (inside the app directory).
 func (c *Controller) DefaultSyncDir() string { return filepath.Join(c.root, "sync") }
@@ -206,6 +328,9 @@ func (c *Controller) loadConfig() {
 	}
 	if cfg.DeviceName != "" {
 		c.cfg.DeviceName = cfg.DeviceName
+	}
+	if cfg.InstallID != "" {
+		c.cfg.InstallID = cfg.InstallID
 	}
 	c.cfg.TLS = cfg.TLS
 	c.cfg.TLSFingerprint = cfg.TLSFingerprint
@@ -378,7 +503,6 @@ func (c *Controller) Status() eng.Status { return c.syn.Status() }
 
 // SyncNow starts an out-of-band synchronization cycle.
 func (c *Controller) SyncNow() {
-	c.Log("синхронизация вручную")
 	c.syn.ResetAuthBackoff()
 	go c.syn.SyncOnce(true)
 }

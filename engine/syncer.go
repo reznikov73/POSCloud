@@ -38,6 +38,12 @@ type Status struct {
 	DirErr   string // папка синхронизации недоступна для записи (пусто — всё в порядке)
 }
 
+// MirrorLogPrefix — с такого имени начинаются зеркала журналов клиентов в папке
+// синхронизации (Android-клиент кладёт их в корень, чтобы журнал можно было
+// прочитать с компьютера). Выгрузку таких файлов не пишем в журнал: строка
+// «вверх: …log» меняла бы сам журнал, и зеркало обновлялось бы бесконечно.
+const MirrorLogPrefix = "POSCloud-журнал-"
+
 // Syncer выполняет синхронизацию папки без привязки к интерфейсу: один и тот
 // же код используют обычный клиент (Wails) и служебная сборка для старых Windows.
 type Syncer struct {
@@ -479,6 +485,19 @@ func (s *Syncer) noteTransfer(name, dir string, err error) {
 	s.log("не удалось " + action + " " + name + ": " + msg)
 }
 
+// журнал не пишем о выгрузке зеркала журнала: строка меняла бы сам журнал,
+// и зеркало обновлялось бы бесконечно
+func (s *Syncer) logUpload(name, note string) {
+	if strings.HasPrefix(name, MirrorLogPrefix) {
+		return
+	}
+	if note != "" {
+		s.log("вверх (" + note + "): " + name)
+		return
+	}
+	s.log("вверх: " + name)
+}
+
 // SyncOnce — один цикл двусторонней синхронизации (хэши/версии, удаления, конфликты).
 func (s *Syncer) SyncOnce(verbose bool) {
 	s.syncMu.Lock()
@@ -709,7 +728,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
-						s.log("вверх: " + name)
+						s.logUpload(name, "")
 					}
 				case FolderDown:
 					// «только получать»: локальные правки не выгружаем, но бережём копией
@@ -761,7 +780,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
-						s.log("вверх (приоритет устройства): " + name)
+						s.logUpload(name, "приоритет устройства")
 					}
 				case FolderDown:
 					// «только получать»: ставим серверную версию, локальные правки сохраняем копией
@@ -794,7 +813,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
-						s.log("вверх: " + name)
+						s.logUpload(name, "")
 					} else {
 						carry()
 					}
@@ -819,7 +838,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if h, v, mt, err := s.upload(base, dir, name, tok); err == nil {
 						next.Files[name] = StateFile{Hash: h, Size: FileSize(LocalPath(dir, name)), MTime: mt, Version: v}
 						up++
-						s.log("вверх: " + name)
+						s.logUpload(name, "")
 					} else {
 						carry()
 					}
@@ -988,8 +1007,8 @@ func (s *Syncer) SyncOnce(verbose bool) {
 	s.count = len(next.Files)
 	s.mu.Unlock()
 	if verbose {
-		s.log(fmt.Sprintf("синк: сервер %s, локальных %d, изменений %d, вверх %d, вниз %d, удалено %d, пропущено по режимам %d",
-			base, len(local), len(changes), up, down, del, skipped))
+		s.log(fmt.Sprintf("синк: вверх %d, вниз %d, удалено %d, пропущено %d, локальных %d",
+			up, down, del, skipped, len(local)))
 	}
 }
 

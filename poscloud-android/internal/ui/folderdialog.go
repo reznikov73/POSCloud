@@ -64,7 +64,8 @@ func (b *folderBrowser) current() string { return b.cur }
 // object собирает браузер: путь сверху, быстрые переходы, список каталогов.
 func (b *folderBrowser) object() fyne.CanvasObject {
 	// Быстрые переходы: приватная папка, папка на карте, корень памяти и
-	// типовые фото-папки телефона (галерея и снимки экрана).
+	// типовые папки телефона. «POSCloud» ведёт в видимую в проводнике папку
+	// (Download/POScloud, на старых установках — DCIM/POScloud).
 	quick := container.NewVBox(
 		container.NewHBox(
 			dialogRow("Приложение", theme.HomeIcon(), func() { b.load(b.ctrl.DefaultSyncDir()) }),
@@ -73,16 +74,16 @@ func (b *folderBrowser) object() fyne.CanvasObject {
 				if dir == "" {
 					dialog.ShowInformation("Папка на карте",
 						"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
-					return
-				}
-				b.load(dir)
+						return
+					}
+					b.load(dir)
 			}),
 			dialogRow("Память", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
 		),
 		container.NewHBox(
-			dialogRow("Фото", theme.MediaPhotoIcon(), func() { b.load("/storage/emulated/0/DCIM/Camera") }),
+			dialogRow("Загрузки", theme.DownloadIcon(), func() { b.load("/storage/emulated/0/Download") }),
 			dialogRow("Снимки", theme.MediaPhotoIcon(), func() { b.load("/storage/emulated/0/Pictures/Screenshots") }),
-			dialogRow("POSCloud", theme.FolderIcon(), func() { b.load("/storage/emulated/0/DCIM/POScloud") }),
+			dialogRow("POSCloud", theme.FolderIcon(), func() { b.load(publicSyncDir()) }),
 		),
 	)
 	return container.NewBorder(
@@ -157,6 +158,17 @@ func isDir(path string) bool {
 	}
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
+}
+
+// publicSyncDir — видимая в проводнике папка POScloud: сначала Download
+// (папка загрузок телефона), затем DCIM — где она была у старых установок.
+func publicSyncDir() string {
+	for _, dir := range []string{"/storage/emulated/0/Download/POScloud", "/storage/emulated/0/DCIM/POScloud"} {
+		if isDir(dir) {
+			return dir
+		}
+	}
+	return "/storage/emulated/0/Download"
 }
 
 // sharedRoot — корень общей памяти: на Android /storage/emulated/0,
