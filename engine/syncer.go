@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +28,15 @@ type Config struct {
 	Rules                []FolderRule `json:"folderRules,omitempty"`
 	RulesFree            bool         `json:"rulesFree,omitempty"`
 	RuleDefaultsMigrated bool         `json:"ruleDefaultsMigrated,omitempty"`
+
+	// Тихие часы: окно локального времени "HH:MM", в котором цикл не стартует
+	// сам. Пустые или равные строки — окно выключено.
+	QuietFrom string `json:"quietFrom,omitempty"`
+	QuietTo   string `json:"quietTo,omitempty"`
+
+	// MaxDownMB — не скачивать автоматически файлы больше этого размера (МБ).
+	// 0 — ограничения нет.
+	MaxDownMB int64 `json:"maxDownMb,omitempty"`
 }
 
 // Status — состояние синхронизации для интерфейса.
@@ -68,6 +78,10 @@ type Syncer struct {
 	authFailed  bool              // токен уже отвергнут; не дублируем запись в журнал каждый цикл
 	authRetryAt time.Time
 	authBackoff time.Duration
+
+	quietLoggedAt time.Time // когда последний раз писали в журнал про тихие часы
+
+	manualSync int32 // >0, пока идёт ручная синхронизация (atomic): работает и в тихие часы
 
 	crashf func(string) // дополнительный приёмник стеков паник (crash.log клиента)
 }
@@ -154,6 +168,12 @@ func (s *Syncer) Update(cfg Config) {
 	s.cfg.Rules = append([]FolderRule(nil), cfg.Rules...)
 	s.cfg.RulesFree = cfg.RulesFree
 	s.cfg.RuleDefaultsMigrated = cfg.RuleDefaultsMigrated
+	s.cfg.QuietFrom = NormalizeClock(cfg.QuietFrom)
+	s.cfg.QuietTo = NormalizeClock(cfg.QuietTo)
+	if cfg.MaxDownMB < 0 {
+		cfg.MaxDownMB = 0
+	}
+	s.cfg.MaxDownMB = cfg.MaxDownMB
 	s.mu.Unlock()
 }
 
@@ -442,12 +462,36 @@ func (s *Syncer) noteDirErr(msg string) {
 	}
 }
 
+// SyncOnceManual запускает один цикл вручную: тихие часы не останавливают
+// его (пользователь сам нажал «синхронизировать сейчас»).
+func (s *Syncer) SyncOnceManual(verbose bool) {
+	atomic.AddInt32(&s.manualSync, 1)
+	defer atomic.AddInt32(&s.manualSync, -1)
+	s.SyncOnce(verbose)
+}
+
 // download и upload — обёртки над передачей файла: неудачу видно в журнале,
 // иначе она пропадала молча (связь есть, а файлов нет — и почему, непонятно).
+// downloadLR — download с известным размером файла (для лимита скачивания).
 func (s *Syncer) download(base, dir, name string, mtime int64, token string) error {
 	err := DownloadFile(base, dir, name, mtime, token)
 	s.noteTransfer(name, "down", err)
 	return err
+}
+
+// downloadLR скачивает файл, если он не превышает лимит размера; превышение —
+// не ошибка (файл остаётся на сервере и доедет при ручной синхронизации или
+// после повышения лимита), поэтому заметку о пропуске пишем по одному разу.
+func (s *Syncer) downloadLR(size int64, base, dir, name string, mtime int64, token string) (bool, error) {
+	s.mu.Lock()
+	maxMB := s.cfg.MaxDownMB
+	s.mu.Unlock()
+	if sizeLimited(maxMB, size) {
+		s.skipLimitedNote(name, size, maxMB)
+		return false, nil
+	}
+	err := s.download(base, dir, name, mtime, token)
+	return err == nil, err
 }
 
 func (s *Syncer) upload(base, dir, name, token string) (string, int64, int64, error) {
@@ -499,9 +543,14 @@ func (s *Syncer) logUpload(name, note string) {
 }
 
 // SyncOnce — один цикл двусторонней синхронизации (хэши/версии, удаления, конфликты).
+// Автоматический вызов (таймер, слежение, события сервера) не работает в тихие
+// часы; SyncOnceManual запускает цикл и в тихие часы.
 func (s *Syncer) SyncOnce(verbose bool) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+	if atomic.LoadInt32(&s.manualSync) == 0 && s.quietGate(time.Now()) {
+		return
+	}
 	s.mu.Lock()
 	if !s.authRetryAt.IsZero() && time.Now().Before(s.authRetryAt) {
 		s.mu.Unlock()
@@ -711,7 +760,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					skipped++
 					continue
 				}
-				if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+				if ok, err := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); err == nil && ok {
 					next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 					down++
 					s.log("вниз: " + name)
@@ -736,7 +785,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					if data, err := os.ReadFile(LocalPath(dir, name)); err == nil {
 						_ = os.WriteFile(LocalPath(dir, cf), data, 0644)
 					}
-					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -751,7 +800,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 							up++
 						}
 					}
-					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -760,7 +809,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 			case hasState && ls.Hash == ss.Hash:
 				// локально без изменений, сервер новее
 				if allowDown {
-					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+					if ok, err := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); err == nil && ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 						s.log("вниз: " + name)
@@ -786,7 +835,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					// «только получать»: ставим серверную версию, локальные правки сохраняем копией
 					cf := ConflictName(name)
 					_ = moveFile(LocalPath(dir, name), LocalPath(dir, cf))
-					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -801,7 +850,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 							up++
 						}
 					}
-					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+					if ok, _ := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 					}
@@ -819,7 +868,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					}
 				} else {
 					// «только получать»: локальные правки возвращаем к серверной версии
-					if err := s.download(base, dir, name, cs.MTime, tok); err == nil {
+					if ok, err := s.downloadLR(cs.Size, base, dir, name, cs.MTime, tok); err == nil && ok {
 						next.Files[name] = StateFile{Hash: cs.Hash, Size: cs.Size, MTime: cs.MTime, Version: cs.Version}
 						down++
 						s.log("вниз (восстановление): " + name)
@@ -844,7 +893,7 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					}
 				} else if hasState {
 					// «только получать»: изменённый файл возвращаем к серверной версии
-					if err := s.download(base, dir, name, ss.MTime, tok); err == nil {
+					if ok, err := s.downloadLR(ss.Size, base, dir, name, ss.MTime, tok); err == nil && ok {
 						next.Files[name] = ss
 						down++
 						s.log("вниз (восстановление): " + name)
@@ -868,11 +917,11 @@ func (s *Syncer) SyncOnce(verbose bool) {
 					}
 				} else {
 					// «только получать»: локальное удаление не уходит на сервер — файл возвращается
-					if err := s.download(base, dir, name, ss.MTime, tok); err == nil {
+					if ok, err := s.downloadLR(ss.Size, base, dir, name, ss.MTime, tok); err == nil && ok {
 						next.Files[name] = ss
 						down++
 						s.log("вниз (восстановление): " + name)
-					} else if strings.Contains(err.Error(), "404") {
+					} else if err != nil && strings.Contains(err.Error(), "404") {
 						// файла на сервере уже нет — считаем, что удаление состоялось
 						del++
 					} else {

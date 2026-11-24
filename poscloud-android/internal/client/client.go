@@ -318,6 +318,13 @@ func (c *Controller) loadConfig() {
 	if cfg.AutoRun != nil {
 		c.cfg.AutoRun = cfg.AutoRun
 	}
+	c.cfg.QuietFrom = eng.NormalizeClock(cfg.QuietFrom)
+	c.cfg.QuietTo = eng.NormalizeClock(cfg.QuietTo)
+	if cfg.MaxDownMB > 0 {
+		c.cfg.MaxDownMB = cfg.MaxDownMB
+	} else {
+		c.cfg.MaxDownMB = 0
+	}
 	if c.cfg.Interval <= 0 {
 		c.cfg.Interval = 3
 	}
@@ -361,8 +368,10 @@ func (c *Controller) engineConfig() eng.Config {
 
 // ---------- sync control ----------
 
-// SaveSettings saves settings without starting synchronization.
-func (c *Controller) SaveSettings(host string, port int, dir string, interval int, token string, tls bool, fingerprint, deviceName string, autoRun bool) {
+// SaveSettings saves settings without starting synchronization. Quiet hours
+// ("HH:MM", empty or equal strings — off) and the download size limit in MB
+// (0 — no limit) apply to automatic cycles only; manual sync always runs.
+func (c *Controller) SaveSettings(host string, port int, dir string, interval int, token string, tls bool, fingerprint, deviceName string, autoRun bool, quietFrom, quietTo string, maxDownMB int64) {
 	c.mu.Lock()
 	if host = strings.TrimSpace(host); host != "" {
 		c.cfg.Host = host
@@ -383,6 +392,13 @@ func (c *Controller) SaveSettings(host string, port int, dir string, interval in
 		c.cfg.DeviceName = deviceName
 	}
 	c.cfg.AutoRun = &autoRun
+	c.cfg.QuietFrom = eng.NormalizeClock(quietFrom)
+	c.cfg.QuietTo = eng.NormalizeClock(quietTo)
+	if maxDownMB > 0 {
+		c.cfg.MaxDownMB = maxDownMB
+	} else {
+		c.cfg.MaxDownMB = 0
+	}
 	c.mu.Unlock()
 	if tls {
 		_ = eng.ConfigureTLS(strings.TrimSpace(fingerprint))
@@ -479,17 +495,18 @@ func (c *Controller) Running() bool {
 // Status returns the synchronization state from the engine.
 func (c *Controller) Status() eng.Status { return c.syn.Status() }
 
-// SyncNow starts an out-of-band synchronization cycle.
+// SyncNow starts an out-of-band synchronization cycle. Manual sync works
+// during quiet hours: the user pressed the button themselves.
 func (c *Controller) SyncNow() {
 	c.syn.ResetAuthBackoff()
-	go c.syn.SyncOnce(true)
+	go c.syn.SyncOnceManual(true)
 }
 
 // RecheckToken removes the pause after a 401 and immediately verifies the token.
 func (c *Controller) RecheckToken() {
 	c.syn.ResetAuthBackoff()
 	c.Log("проверка токена")
-	go c.syn.SyncOnce(true)
+	go c.syn.SyncOnceManual(true)
 }
 
 // TestConnection checks communication with the server and returns the result text.

@@ -227,7 +227,7 @@ func TestFilesPage(t *testing.T) {
 		}
 	}
 	ctrl := client.NewController(t.TempDir())
-	ctrl.SaveSettings("localhost", 8090, root, 3, "t", false, "", "", true)
+	ctrl.SaveSettings("localhost", 8090, root, 3, "t", false, "", "", true, "", "", 0)
 	p := newFilesPage(ctrl, w)
 	p.Refresh()
 

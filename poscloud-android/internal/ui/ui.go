@@ -131,6 +131,12 @@ type State struct {
 	autoRunCheck  *widget.Check
 	pairEntry     *widget.Entry
 
+	// тихие часы и лимит скачивания
+	quietCheck  *widget.Check
+	quietFrom   *widget.Entry
+	quietTo     *widget.Entry
+	maxDownEntr *widget.Entry
+
 	// папки
 	foldersBox    *fyne.Container
 	foldersState  *widget.Label
@@ -368,6 +374,19 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	}
 	ui.autoRunCheck = widget.NewCheck("Запускать синхронизацию при старте", nil)
 
+	// Тихие часы: окно локального времени, в котором автоматический цикл не
+	// стартует (ночью не тратим трафик и батарею). Ручная синхронизация
+	// работает и в тихие часы. Пустые или равные значения — окно выключено.
+	ui.quietCheck = widget.NewCheck("Тихие часы (не синхронизировать ночью)", nil)
+	ui.quietFrom = widget.NewEntry()
+	ui.quietFrom.SetPlaceHolder("23:00")
+	ui.quietTo = widget.NewEntry()
+	ui.quietTo.SetPlaceHolder("07:00")
+	quietRow := container.NewHBox(ui.quietFrom, widget.NewLabel("—"), ui.quietTo)
+	// Лимит скачивания: файлы больше не качаются автоматически, причина — в журнале.
+	ui.maxDownEntr = widget.NewEntry()
+	ui.maxDownEntr.SetPlaceHolder("0 — без лимита")
+
 	// Форма для узкого экрана: подпись над полем, поля и кнопки — на всю ширину.
 	// Классическая форма Fyne держит подписи в отдельной колонке слева и на
 	// телефоне оставляет полям слишком мало места.
@@ -383,6 +402,9 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		ui.tlsCheck,
 		formRow("Отпечаток", ui.fpEntry),
 		ui.autoRunCheck,
+		ui.quietCheck,
+		formRow("Тихие часы, с — по", quietRow),
+		formRow("Лимит скачивания, МБ", ui.maxDownEntr),
 	)
 
 	testBtn := widget.NewButtonWithIcon("Проверить связь", theme.ConfirmIcon(), func() {
@@ -403,12 +425,18 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		}()
 	})
 	saveBtn := widget.NewButtonWithIcon("Сохранить настройки", theme.DocumentSaveIcon(), func() {
+		quietFrom, quietTo := "", ""
+		if ui.quietCheck.Checked {
+			quietFrom = strings.TrimSpace(ui.quietFrom.Text)
+			quietTo = strings.TrimSpace(ui.quietTo.Text)
+		}
 		ctrl.SaveSettings(strings.TrimSpace(ui.hostEntry.Text),
 			atoiDefault(ui.portEntry.Text, cfg.Port),
 			cleanPath(ui.dirValue),
 			atoiDefault(ui.intervalEntry.Text, cfg.Interval),
 			ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fingerprint(),
-			ui.deviceEntry.Text, ui.autoRunCheck.Checked)
+			ui.deviceEntry.Text, ui.autoRunCheck.Checked,
+			quietFrom, quietTo, int64(atoiDefault(ui.maxDownEntr.Text, 0)))
 		ui.refreshStatic(ctrl)
 		dialog.ShowInformation("Настройки", "Настройки сохранены.", w)
 	})
@@ -701,6 +729,15 @@ func (ui *State) loadFromConfig(ctrl *client.Controller) {
 		ui.fpEntry.SetText(cfg.TLSFingerprint)
 	}
 	ui.autoRunCheck.SetChecked(ctrl.AutoRunEnabled())
+	quietOn := eng.QuietActive(cfg.QuietFrom, cfg.QuietTo, time.Now())
+	ui.quietCheck.SetChecked(quietOn)
+	ui.quietFrom.SetText(cfg.QuietFrom)
+	ui.quietTo.SetText(cfg.QuietTo)
+	if cfg.MaxDownMB > 0 {
+		ui.maxDownEntr.SetText(strconv.FormatInt(cfg.MaxDownMB, 10))
+	} else {
+		ui.maxDownEntr.SetText("")
+	}
 }
 
 // setSwitch выставляет переключатель синхронизации, не вызывая его обработчик:
