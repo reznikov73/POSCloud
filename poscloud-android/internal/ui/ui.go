@@ -387,8 +387,12 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	})
 	ui.quietFrom = widget.NewEntry()
 	ui.quietFrom.SetPlaceHolder("23:00")
+	ui.quietFrom.Validator = clockValidator
+	ui.quietFrom.OnChanged = func(s string) { clockFilter(ui.quietFrom) }
 	ui.quietTo = widget.NewEntry()
 	ui.quietTo.SetPlaceHolder("07:00")
+	ui.quietTo.Validator = clockValidator
+	ui.quietTo.OnChanged = func(s string) { clockFilter(ui.quietTo) }
 	// Поля фиксированной ширины: обычные Entry в HBox сжимаются и обрезают текст.
 	quietFromBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(84, 46)), ui.quietFrom)
 	quietToBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(84, 46)), ui.quietTo)
@@ -399,6 +403,8 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// Лимит скачивания: файлы больше не качаются автоматически, причина — в журнале.
 	ui.maxDownEntr = widget.NewEntry()
 	ui.maxDownEntr.SetPlaceHolder("0 — без лимита")
+	ui.maxDownEntr.Validator = limitValidator
+	ui.maxDownEntr.OnChanged = func(s string) { digitsFilter(ui.maxDownEntr, 5) }
 	limitBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(120, 46)), ui.maxDownEntr)
 
 	// Форма для узкого экрана: подпись над полем, поля и кнопки — на всю ширину.
@@ -439,10 +445,23 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		}()
 	})
 	saveBtn := widget.NewButtonWithIcon("Сохранить настройки", theme.DocumentSaveIcon(), func() {
+		// сначала проверяем ввод: ерунда не сохраняется и не глушит тихие часы молча
 		quietFrom, quietTo := "", ""
 		if ui.quietCheck.Checked {
-			quietFrom = strings.TrimSpace(ui.quietFrom.Text)
-			quietTo = strings.TrimSpace(ui.quietTo.Text)
+			var okFrom, okTo bool
+			quietFrom, okFrom = normClock(ui.quietFrom.Text)
+			quietTo, okTo = normClock(ui.quietTo.Text)
+			if !okFrom || !okTo {
+				dialog.ShowError(fmt.Errorf("Тихие часы: введите время в формате ЧЧ:ММ — например 23:00 и 07:00"), w)
+				return
+			}
+		}
+		limitTxt := strings.TrimSpace(ui.maxDownEntr.Text)
+		if limitTxt != "" {
+			if n, err := strconv.Atoi(limitTxt); err != nil || n < 0 {
+				dialog.ShowError(fmt.Errorf("Лимит скачивания: целое число мегабайт или пусто (без лимита)"), w)
+				return
+			}
 		}
 		ctrl.SaveSettings(strings.TrimSpace(ui.hostEntry.Text),
 			atoiDefault(ui.portEntry.Text, cfg.Port),
@@ -451,6 +470,9 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 			ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fingerprint(),
 			ui.deviceEntry.Text, ui.autoRunCheck.Checked,
 			quietFrom, quietTo, int64(atoiDefault(ui.maxDownEntr.Text, 0)))
+		// показываем канонический вид введённого («9:5» → «09:05»)
+		ui.quietFrom.SetText(quietFrom)
+		ui.quietTo.SetText(quietTo)
 		ui.refreshStatic(ctrl)
 		dialog.ShowInformation("Настройки", "Настройки сохранены.", w)
 	})
@@ -1057,6 +1079,111 @@ func cleanPath(s string) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.ReplaceAll(s, "\n", "")
 	return strings.TrimSpace(s)
+}
+
+// ---------- проверка ввода ----------
+
+// validClock проверяет «ЧЧ:ММ»: часы 0–23, минуты 0–59.
+func validClock(s string) bool {
+	if len(s) != 5 || s[2] != ':' {
+		return false
+	}
+	h, err1 := strconv.Atoi(s[0:2])
+	m, err2 := strconv.Atoi(s[3:5])
+	return err1 == nil && err2 == nil && h >= 0 && h <= 23 && m >= 0 && m <= 59
+}
+
+// normClock принимает и доводит до канонического вида: «9:5» → «09:05».
+// ok=false — ввести не получилось (мусор).
+func normClock(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", false
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) == 2 {
+		for i := range parts {
+			if len(parts[i]) == 0 || len(parts[i]) > 2 {
+				return "", false
+			}
+			if len(parts[i]) == 1 {
+				parts[i] = "0" + parts[i]
+			}
+		}
+		s = parts[0] + ":" + parts[1]
+	}
+	if !validClock(s) {
+		return "", false
+	}
+	return s, true
+}
+
+// clockValidator — валидатор поля «ЧЧ:ММ»: пусто допустимо (окно выключено).
+func clockValidator(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if _, ok := normClock(s); !ok {
+		return fmt.Errorf("формат ЧЧ:ММ, например 23:00")
+	}
+	return nil
+}
+
+// clockFilter не пускает в поле времени ничего, кроме цифр и одного
+// двоеточия; после двух цифр двоеточие вставляется само, длина ≤ «ЧЧ:ММ».
+func clockFilter(e *widget.Entry) {
+	var b strings.Builder
+	wroteColon := false
+	for _, r := range e.Text {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ':' && !wroteColon:
+			b.WriteRune(r)
+			wroteColon = true
+		}
+	}
+	s := b.String()
+	if len(s) > 5 {
+		s = s[:5]
+	}
+	// «231» → «23:1»: двоеточие после двух цифр, если его ещё нет
+	if len(s) >= 3 && !strings.Contains(s, ":") {
+		s = s[:2] + ":" + s[2:]
+	}
+	if s != e.Text {
+		e.SetText(s)
+	}
+}
+
+// limitValidator — валидатор поля лимита: целое ≥ 0 или пусто.
+func limitValidator(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if n, err := strconv.Atoi(s); err != nil || n < 0 {
+		return fmt.Errorf("целое число мегабайт или пусто")
+	}
+	return nil
+}
+
+// digitsFilter не пускает в поле ничего, кроме цифр (не больше max знаков).
+func digitsFilter(e *widget.Entry, max int) {
+	var b strings.Builder
+	for _, r := range e.Text {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	s := b.String()
+	if max > 0 && len(s) > max {
+		s = s[:max]
+	}
+	if s != e.Text {
+		e.SetText(s)
+	}
 }
 
 // atoiDefault разбирает целое из поля ввода, при ошибке — значение по умолчанию.

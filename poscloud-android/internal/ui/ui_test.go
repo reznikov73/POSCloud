@@ -15,6 +15,49 @@ import (
 	"poscloud-client-android/internal/client"
 )
 
+// TestClockInput — проверка ввода тихих часов: мусор не проходит, «9:5» доводится до «09:05».
+func TestClockInput(t *testing.T) {
+	good := []string{"23:00", "07:30", "00:00", "23:59"}
+	for _, s := range good {
+		if _, ok := normClock(s); !ok {
+			t.Fatalf("%q должен проходить", s)
+		}
+	}
+	bad := []string{"24:00", "12:60", "9:99", "абракадабра", "", "23-00", "23:0:0", "123:45"}
+	for _, s := range bad {
+		if _, ok := normClock(s); ok {
+			t.Fatalf("%q не должен проходить", s)
+		}
+	}
+	if v, ok := normClock("9:5"); !ok || v != "09:05" {
+		t.Fatalf("нормализация «9:5»: получили %q, ok=%v", v, ok)
+	}
+	if v, ok := normClock("9:05"); !ok || v != "09:05" {
+		t.Fatalf("нормализация «9:05»: получили %q, ok=%v", v, ok)
+	}
+	// валидатор поля: пусто допустимо, мусор нет
+	if err := clockValidator(""); err != nil {
+		t.Fatalf("пустое поле должно быть допустимо: %v", err)
+	}
+	if err := clockValidator("99:99"); err == nil {
+		t.Fatal("99:99 должен давать ошибку")
+	}
+}
+
+// TestLimitInput — проверка поля лимита: только целые числа или пусто.
+func TestLimitInput(t *testing.T) {
+	for _, s := range []string{"", "0", "5", "1024"} {
+		if err := limitValidator(s); err != nil {
+			t.Fatalf("%q должен проходить: %v", s, err)
+		}
+	}
+	for _, s := range []string{"abc", "-5", "1.5", "12 34"} {
+		if err := limitValidator(s); err == nil {
+			t.Fatalf("%q должен давать ошибку", s)
+		}
+	}
+}
+
 // TestBuildUISmoke строит весь интерфейс на тестовом драйвере Fyne:
 // ловит паники в построении вкладок и заполнении полей из настроек.
 func TestBuildUISmoke(t *testing.T) {
