@@ -152,9 +152,9 @@ func TestLogMirrorPath(t *testing.T) {
 	}
 }
 
-// TestMirrorLog — журнал копируется в папку синхронизации и обновляется
-// только при изменении.
-func TestMirrorLog(t *testing.T) {
+// TestSaveLogCopy — копия журнала кладётся в папку синхронизации только по
+// вызову (кнопка на вкладке «Журнал») и содержит строки журнала.
+func TestSaveLogCopy(t *testing.T) {
 	root := t.TempDir()
 	c := NewController(root)
 	dir := filepath.Join(root, "sync")
@@ -162,33 +162,34 @@ func TestMirrorLog(t *testing.T) {
 	c.cfg.Dir = dir
 	c.mu.Unlock()
 	c.Log("первая строка")
-	c.MirrorLog()
-	p := c.LogMirrorPath()
+	p, err := c.SaveLogCopy()
+	if err != nil {
+		t.Fatalf("SaveLogCopy: %v", err)
+	}
+	if p != c.LogMirrorPath() {
+		t.Fatalf("путь копии: %q, ожидался %q", p, c.LogMirrorPath())
+	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		t.Fatalf("зеркало не создано: %v", err)
+		t.Fatalf("копия не создана: %v", err)
 	}
 	if !strings.Contains(string(b), "первая строка") {
-		t.Fatalf("в зеркале нет строки журнала: %q", b)
+		t.Fatalf("в копии нет строки журнала: %q", b)
 	}
-	// без изменений — файл не трогаем
-	before, err := os.Stat(p)
-	if err != nil {
+	// без вызова копия не появляется
+	if err := os.Remove(p); err != nil {
 		t.Fatal(err)
-	}
-	c.MirrorLog()
-	after, err := os.Stat(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !after.ModTime().Equal(before.ModTime()) {
-		t.Fatal("зеркало обновилось без изменения журнала")
 	}
 	c.Log("вторая строка")
-	c.MirrorLog()
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("копия появилась без вызова SaveLogCopy")
+	}
+	if _, err := c.SaveLogCopy(); err != nil {
+		t.Fatalf("SaveLogCopy: %v", err)
+	}
 	b, err = os.ReadFile(p)
 	if err != nil || !strings.Contains(string(b), "вторая строка") {
-		t.Fatalf("зеркало не обновилось: %q, %v", b, err)
+		t.Fatalf("копия не обновилась: %q, %v", b, err)
 	}
 }
 

@@ -184,6 +184,50 @@ func TestRenderToggle(t *testing.T) {
 	w.Close()
 }
 
+// TestFilesPage — дерево папки синхронизации: папки сначала, скрытые файлы
+// движка не показываются, имя корня — имя папки.
+func TestFilesPage(t *testing.T) {
+	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
+	w := testApp.NewWindow("x")
+	root := t.TempDir()
+	for _, dir := range []string{"beta", "alpha"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"b.txt", "a.txt", ".poscloud-state.json"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctrl := client.NewController(t.TempDir())
+	ctrl.SaveSettings("localhost", 8090, root, 3, "t", false, "", "", true)
+	p := newFilesPage(ctrl, w)
+	p.Refresh()
+
+	kids := p.childUIDs(filesRootUID)
+	want := []string{"root/alpha", "root/beta", "root/a.txt", "root/b.txt"}
+	if len(kids) != len(want) {
+		t.Fatalf("дерево: %v, ожидалось %v", kids, want)
+	}
+	for i := range want {
+		if string(kids[i]) != want[i] {
+			t.Fatalf("дерево: %v, ожидалось %v", kids, want)
+		}
+	}
+	if !p.isBranch("root/alpha") {
+		t.Fatal("папка не распознана как ветка")
+	}
+	if p.isBranch("root/a.txt") {
+		t.Fatal("файл принят за папку")
+	}
+	if got := p.absPath("root/alpha"); got != filepath.Join(root, "alpha") {
+		t.Fatalf("путь узла: %q", got)
+	}
+	w.Close()
+}
+
 // TestScreenshotRender рендерит интерфейс (фирменная светлая тема)
 // в картинки — это скриншоты вкладок без запуска приложения.
 func TestScreenshotRender(t *testing.T) {
@@ -194,6 +238,18 @@ func TestScreenshotRender(t *testing.T) {
 	testApp.Settings().SetTheme(Theme())
 	w := testApp.NewWindow("POSCloud Client")
 	ctrl := client.NewController(t.TempDir())
+	// немного содержимого, чтобы вкладка «Файлы» показывала дерево
+	root := ctrl.DefaultSyncDir()
+	for _, dir := range []string{"Снимки экрана", "Документы"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"Снимки экрана/Снимок экрана 2026-11-24 07-15-00.png", "Документы/Инструкция.html", "Порядок установки.txt"} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(f)), make([]byte, 4096), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	st := Build(ctrl, w)
 	st.loadFromConfig(ctrl)
 	time.Sleep(500 * time.Millisecond)
@@ -201,9 +257,10 @@ func TestScreenshotRender(t *testing.T) {
 	outDir := os.Getenv("POSCLOUD_SHOTS")
 	_ = os.MkdirAll(outDir, 0755)
 
-	names := []string{"status", "connect", "folders", "log"}
-	for i, name := range names {
-		st.tabs.Select(st.tabs.Items[i])
+	names := []string{"status", "connect", "folders", "files", "log"}
+	tabTitles := map[string]string{"status": "Статус", "connect": "Связь", "folders": "Папки", "files": "Файлы", "log": "Журнал"}
+	for _, name := range names {
+		st.pager.SelectByName(tabTitles[name])
 		time.Sleep(150 * time.Millisecond)
 
 		c := software.NewCanvas()

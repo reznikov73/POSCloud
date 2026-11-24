@@ -49,9 +49,6 @@ type Controller struct {
 	fileMu   sync.Mutex // client.json и screenshots.json пишутся строго по очереди и целиком
 	shotMu   sync.Mutex // один импорт снимков экрана одновременно
 
-	logMu        sync.Mutex // зеркало журнала: последнее содержимое и последняя ошибка
-	logMirror    []byte
-	logMirrorErr string
 }
 
 // NewController creates a controller in the app data directory root:
@@ -81,6 +78,9 @@ func NewController(root string) *Controller {
 // Root returns the app data directory.
 func (c *Controller) Root() string { return c.root }
 
+// DefaultSyncDir — the default sync folder (inside the app directory).
+func (c *Controller) DefaultSyncDir() string { return filepath.Join(c.root, "sync") }
+
 // ensureInstallID присваивает короткий номер установки, если его ещё нет:
 // по нему различают журналы устройств с одинаковым именем (телефон и
 // эмулятор оба представляются «Android»).
@@ -103,18 +103,18 @@ func (c *Controller) ensureInstallID() {
 	c.persist()
 }
 
-// InstallID возвращает номер этой установки (для имени зеркала журнала).
+// InstallID возвращает номер этой установки (для имени копии журнала).
 func (c *Controller) InstallID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.cfg.InstallID
 }
 
-// ---------- зеркало журнала в папке синхронизации ----------
+// ---------- копия журнала в папке синхронизации ----------
 
-// mirrorLogTail — сколько байт журнала уходит в зеркало: журнал на телефоне
-// недоступен без root, а зеркало синхронизируется на компьютер.
-const mirrorLogTail = 128 << 10
+// MirrorLogTail — сколько байт журнала попадает в копию: журнал на телефоне
+// недоступен без root, а копия кладётся в папку синхронизации.
+const MirrorLogTail = 128 << 10
 
 // logNamePart приводит имя устройства к безопасному для имени файла виду.
 func logNamePart(name string) string {
@@ -133,69 +133,46 @@ func logNamePart(name string) string {
 	return b.String()
 }
 
-// LogMirrorPath — путь зеркала журнала в папке синхронизации. Файл лежит в
+// LogMirrorPath — путь копии журнала в папке синхронизации. Файл лежит в
 // корне (файлы в корне синхронизируются всегда, в обе стороны — на подпапки
 // действуют правила, и большинство папок у пользователя выключено), поэтому
-// журнал сразу виден на компьютере.
+// копия сразу видна на компьютере.
 func (c *Controller) LogMirrorPath() string {
 	cfg := c.Config()
 	name := "POSCloud-журнал-" + logNamePart(c.DeviceName()) + "-" + c.InstallID() + ".log"
 	return filepath.Join(strings.TrimSpace(cfg.Dir), name)
 }
 
-// MirrorLog копирует журнал в папку синхронизации (вызывается таймером
-// интерфейса). Обновляет только при изменении и не чаще, чем меняется журнал;
-// ошибку пишет в журнал один раз на каждое новое сообщение.
-func (c *Controller) MirrorLog() {
+// SaveLogCopy сохраняет копию журнала в папку синхронизации и возвращает путь.
+// Вызывается только по кнопке на вкладке «Журнал»: копия уезжает на сервер и
+// появляется на компьютере, где журнал можно прочитать.
+func (c *Controller) SaveLogCopy() (string, error) {
 	cfg := c.Config()
 	if strings.TrimSpace(cfg.Dir) == "" {
-		return
+		return "", errors.New("не выбрана папка синхронизации")
 	}
 	data, err := os.ReadFile(filepath.Join(c.root, "client.log"))
 	if err != nil {
-		return // журнала ещё нет — копировать нечего
+		return "", fmt.Errorf("журнал не прочитан: %w", err)
 	}
-	if len(data) > mirrorLogTail {
-		data = data[len(data)-mirrorLogTail:]
+	if len(data) > MirrorLogTail {
+		data = data[len(data)-MirrorLogTail:]
 		if i := bytes.IndexByte(data, '\n'); i >= 0 && i+1 < len(data) {
 			data = data[i+1:] // не начинаем с обрывка строки
 		}
 	}
-	c.logMu.Lock()
-	same := bytes.Equal(c.logMirror, data)
-	c.logMirror = data
-	c.logMu.Unlock()
-	if same {
-		return
-	}
 	dst := c.LogMirrorPath()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		c.noteMirrorErr(err)
-		return
+		return dst, err
 	}
 	c.fileMu.Lock()
 	err = writeFileAtomic(dst, data, 0o644)
 	c.fileMu.Unlock()
-	c.noteMirrorErr(err)
-}
-
-// noteMirrorErr пишет ошибку зеркала журнала один раз на каждое новое сообщение.
-func (c *Controller) noteMirrorErr(err error) {
-	msg := ""
 	if err != nil {
-		msg = err.Error()
+		return dst, err
 	}
-	c.logMu.Lock()
-	prev := c.logMirrorErr
-	c.logMirrorErr = msg
-	c.logMu.Unlock()
-	if msg != "" && msg != prev {
-		c.Log("журнал не скопирован в папку синхронизации: " + msg)
-	}
+	return dst, nil
 }
-
-// DefaultSyncDir — the default sync folder (inside the app directory).
-func (c *Controller) DefaultSyncDir() string { return filepath.Join(c.root, "sync") }
 
 // appID — имя пакета Android: по нему находится внешний каталог приложения
 // на общей памяти (Android/data/<пакет>/files).

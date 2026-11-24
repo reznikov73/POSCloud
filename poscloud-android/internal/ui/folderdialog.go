@@ -74,9 +74,9 @@ func (b *folderBrowser) object() fyne.CanvasObject {
 				if dir == "" {
 					dialog.ShowInformation("Папка на карте",
 						"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
-						return
-					}
-					b.load(dir)
+					return
+				}
+				b.load(dir)
 			}),
 			dialogRow("Память", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
 		),

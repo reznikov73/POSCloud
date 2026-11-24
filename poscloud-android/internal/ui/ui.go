@@ -137,9 +137,14 @@ type State struct {
 	logLabel     *widget.Label
 	logPathLabel *widget.Label
 	logPathValue string
+	logSaveLabel *widget.Label
+	btnSaveLog   *widget.Button
+
+	// файлы
+	files *filesPage
 
 	// вкладки
-	tabs *container.AppTabs
+	pager *pager
 
 	win fyne.Window
 }
@@ -433,28 +438,55 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.logPathLabel.Wrapping = fyne.TextWrapBreak
 	ui.logPathValue = logPathText(ctrl)
 	ui.logPathLabel.SetText(ui.logPathValue)
+	// копию журнала кладём в папку синхронизации только по кнопке: файл уезжает
+	// на сервер и дальше на компьютер, где его можно открыть и прочитать
+	ui.logSaveLabel = caption("")
+	ui.logSaveLabel.Wrapping = fyne.TextWrapWord
+	ui.btnSaveLog = widget.NewButtonWithIcon("Сохранить журнал в папку", theme.DocumentSaveIcon(), func() {
+		ui.btnSaveLog.Disable()
+		go func() {
+			p, err := ctrl.SaveLogCopy()
+			fyne.Do(func() {
+				ui.btnSaveLog.Enable()
+				if err != nil {
+					ui.logSaveLabel.Importance = widget.DangerImportance
+					ui.logSaveLabel.SetText("Не удалось сохранить: " + err.Error())
+					return
+				}
+				ui.logSaveLabel.Importance = widget.SuccessImportance
+				ui.logSaveLabel.SetText("Сохранено в " + time.Now().Format("15:04:05") + ": " + filepath.Base(p) + " → уедет на компьютер")
+			})
+		}()
+	})
 	clearBtn := widget.NewButtonWithIcon("Очистить журнал", theme.DeleteIcon(), func() {
 		ctrl.ClearLogs()
 		ui.logLabel.SetText("")
 	})
 	logCard := container.NewBorder(
-		container.NewVBox(heading("Журнал"), clearBtn, ui.logPathLabel),
+		container.NewVBox(heading("Журнал"), clearBtn, ui.btnSaveLog, ui.logSaveLabel, ui.logPathLabel),
 		nil, nil, nil,
 		container.NewScroll(ui.logLabel),
 	)
 
-	// Нижняя панель вкладок в Fyne ниже своего MinSize: иконки с подписями
-	// выступают над ней и накрывают содержимое. Оставляем пустую полосу
-	// внизу, чтобы кнопки и текст не оказывались под панелью.
-	tabs := container.NewAppTabs(
-		container.NewTabItemWithIcon("Статус", theme.HomeIcon(), withBottomInset(container.NewScroll(statusCard))),
-		container.NewTabItemWithIcon("Связь", theme.SettingsIcon(), withBottomInset(container.NewScroll(connectCard))),
-		container.NewTabItemWithIcon("Папки", theme.FolderOpenIcon(), withBottomInset(foldersCard)),
-		container.NewTabItemWithIcon("Журнал", theme.DocumentIcon(), withBottomInset(logCard)),
-	)
-	tabs.SetTabLocation(container.TabLocationBottom)
-	ui.tabs = tabs
-	ui.Content = tabs
+	// ===== вкладка «Файлы» =====
+	ui.files = newFilesPage(ctrl, w)
+
+	// Нижняя панель — своя (см. pager.go): пять стандартных вкладок Fyne на
+	// экране телефона не влезают, и «Файлы» с «Журналом» уезжали бы в «…».
+	pg := newPager()
+	pg.Add("Статус", theme.HomeIcon(), withBottomInset(container.NewScroll(statusCard)))
+	pg.Add("Связь", theme.SettingsIcon(), withBottomInset(container.NewScroll(connectCard)))
+	pg.Add("Папки", theme.FolderOpenIcon(), withBottomInset(foldersCard))
+	pg.Add("Файлы", theme.ListIcon(), withBottomInset(ui.files.object()))
+	pg.Add("Журнал", theme.DocumentIcon(), withBottomInset(logCard))
+	// дерево файлов перечитываем при открытии страницы
+	pg.OnSelect = func(name string) {
+		if name == "Файлы" {
+			ui.files.Refresh()
+		}
+	}
+	ui.pager = pg
+	ui.Content = pg.object()
 
 	ui.refreshStatic(ctrl)
 	// Список папок запрашиваем только при настроенном подключении: без токена
@@ -698,9 +730,6 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			// Раз в 30 секунд забираем новые снимки экрана в папку синхронизации.
 			if ticks%30 == 0 {
 				go ctrl.ImportScreenshots()
-				// копия журнала — в папку синхронизации: на компьютере её можно
-				// открыть и посмотреть, что происходило на телефоне
-				go ctrl.MirrorLog()
 			}
 			st := ctrl.Status()
 			cfg := ctrl.Config()
@@ -815,7 +844,7 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 // logPathText — подпись на вкладке «Журнал»: где лежит полный журнал и его копия.
 func logPathText(ctrl *client.Controller) string {
 	return "Журнал: " + filepath.Join(ctrl.Root(), "client.log") +
-		"\nКопия для компьютера: " + ctrl.LogMirrorPath()
+		"\nКопия (по кнопке) — в папке синхронизации: " + ctrl.LogMirrorPath()
 }
 
 // refreshFolders запрашивает у движка список папок первого уровня и строит строки.
