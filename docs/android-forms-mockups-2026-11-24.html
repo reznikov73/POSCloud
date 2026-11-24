@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POSCloud — предлагаемая компоновка форм (макеты)</title>
+<style>
+  :root{
+    --primary:#2563EB; --primary-dark:#1D4ED8; --primary-soft:#E4EDFD;
+    --bg:#EFF3FA; --card:#FFFFFF; --text:#0F172A; --muted:#64748B;
+    --border:#DBE2EF; --line:#CBD5E1; --success:#159D4B; --danger:#DC2626;
+    --warn:#B45309;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI',Roboto,'Noto Sans',sans-serif;
+    background:#E2E8F0;color:var(--text);padding:26px 20px 40px;
+  }
+  h1{font-size:22px;margin-bottom:6px}
+  .intro{color:var(--muted);font-size:13px;max-width:1050px;margin-bottom:8px;line-height:1.55}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 26px}
+  .chip-legend{font-size:11.5px;padding:3px 9px;border-radius:9px;background:#fff;
+    border:1px solid var(--border);color:#475569}
+  .chip-legend b{color:var(--text)}
+  .phones{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
+  .slot{width:340px}
+
+  /* ---------- корпус телефона ---------- */
+  .phone{width:340px;background:var(--bg);border:1px solid #C3CEDF;border-radius:24px;
+    overflow:hidden;box-shadow:0 10px 24px rgba(15,23,42,.14)}
+  .notch{height:20px;background:#0F172A;border-radius:24px 24px 0 0;position:relative}
+  .notch::after{content:'';position:absolute;left:50%;transform:translateX(-50%);top:6px;
+    width:84px;height:8px;background:#1E293B;border-radius:4px}
+  .screen{height:745px;display:flex;flex-direction:column;background:var(--bg)}
+  .cap{margin-top:10px;font-size:12.5px;color:var(--muted);line-height:1.5}
+  .cap b{color:#334155}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:9px;margin-bottom:5px}
+  .tag.p0{background:#FEE2E2;color:#B91C1C}
+  .tag.p1{background:#FEF3C7;color:#92400E}
+  .tag.p2{background:#DBEAFE;color:#1E40AF}
+
+  /* ---------- шапка экрана ---------- */
+  .appbar{padding:12px 14px 6px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .appbar .title{font-size:19px;font-weight:700;letter-spacing:-.2px}
+  .appbar .actions{display:flex;gap:6px}
+  .iconbtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);
+    background:#fff;display:flex;align-items:center;justify-content:center;color:#475569}
+
+  .content{flex:1;overflow:hidden;padding:6px 12px 10px;display:flex;flex-direction:column;gap:10px}
+
+  /* ---------- карточки и строки ---------- */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px 12px}
+  .card.tight{padding:10px 12px}
+  .sect{font-size:13px;font-weight:700;color:#334155;margin:2px 0 -2px}
+  .row{display:flex;align-items:center;gap:10px}
+  .row.between{justify-content:space-between}
+  .grow{flex:1;min-width:0}
+  .t14{font-size:14px;font-weight:600}
+  .t13{font-size:13px}
+  .cap12{font-size:11.5px;color:var(--muted);line-height:1.4}
+  .mono{font-family:'Cascadia Mono',Consolas,monospace;font-size:11px;color:#334155}
+  .ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- кнопки ---------- */
+  .btn{height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    gap:8px;font-size:14px;font-weight:600;border:1px solid transparent}
+  .btn.primary{background:var(--primary);color:#fff}
+  .btn.secondary{background:#fff;border-color:var(--border);color:#334155;font-weight:500;height:40px}
+  .btn.text{background:transparent;color:var(--primary);height:36px;font-weight:600}
+  .btn.block{width:100%}
+  .btn.small{height:34px;font-size:12.5px;padding:0 12px;border-radius:9px}
+
+  /* ---------- поля ---------- */
+  .field{height:42px;border:1px solid var(--line);border-radius:9px;background:#fff;
+    display:flex;align-items:center;padding:0 10px;font-size:13px;color:var(--text);gap:8px}
+  .field .ph{color:#94A3B8}
+  .field .suffix{color:var(--muted);font-size:12px;margin-left:auto}
+  .flabel{font-size:11px;color:var(--muted);margin-bottom:4px}
+  .helper{font-size:11px;color:var(--muted);margin-top:4px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .grid3{display:grid;grid-template-columns:1fr 88px;gap:8px}
+
+  /* ---------- переключатель ---------- */
+  .sw{width:44px;height:26px;border-radius:13px;background:var(--success);position:relative;flex:0 0 auto}
+  .sw::after{content:'';position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.25)}
+  .sw.off{background:var(--track,#D3DCEA)}
+  .sw.off::after{right:21px}
+
+  /* ---------- строки списков ---------- */
+  .lrow{display:flex;align-items:center;gap:10px;min-height:48px;padding:6px 2px;
+    border-bottom:1px solid #EEF2F8}
+  .lrow:last-child{border-bottom:none}
+  .ic16{width:18px;height:18px;color:#64748B;flex:0 0 auto}
+  .mode{height:32px;border:1px solid var(--border);border-radius:8px;background:#fff;
+    display:flex;align-items:center;gap:6px;padding:0 8px;font-size:11.5px;color:#334155;flex:0 0 auto}
+
+  /* ---------- нижняя навигация ---------- */
+  .navbar{border-top:1px solid var(--border);background:var(--card);
+    display:grid;grid-template-columns:repeat(6,1fr);padding:6px 2px 10px}
+  .navitem{display:flex;flex-direction:column;align-items:center;gap:3px;
+    font-size:9.5px;color:var(--muted);padding-top:4px}
+  .navitem .ic{width:20px;height:20px;display:flex;align-items:center;justify-content:center;color:#64748B}
+  .navitem.active{color:var(--primary);font-weight:600}
+  .navitem.active .ic{color:var(--primary)}
+  svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+</style>
+</head>
+<body>
+
+<h1>POSCloud для Android — предлагаемая компоновка форм</h1>
+<p class="intro">
+  Макеты к разбору <b>docs/ANDROID-FORMS-REVIEW-2026-11-24.md</b>. Слева направо: «Статус», «Связь»
+  (основное), «Связь — дополнительно», «Папки», «Файлы», «Лента», «Журнал».
+  Ширина макета — 340 px, это телефон 360–430 dp; касания — не меньше 48 px,
+  основной текст 14, подписи 11–12, отступы 4/8/12.
+</p>
+<div class="legend">
+  <span class="chip-legend"><b>P0</b> сетка и плотность</span>
+  <span class="chip-legend"><b>P1</b> одна главная кнопка, закреплённые действия</span>
+  <span class="chip-legend"><b>P2</b> единицы и длинные значения</span>
+  <span class="chip-legend"><b>P5–P7</b> папки, пустые состояния, безопасные зоны</span>
+</div>
+
+<svg style="display:none">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.8V21M4.2 7.5l1.9 1.1M17.9 15.4l1.9 1.1M4.2 16.5l1.9-1.1M17.9 8.6l1.9-1.1"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M10 10v9"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v4h4M12 8v4l3 2"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h6M10 16h6"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="1.5"/><path d="M10 4V3h4v1M9 9h6M9 13h6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><rect x="4" y="4" width="11" height="11" rx="2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5"/></symbol>
+</svg>
+
+<div class="phones">
+
+  <!-- ================= 1. СТАТУС ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar"><div class="title">POSCloud</div></div>
+      <div class="content">
+        <div class="card tight">
+          <div class="row between">
+            <div class="grow">
+              <div class="t14">Синхронизация</div>
+              <div class="cap12">работает · цикл 20:49</div>
+            </div>
+            <div class="sw"></div>
+          </div>
+        </div>
+
+        <button class="btn secondary block" style="justify-content:center">
+          <svg class="i"><use href="#i-refresh"/></svg> Синхронизировать сейчас
+        </button>
+
+        <div class="card tight" style="padding:0">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);text-align:center">
+            <div style="padding:9px 4px;border-right:1px solid #EEF2F8">
+              <div class="cap12">Связь</div><div class="t13" style="font-weight:600;color:var(--success)">есть</div>
+            </div>
+            <div style="padding:9px 4px;border-right:1px solid #EEF2F8">
+              <div class="cap12">Файлов</div><div class="t13" style="font-weight:600">23</div>
+            </div>
+            <div style="padding:9px 4px;border-right:1px solid #EEF2F8">
+              <div class="cap12">Отправлено</div><div class="t13" style="font-weight:600">0 Б</div>
+            </div>
+            <div style="padding:9px 4px">
+              <div class="cap12">Получено</div><div class="t13" style="font-weight:600">0 Б</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row between" style="padding:0 2px">
+          <div class="cap12">Передачи: нет</div>
+          <div class="cap12" style="color:var(--primary)">Журнал</div>
+        </div>
+
+        <div class="card tight">
+          <div class="t13" style="font-weight:600;margin-bottom:3px">Обновление</div>
+          <div class="cap12">Установлена версия 1.0.42 — обновлений нет</div>
+          <button class="btn secondary block" style="margin-top:8px;height:36px;font-size:13px">Проверить обновление</button>
+        </div>
+
+        <div class="card tight">
+          <div class="cap12">Сервер</div>
+          <div class="t13" style="margin-bottom:6px">https://193.7.203.222:8090</div>
+          <div class="cap12">Папка</div>
+          <div class="mono ell">/data/user/0/io.github.reznikov73.poscloud.client/files/fyne/sync</div>
+        </div>
+
+        <div class="cap12">Синхронизация работает, пока приложение открыто; для фоновой работы держите его в недавних.</div>
+      </div>
+      <div class="navbar">
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p0">P0 · P6</span> <b>Статус.</b> Карточка синхронизации — одна строка,
+      переключатель по центру. Плитки 2×2 (120 dp каждая) сжаты в полосу 56 dp. «Передачи: нет» — строка,
+      а не карточка. Последний блок — подпись, не карточка.</div>
+  </div>
+
+  <!-- ================= 2. СВЯЗЬ: ОСНОВНОЕ ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar"><div class="title">Подключение</div></div>
+      <div class="content">
+        <div class="sect">Быстрое подключение</div>
+        <button class="btn primary block">
+          <svg class="i"><use href="#i-camera"/></svg> Сканировать QR-код
+        </button>
+        <button class="btn text block" style="margin-top:-4px">
+          <svg class="i"><use href="#i-paste"/></svg> Вставить код из буфера
+        </button>
+
+        <div class="card tight" style="padding:8px 12px">
+          <div class="row between">
+            <div class="t13" style="color:var(--primary);font-weight:600">▸ Ввести код вручную</div>
+          </div>
+        </div>
+
+        <div class="sect">Сервер</div>
+        <div class="card tight">
+          <div class="grid3">
+            <div><div class="flabel">Адрес</div><div class="field">193.7.203.222</div></div>
+            <div><div class="flabel">Порт</div><div class="field">8090</div></div>
+          </div>
+          <div style="margin-top:8px">
+            <div class="flabel">Токен</div>
+            <div class="field">••••••••••••••••••
+              <svg class="i" style="margin-left:auto;color:#64748B"><use href="#i-eye"/></svg>
+            </div>
+          </div>
+          <div class="row between" style="margin-top:10px">
+            <div class="t13">TLS с самоподписанным сертификатом</div>
+            <div class="sw" style="width:38px;height:22px"></div>
+          </div>
+        </div>
+
+        <div class="card tight" style="padding:8px 12px">
+          <div class="row between">
+            <div class="t13" style="color:var(--primary);font-weight:600">▸ Расписание и лимиты</div>
+            <div class="cap12">23:00–07:00 · 0 МБ</div>
+          </div>
+        </div>
+
+        <div class="cap12">Сервер создаёт пользователя и устройство и выдаёт токен. Папка по умолчанию —
+          внутри приложения; внешние пути требуют «Доступа ко всем файлам».</div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);background:#fff;padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px">
+        <button class="btn secondary block" style="height:38px">Проверить связь</button>
+        <button class="btn primary block">Сохранить настройки</button>
+      </div>
+
+      <div class="navbar">
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p1">P1</span> <b>Связь, основное.</b> Одно главное действие — «Сканировать QR»;
+      вставка кода и ручной ввод — вторичные. Адрес и порт одной сеткой 3:1. «Сохранить» закреплена внизу,
+      вне прокрутки — больше не уезжает на третий экран.</div>
+  </div>
+
+  <!-- ================= 3. СВЯЗЬ: ДОПОЛНИТЕЛЬНО ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar"><div class="title">Подключение</div></div>
+      <div class="content">
+        <div class="sect">Расписание и лимиты</div>
+        <div class="card tight">
+          <div class="row between">
+            <div class="t13">Тихие часы</div>
+            <div class="sw" style="width:38px;height:22px"></div>
+          </div>
+          <div class="grid2" style="margin-top:8px">
+            <div><div class="flabel">с</div><div class="field">23:00</div></div>
+            <div><div class="flabel">по</div><div class="field">07:00</div></div>
+          </div>
+        </div>
+
+        <div class="card tight">
+          <div class="flabel">Лимит скачивания</div>
+          <div class="field" style="max-width:150px">0 <span class="suffix">МБ</span></div>
+          <div class="helper">0 — без ограничения. Файлы больше лимита не скачиваются, причина — в журнале.</div>
+        </div>
+
+        <div class="sect">Безопасность</div>
+        <div class="card tight">
+          <div class="flabel">Отпечаток сертификата</div>
+          <div class="field" style="height:auto;padding:7px 10px;align-items:flex-start">
+            <div class="mono" style="line-height:1.45;word-break:break-all">58005596BA86C6940F77E3C386981EE41D62ACFFAB30084E9843C109376BEA16</div>
+            <svg class="i" style="flex:0 0 auto;color:#64748B;margin-left:6px"><use href="#i-copy"/></svg>
+          </div>
+          <div class="helper">64 hex-символа, сверяется по SHA-256.</div>
+        </div>
+
+        <div class="card tight">
+          <div class="row between">
+            <div class="t13">Запускать синхронизацию при старте</div>
+            <div class="sw" style="width:38px;height:22px"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="border-top:1px solid var(--border);background:#fff;padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px">
+        <button class="btn secondary block" style="height:38px">Проверить связь</button>
+        <button class="btn primary block">Сохранить настройки</button>
+      </div>
+
+      <div class="navbar">
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p2">P2</span> <b>Связь, дополнительное.</b> Расписание и лимиты — в свёрнутой
+      группе. Тихие часы двумя полями с подписями «с»/«по». Лимит — с суффиксом «МБ» и подсказкой под полем
+      (плейсхолдер больше не обрезается). Отпечаток — моноширинный, с копированием.</div>
+  </div>
+
+  <!-- ================= 4. ПАПКИ ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar">
+        <div class="title">Папки</div>
+        <div class="actions">
+          <div class="iconbtn"><svg class="i"><use href="#i-refresh"/></svg></div>
+          <div class="iconbtn"><svg class="i"><use href="#i-more"/></svg></div>
+        </div>
+      </div>
+      <div class="content">
+        <div class="card tight">
+          <div class="row between">
+            <div class="t13">Без правил — синхронизировать всё</div>
+            <div class="sw off" style="width:38px;height:22px"></div>
+          </div>
+          <div class="cap12" style="margin-top:4px">Правил: 12 · своих папок: 5</div>
+        </div>
+
+        <div class="card tight" style="padding:4px 12px">
+          <div class="lrow">
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow"><div class="t13" style="font-weight:600">Android SDK tools</div>
+              <div class="cap12">сервер 1 · здесь 0</div></div>
+            <div class="mode">Нет <svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow"><div class="t13" style="font-weight:600">Install-tunnel</div>
+              <div class="cap12">сервер 18 · здесь 0</div></div>
+            <div class="mode">Нет <svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow"><div class="t13" style="font-weight:600">Klavium</div>
+              <div class="cap12">сервер 1 · здесь 0</div></div>
+            <div class="mode">Нет <svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow"><div class="t13" style="font-weight:600">POSCloud</div>
+              <div class="cap12">сервер 57 · здесь 23</div></div>
+            <div class="mode" style="border-color:#BFD3F7;color:var(--primary)">В обе <svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow"><div class="t13" style="font-weight:600">Снимки экрана</div>
+              <div class="cap12">сервер 34 · здесь 34</div></div>
+            <div class="mode" style="border-color:#BFD3F7;color:var(--primary)">В обе <svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow"><div class="t13" style="font-weight:600">Документы</div>
+              <div class="cap12">сервер 12 · здесь 3</div></div>
+            <div class="mode">Приём <svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></div>
+          </div>
+        </div>
+
+        <div class="cap12" style="color:var(--primary);font-weight:600;padding:2px 2px">▸ Ещё 6 пустых папок</div>
+      </div>
+      <div class="navbar">
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p0">P5</span> <b>Папки.</b> Карточка 150–170 dp заменена строкой 48–56 dp:
+      имя, одна подпись со статистикой, справа чип режима. Шесть папок в кадре вместо трёх. Пустые — под
+      «Ещё 6 пустых». «Полная сверка» — в меню «⋯».</div>
+  </div>
+
+  <!-- ================= 5. ФАЙЛЫ ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar">
+        <div class="title">Файлы</div>
+        <div class="actions">
+          <div class="iconbtn"><svg class="i"><use href="#i-refresh"/></svg></div>
+        </div>
+      </div>
+      <div class="content">
+        <div class="mono ell" style="font-size:10.5px">/data/user/0/io.github.reznikov73.poscloud.client/files/fyne/sync</div>
+        <div class="field" style="height:40px">
+          <svg class="i" style="color:#94A3B8"><use href="#i-search"/></svg>
+          <span class="ph">Поиск по имени…</span>
+        </div>
+        <div class="row between">
+          <div class="cap12">23 файла, 64.1 МБ</div>
+          <div class="cap12" style="color:var(--primary)">Конфликтов нет</div>
+        </div>
+
+        <div class="card tight" style="padding:2px 10px">
+          <div class="lrow" style="min-height:42px">
+            <svg class="i ic16"><use href="#i-down"/></svg>
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow t13" style="font-weight:600">sync</div>
+          </div>
+          <div class="lrow" style="min-height:42px;padding-left:18px">
+            <svg class="i ic16" style="color:#94A3B8"><use href="#i-arrow"/></svg>
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow t13">POSCloud</div>
+          </div>
+          <div class="lrow" style="min-height:42px;padding-left:18px">
+            <svg class="i ic16" style="color:#94A3B8"><use href="#i-arrow"/></svg>
+            <svg class="i ic16"><use href="#i-folder"/></svg>
+            <div class="grow t13">Снимки экрана</div>
+          </div>
+          <div class="lrow" style="min-height:42px">
+            <svg class="i ic16"><use href="#i-file"/></svg>
+            <div class="grow t13 ell">ID интегратора Такском-Касса.html</div>
+            <div class="cap12" style="flex:0 0 auto">12.4 КБ</div>
+          </div>
+          <div class="lrow" style="min-height:42px">
+            <svg class="i ic16"><use href="#i-file"/></svg>
+            <div class="grow t13 ell">POSCloud-Client-1.0.42-android-arm64-debug.apk</div>
+            <div class="cap12" style="flex:0 0 auto">25.7 МБ</div>
+          </div>
+          <div class="lrow" style="min-height:42px">
+            <svg class="i ic16"><use href="#i-file"/></svg>
+            <div class="grow t13 ell">Инструкция.html</div>
+            <div class="cap12" style="flex:0 0 auto">19.3 КБ</div>
+          </div>
+        </div>
+      </div>
+      <div class="navbar">
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p6">P6</span> <b>Файлы.</b> Пустая карточка конфликтов заменена строкой
+      «Конфликтов нет»; когда конфликты есть — она же становится предупреждением со счётчиком и кнопкой.
+      Строка дерева — 42–48 dp, имя обрезается по ширине, размер отдельной колонкой.</div>
+  </div>
+
+  <!-- ================= 6. ЛЕНТА ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar">
+        <div class="title">Недавние</div>
+        <div class="actions"><div class="btn text" style="height:34px;font-size:12.5px;padding:0 6px">Очистить</div></div>
+      </div>
+      <div class="content">
+        <div class="cap12">16 изменений · новые сверху</div>
+        <div class="card tight" style="padding:2px 10px">
+          <div class="lrow">
+            <svg class="i ic16" style="color:var(--primary)"><use href="#i-up"/></svg>
+            <div class="grow"><div class="t13 ell">Screenshot_2026-11-24-20-50-15-21_814c3295.jpg</div>
+              <div class="cap12">отправлен · 24.11 20:50</div></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16" style="color:var(--primary)"><use href="#i-up"/></svg>
+            <div class="grow"><div class="t13 ell">Screenshot_2026-11-24-20-50-11-39_814c3295.jpg</div>
+              <div class="cap12">отправлен · 24.11 20:50</div></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16" style="color:var(--danger)"><use href="#i-trash"/></svg>
+            <div class="grow"><div class="t13 ell">POSCloud-Client-1.0.38-android-arm64-debug.apk</div>
+              <div class="cap12">удалён · 24.11 20:49</div></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16" style="color:var(--success)"><use href="#i-down"/></svg>
+            <div class="grow"><div class="t13 ell">Инструкция.html</div>
+              <div class="cap12">получен · 24.11 19:12</div></div>
+          </div>
+          <div class="lrow">
+            <svg class="i ic16" style="color:var(--danger)"><use href="#i-trash"/></svg>
+            <div class="grow"><div class="t13 ell">Снимок экрана 2026-11-24 15-59-38.png</div>
+              <div class="cap12">удалён · 24.11 18:58</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="navbar">
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p0">P0</span> <b>Лента.</b> Уже сделано в 1.0.42: строка «имя / операция ·
+      время», имя обрезается с многоточием. «Очистить» — в шапке, а не отдельной кнопкой на пол-экрана.</div>
+  </div>
+
+  <!-- ================= 7. ЖУРНАЛ ================= -->
+  <div class="slot">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="appbar">
+        <div class="title">Журнал</div>
+        <div class="actions">
+          <div class="iconbtn"><svg class="i"><use href="#i-copy"/></svg></div>
+          <div class="iconbtn"><svg class="i"><use href="#i-trash"/></svg></div>
+        </div>
+      </div>
+      <div class="content">
+        <div class="cap12">Копия журнала уходит в папку синхронизации — оттуда её видно на ПК.</div>
+        <div class="card tight" style="padding:8px 10px">
+          <div class="mono" style="line-height:1.7;font-size:9.8px;word-break:break-word">
+            <span style="color:#94A3B8">19:55:02</span> вниз: Документы/Инструкция.html<br>
+            <span style="color:#94A3B8">19:55:01</span> снимок перенесён в «Снимки экрана»<br>
+            <span style="color:#94A3B8">19:54:39</span> вверх: POSCloud-Client-1.0.42….apk<br>
+            <span style="color:#94A3B8">19:54:24</span> синк: 0 вверх, 0 вниз, 0 удалено, лок. 26<br>
+            <span style="color:#94A3B8">19:54:24</span> старт синхронизации: …/files/fyne/sync<br>
+            <span style="color:#94A3B8">19:54:20</span> конфликт разрешён: IMG_…jpeg<br>
+            <span style="color:#94A3B8">19:00:25</span> нет связи: dial tcp … connect: timed out<br>
+            <span style="color:#94A3B8">19:01:03</span> синхронизация остановлена<br>
+            <span style="color:#94A3B8">19:01:06</span> синхронизация запущена: 193.7.203.222:8090<br>
+            <span style="color:#94A3B8">19:01:06</span> папка …/fyne/sync, интервал 3 с
+          </div>
+        </div>
+        <div class="cap12">В журнале — только время и сообщение; общий путь вынесен в шапку и в подпись
+          «Копия журнала…». Шрифт моноширинный, 11–12.</div>
+      </div>
+      <div class="navbar">
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-home"/></svg></div>Статус</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-gear"/></svg></div>Связь</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-folder"/></svg></div>Папки</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-list"/></svg></div>Файлы</div>
+        <div class="navitem"><div class="ic"><svg class="i"><use href="#i-history"/></svg></div>Лента</div>
+        <div class="navitem active"><div class="ic"><svg class="i"><use href="#i-doc"/></svg></div>Журнал</div>
+      </div>
+    </div></div>
+    <div class="cap"><span class="tag p2">P2</span> <b>Журнал.</b> Моноширинный шрифт, время отдельной колонкой,
+      длинные пути сокращены; «Очистить» и «Сохранить» — иконками в шапке. Сейчас текст 18–20 px и пути
+      рвутся посередине слова.</div>
+  </div>
+
+</div>
+</body>
+</html>
