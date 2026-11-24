@@ -36,3 +36,17 @@ Desktop.ini
 .zwork/
 
 lite/out/
+
+# служебные файлы агента Ч не дл€ репозитори€
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+.agents/
+.cluster/
+.autoclaw/
+.opencode/
+.gigacode_vsc/
+*-capability.json
