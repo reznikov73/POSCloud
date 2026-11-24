@@ -46,12 +46,19 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
   the “Файлы” tab;
 - **file search**: the “Поиск по имени…” field on the “Файлы” tab finds files
   by name across the whole folder (case-insensitive, including collapsed
-  folders); while searching, the tree turns into a flat list of matches;
-- **manual setup**: address, port, token, interval, TLS with verification of
-  the SHA-256 fingerprint of a self-signed certificate;
-- **choosing the sync folder**: a folder dialog, the private app folder and the
-  external app folder on shared storage (`Android/data/<package>/files/sync`),
-  which is not wiped with the app data;
+  folders); while searching, the tree turns into a flat list of matches. The
+  folder walk runs off the UI thread with a 300 ms debounce and a result
+  cache — typing never freezes the screen, stale results are discarded;
+- **manual setup**: collapsed by default under a “Ручная настройка · <server>”
+  header (QR is the main path); the fields are still filled from the saved
+  settings, so “Запустить” works collapsed. Address, port, token, interval,
+  TLS with verification of the SHA-256 fingerprint of a self-signed
+  certificate;
+- **choosing the sync folder**: a full-screen folder dialog with vertical
+  quick jumps (app folder, POSCloud, memory card, Downloads, Screenshots,
+  storage root), a private app folder and the external app folder on shared
+  storage (`Android/data/<package>/files/sync`), which is not wiped with the
+  app data;
 - **selective synchronization**: first-level folders with modes “both ways /
   send only / receive only / do not synchronize” and
   a “no rules” mode;

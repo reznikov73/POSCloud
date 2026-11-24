@@ -63,6 +63,18 @@ func (t *pillSwitch) SetChecked(on bool) {
 	}
 }
 
+// SetCheckedSilently выставляет положение, не вызывая OnChanged: так таймер
+// отражает фактическое состояние движка, а не «желание» пользователя. Раньше
+// для этого обнуляли OnChanged на время SetChecked — в этом окне тап
+// пользователя терялся.
+func (t *pillSwitch) SetCheckedSilently(on bool) {
+	if on == t.on {
+		return
+	}
+	t.on = on
+	t.Refresh()
+}
+
 // Tapped переключает по касанию.
 func (t *pillSwitch) Tapped(*fyne.PointEvent) { t.SetChecked(!t.on) }
 

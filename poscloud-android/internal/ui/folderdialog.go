@@ -36,7 +36,14 @@ func (s *State) pickFolder(ctrl *client.Controller) {
 			d.Hide()
 		}),
 	})
-	d.Resize(fyne.NewSize(420, 560))
+	// На весь экран: в окошке 420×560 списку каталогов оставалось мало места,
+	// а на телефоне диалог выбора папки и так заслоняет всё. В тестовом окне
+	// канвас нулевого размера — тогда прежний запасной размер.
+	if sz := s.win.Canvas().Size(); sz.Width > 0 && sz.Height > 0 {
+		d.Resize(sz)
+	} else {
+		d.Resize(fyne.NewSize(420, 560))
+	}
 	d.Show()
 }
 
@@ -63,31 +70,31 @@ func (b *folderBrowser) current() string { return b.cur }
 
 // object собирает браузер: путь сверху, быстрые переходы, список каталогов.
 func (b *folderBrowser) object() fyne.CanvasObject {
-	// Быстрые переходы: приватная папка, папка на карте, корень памяти и
-	// типовые папки телефона. «POSCloud» ведёт в видимую в проводнике папку
+	// Быстрые переходы — вертикальным списком строк во всю ширину (иконка
+	// слева, подпись не режется). В двух HBox по три кнопки на окно 420 px
+	// приходилось по ~130 px на кнопку, и подписи обрезались.
+	// «POSCloud на телефоне» ведёт в видимую в проводнике папку
 	// (Download/POScloud, на старых установках — DCIM/POScloud).
 	quick := container.NewVBox(
-		container.NewHBox(
-			dialogRow("Приложение", theme.HomeIcon(), func() { b.load(b.ctrl.DefaultSyncDir()) }),
-			dialogRow("На карте", theme.StorageIcon(), func() {
-				dir := b.ctrl.ExternalSyncDir()
-				if dir == "" {
-					dialog.ShowInformation("Папка на карте",
-						"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
-					return
-				}
-				b.load(dir)
-			}),
-			dialogRow("Память", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
-		),
-		container.NewHBox(
-			dialogRow("Загрузки", theme.DownloadIcon(), func() { b.load("/storage/emulated/0/Download") }),
-			dialogRow("Снимки", theme.MediaPhotoIcon(), func() { b.load("/storage/emulated/0/Pictures/Screenshots") }),
-			dialogRow("POSCloud", theme.FolderIcon(), func() { b.load(publicSyncDir()) }),
-		),
+		dialogRow("Папка приложения", theme.HomeIcon(), func() { b.load(b.ctrl.DefaultSyncDir()) }),
+		dialogRow("POSCloud на телефоне", theme.FolderIcon(), func() { b.load(publicSyncDir()) }),
+		dialogRow("Карта памяти", theme.StorageIcon(), func() {
+			dir := b.ctrl.ExternalSyncDir()
+			if dir == "" {
+				dialog.ShowInformation("Папка на карте",
+					"Android не дал доступ к общей памяти. Оставьте папку приложения.", b.win)
+				return
+			}
+			b.load(dir)
+		}),
+		dialogRow("Загрузки", theme.DownloadIcon(), func() { b.load("/storage/emulated/0/Download") }),
+		dialogRow("Снимки экрана", theme.MediaPhotoIcon(), func() { b.load("/storage/emulated/0/Pictures/Screenshots") }),
+		dialogRow("Корень памяти", theme.FolderOpenIcon(), func() { b.load(sharedRoot()) }),
 	)
+	// Быстрые переходы занимают шесть строк — на маленьком экране им тоже
+	// нужен свой скролл, иначе они выдавят список каталогов.
 	return container.NewBorder(
-		container.NewVBox(b.path, quick, widget.NewSeparator()),
+		container.NewVBox(b.path, widget.NewSeparator(), container.NewVScroll(quick), widget.NewSeparator()),
 		nil, nil, nil,
 		container.NewVScroll(b.list),
 	)

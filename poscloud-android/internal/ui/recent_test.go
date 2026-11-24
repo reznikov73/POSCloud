@@ -112,7 +112,24 @@ func TestFilesPageSearch(t *testing.T) {
 		t.Fatalf("без поиска детей корня: %d, ожидалось 5", got)
 	}
 
-	p.search.SetText("a")
+	// текст ставим напрямую, без OnChanged: он планирует обход по таймеру,
+	// а здесь проверяем логику поиска синхронно
+	p.search.Text = "a"
+	if !p.filtering() {
+		t.Fatal("фильтр должен считаться активным")
+	}
+	// до готовности поиска дерево показывает «Ищем…», а не пустоту
+	p.searchMu.Lock()
+	p.searchLoading = true
+	p.searchMu.Unlock()
+	if len(p.childUIDs(filesRootUID)) != 0 {
+		t.Fatal("пока идёт поиск, список должен быть пуст")
+	}
+
+	q := strings.ToLower(strings.TrimSpace(p.search.Text))
+	if !p.doSearch(q, root, p.searchGen) {
+		t.Fatal("актуальный запрос не должен отбрасываться")
+	}
 	kids := p.childUIDs(filesRootUID)
 	want := []string{"root/a.txt", "root/alpha/BA.doc", "root/beta/ab.md"}
 	if len(kids) != len(want) {
@@ -131,6 +148,35 @@ func TestFilesPageSearch(t *testing.T) {
 	}
 	if got := p.childUIDs("root/a.txt"); len(got) != 0 {
 		t.Fatalf("у находки не должно быть детей: %v", got)
+	}
+
+	// устаревший запрос (человек допечатал) не перезаписывает свежий кеш
+	if p.doSearch("zzz", root, p.searchGen-1) {
+		t.Fatal("устаревший запрос должен отбрасываться")
+	}
+	if got := p.childUIDs(filesRootUID); len(got) != 3 {
+		t.Fatalf("кеш перезаписан устаревшим запросом: %v", got)
+	}
+
+	// чистая функция: регистр не важен, скрытые пропускаются, лимит работает
+	if got := walkMatches(root, "A", 300); len(got) != 3 {
+		t.Fatalf("walkMatches: %v", got)
+	}
+	if got := walkMatches(root, "a", 2); len(got) != 2 {
+		t.Fatalf("лимит: %v", got)
+	}
+	if got := walkMatches(root, "poscloud-state", 300); len(got) != 0 {
+		t.Fatalf("скрытые файлы не должны находиться: %v", got)
+	}
+
+	// очистка поля возвращает обычное дерево
+	p.search.Text = ""
+	p.scheduleSearch()
+	if p.filtering() || len(p.searchResults()) != 0 {
+		t.Fatal("после очистки кеш должен быть пуст")
+	}
+	if got := len(p.childUIDs(filesRootUID)); got != 5 {
+		t.Fatalf("после очистки детей корня: %d, ожидалось 5", got)
 	}
 	w.Close()
 }

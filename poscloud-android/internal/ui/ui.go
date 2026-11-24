@@ -130,6 +130,8 @@ type State struct {
 	fpEntry       *widget.Entry
 	autoRunCheck  *widget.Check
 	pairEntry     *widget.Entry
+	manualCard    *widget.Card   // ручная настройка: свёрнута, 90% подключаются по QR
+	manualToggle  *widget.Button // заголовок-кнопка, показывает текущий сервер
 
 	// тихие часы и лимит скачивания
 	quietCheck  *widget.Check
@@ -223,7 +225,8 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.transferBar.Hide()
 	transferCard := widget.NewCard("Передачи", "", container.NewVBox(ui.transferText, ui.transferBar))
 	ui.transferCard = transferCard
-	transferCard.Hide()
+	// Карточка всегда на месте: когда она появлялась и исчезала, содержимое
+	// выше неё «прыгало». Пустое состояние — «Передач нет», бар скрыт.
 
 	// Снимки экрана создаёт система; пока нет разрешения на чтение фото,
 	// они не попадают в папку синхронизации — говорим об этом и даём кнопку.
@@ -480,15 +483,25 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		dialog.ShowInformation("Настройки", "Настройки сохранены.", w)
 	})
 
-	manualCard := widget.NewCard("Ручная настройка", "", container.NewVBox(
+	manualCard := widget.NewCard("", "", container.NewVBox(
 		form,
 		container.NewVBox(testBtn, saveBtn),
 	))
+	ui.manualCard = manualCard
+	// Ручная настройка — одиннадцать полей на виду, хотя 90% подключаются
+	// по QR-коду. Свёрнута по умолчанию; в заголовке-кнопке видно, что уже
+	// настроено («Ручная настройка · 192.168.1.10:8090»), поэтому свёрнутость
+	// не скрывает состояние подключения.
+	ui.manualToggle = widget.NewButtonWithIcon("Ручная настройка", theme.SettingsIcon(), nil)
+	ui.manualToggle.Alignment = widget.ButtonAlignLeading
+	ui.manualToggle.OnTapped = func() { showIf(ui.manualCard, !ui.manualCard.Visible()) }
+	manualCard.Hide()
+	manualBlock := container.NewVBox(ui.manualToggle, manualCard)
 
 	connectCard := container.NewVBox(
 		heading("Подключение"),
 		quickCard,
-		manualCard,
+		manualBlock,
 		container.NewPadded(caption("Сервер создаёт пользователя и устройство и выдаёт токен. На Android по умолчанию используется папка внутри приложения; внешние пути (например /storage/emulated/0/…) требуют разрешения «Доступ ко всем файлам» и могут не работать.")),
 	)
 	ui.loadFromConfig(ctrl)
@@ -607,12 +620,11 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 
 // fieldRow строит пару «подпись — значение» в столбик. Классический Border
 // с подписью слева на телефоне сжимает переносимую подпись до нулевой ширины,
-// и текст наезжает на значение. Подпись рисуется canvas.Text: у него нет
-// внутренних отступов виджета, и строка получается ниже.
+// и текст наезжает на значение. Подпись — caption: второстепенный цвет и
+// размер из темы (размер подписи следует масштабу, а не захардкоженным 12 px).
 func fieldRow(label string, value *widget.Label) fyne.CanvasObject {
-	cap := canvas.NewText(label, colMuted)
-	cap.TextSize = 12
-	cap.TextStyle = fyne.TextStyle{Italic: true}
+	cap := caption(label)
+	cap.SizeName = theme.SizeNameCaptionText
 	return container.NewVBox(cap, value)
 }
 
@@ -792,15 +804,23 @@ func (ui *State) loadFromConfig(ctrl *client.Controller) {
 	} else {
 		ui.maxDownEntr.SetText("")
 	}
+	ui.updateManualTitle(ctrl)
 }
 
-// setSwitch выставляет переключатель синхронизации, не вызывая его обработчик:
-// таймер обновляет положение каждую секунду по факту, а не по желанию.
-func (ui *State) setSwitch(on bool) {
-	ui.swSync.OnChanged = nil
-	ui.swSync.SetChecked(on)
-	ui.swSync.OnChanged = ui.onToggle
+// updateManualTitle показывает в свёрнутом заголовке ручной настройки то,
+// что уже настроено: адрес сервера, а без него — просто «Ручная настройка».
+func (ui *State) updateManualTitle(ctrl *client.Controller) {
+	cfg := ctrl.Config()
+	text := "Ручная настройка"
+	if strings.TrimSpace(cfg.Token) != "" || (strings.TrimSpace(cfg.Host) != "" && cfg.Host != "localhost") {
+		text += " · " + eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS)
+	}
+	setButtonTextIfChanged(ui.manualToggle, text)
 }
+
+// setSwitch выставляет переключатель синхронизации молча: таймер обновляет
+// положение каждую секунду по факту, а не по желанию.
+func (ui *State) setSwitch(on bool) { ui.swSync.SetCheckedSilently(on) }
 
 // startSync запускает синхронизацию по полям вкладки «Подключение»; при
 // ошибке возвращает переключатель в положение «выкл».
@@ -903,30 +923,30 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 
 			fyne.Do(func() {
 				ui.setSwitch(running)
-				ui.stateSub.SetText(stateTxt)
-				ui.upValue.SetText(humanBytes(up))
-				ui.downValue.SetText(humanBytes(down))
+				setTextIfChanged(ui.stateSub, stateTxt)
+				setTextIfChanged(ui.upValue, humanBytes(up))
+				setTextIfChanged(ui.downValue, humanBytes(down))
 				if photoGranted {
-					ui.shotBox.Hide()
+					showIf(ui.shotBox, false)
 				} else {
 					// после двух отказов диалог больше не появится — ведём в настройки
 					if shotAsks >= 2 {
-						ui.btnShotPerm.SetText("Открыть настройки приложения")
+						setButtonTextIfChanged(ui.btnShotPerm, "Открыть настройки приложения")
 					}
-					ui.shotBox.Show()
+					showIf(ui.shotBox, true)
 				}
-				ui.onlineValue.SetText(onlineTxt)
-				ui.serverValue.SetText(eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
-				ui.folderValue.SetText(cfg.Dir)
-				ui.countValue.SetText(countTxt)
+				setTextIfChanged(ui.onlineValue, onlineTxt)
+				setTextIfChanged(ui.serverValue, eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
+				setTextIfChanged(ui.folderValue, cfg.Dir)
+				setTextIfChanged(ui.countValue, countTxt)
 				if st.DirErr != "" {
-					ui.errLabel.SetText("Папка синхронизации недоступна для записи: " + st.DirErr + "\nВыберите другую папку на вкладке «Связь».")
-					ui.errLabel.Show()
+					setTextIfChanged(ui.errLabel, "Папка синхронизации недоступна для записи: "+st.DirErr+"\nВыберите другую папку на вкладке «Связь».")
+					showIf(ui.errLabel, true)
 				} else if st.ErrMsg != "" {
-					ui.errLabel.SetText(st.ErrMsg)
-					ui.errLabel.Show()
+					setTextIfChanged(ui.errLabel, st.ErrMsg)
+					showIf(ui.errLabel, true)
 				} else {
-					ui.errLabel.Hide()
+					showIf(ui.errLabel, false)
 				}
 				if running {
 					ui.btnNow.Enable()
@@ -934,10 +954,9 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 					ui.btnNow.Disable()
 				}
 				if len(tr) == 0 {
-					ui.transferText.SetText("Передач нет")
+					setTextIfChanged(ui.transferText, "Передач нет")
 					ui.transferBar.SetValue(0)
-					ui.transferBar.Hide()
-					ui.transferCard.Hide()
+					showIf(ui.transferBar, false)
 				} else {
 					top := tr[0]
 					arrow := "↑ отправка"
@@ -948,10 +967,9 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 					if len(tr) > 1 {
 						extra = fmt.Sprintf("  (+ ещё %d)", len(tr)-1)
 					}
-					ui.transferText.SetText(fmt.Sprintf("%s  %s — %d%%%s", arrow, top.Name, top.Pct, extra))
-					ui.transferBar.Show()
+					setTextIfChanged(ui.transferText, fmt.Sprintf("%s  %s — %d%%%s", arrow, top.Name, top.Pct, extra))
+					showIf(ui.transferBar, true)
 					ui.transferBar.SetValue(float64(top.Pct) / 100)
-					ui.transferCard.Show()
 				}
 				if logTxt != "" {
 					ui.logLabel.SetText(lastLog)
@@ -966,6 +984,7 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 						ui.logPathLabel.SetText(txt)
 					}
 				}
+				ui.updateManualTitle(ctrl)
 			})
 		}
 	}
@@ -1097,6 +1116,32 @@ func cleanPath(s string) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.ReplaceAll(s, "\n", "")
 	return strings.TrimSpace(s)
+}
+
+// setTextIfChanged обновляет подпись только при изменении текста: SetText
+// в Fyne всегда вызывает Refresh, а тикер ходит каждую секунду — на телефоне
+// это лишняя перерисовка и расход батареи.
+func setTextIfChanged(l *widget.Label, text string) {
+	if l.Text != text {
+		l.SetText(text)
+	}
+}
+
+// setButtonTextIfChanged — то же для кнопок.
+func setButtonTextIfChanged(b *widget.Button, text string) {
+	if b.Text != text {
+		b.SetText(text)
+	}
+}
+
+// showIf показывает или прячет объект только при смене состояния: Show и Hide
+// на уже показанном или уже спрятанном объекте тоже дергают канвас.
+func showIf(o fyne.CanvasObject, show bool) {
+	if show && !o.Visible() {
+		o.Show()
+	} else if !show && o.Visible() {
+		o.Hide()
+	}
 }
 
 // ---------- проверка ввода ----------

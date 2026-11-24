@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POSCloud — улучшенные макеты экранов</title>
+<style>
+  :root{
+    --primary:#2563EB; --primary-dark:#1D4ED8;
+    --bg:#EFF3FA; --card:#FFFFFF; --text:#0F172A; --muted:#64748B;
+    --border:#DBE2EF; --track:#D3DCEA; --success:#159D4B; --danger:#DC2626;
+    --warn:#B45309;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI',Roboto,'Noto Sans',sans-serif;
+    background:#E2E8F0;color:var(--text);padding:24px 16px;
+  }
+  h1{font-size:22px;margin-bottom:6px}
+  .intro{color:var(--muted);font-size:13px;max-width:900px;margin-bottom:28px;line-height:1.55}
+  .row-label{font-size:18px;font-weight:600;margin:34px 0 14px;color:#334155;
+    border-left:4px solid var(--primary);padding-left:10px}
+  .phones{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+
+  .phone{
+    width:320px;flex:0 0 auto;background:var(--bg);border:1px solid #C3CEDF;
+    border-radius:22px;overflow:hidden;box-shadow:0 8px 22px rgba(15,23,42,.12);
+    position:relative;
+  }
+  .notch{height:22px;background:#0F172A;border-radius:22px 22px 0 0;position:relative}
+  .notch::after{content:'';position:absolute;left:50%;transform:translateX(-50%);
+    top:6px;width:90px;height:10px;background:#1E293B;border-radius:5px}
+  .screen{height:640px;display:flex;flex-direction:column;overflow:hidden}
+  .cap{margin-top:10px;font-size:13px;color:var(--muted);line-height:1.5;max-width:320px}
+  .cap b{color:#334155}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;
+    margin-bottom:6px}
+  .tag.p0{background:#FEE2E2;color:#B91C1C}
+  .tag.p1{background:#FEF3C7;color:#92400E}
+  .tag.p2{background:#DBEAFE;color:#1E40AF}
+  .tag.p3{background:#E2E8F0;color:#475569}
+
+  /* ---------- верх экрана ---------- */
+  .appbar{padding:10px 16px 8px}
+  .appbar .title{font-size:17px;font-weight:700}
+  .statusline{
+    margin-top:8px;background:var(--card);border:1px solid var(--border);border-radius:12px;
+    padding:10px 12px;font-size:13px;line-height:1.45
+  }
+  .statusline .main{font-size:13.5px;font-weight:600;color:var(--success)}
+  .statusline .main.off{color:var(--muted);font-weight:500}
+  .statusline .stats{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .statusline .stats b{color:var(--text);font-weight:600}
+
+  .content{flex:1;overflow:auto;padding:10px 12px 12px;scrollbar-width:thin}
+
+  /* ---------- нижняя навигация ---------- */
+  .navbar{border-top:1px solid var(--border);background:var(--card);
+    display:grid;grid-template-columns:repeat(4,1fr);padding:6px 4px 12px}
+  .navitem{display:flex;flex-direction:column;align-items:center;gap:3px;
+    font-size:10.5px;color:var(--muted);padding:4px 0;border-radius:10px}
+  .navitem .ic{width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+    font-size:15px}
+  .navitem.active{color:var(--primary);font-weight:600}
+  .navitem.active .ic{background:#E4EDFD;border-radius:8px}
+
+  /* ---------- карточки ---------- */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:12px 14px;margin-bottom:10px}
+  .card h3{font-size:14px;font-weight:700;margin-bottom:8px}
+  .hint{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5}
+
+  /* статус-детали раскрываемые */
+  .disclosure{margin-top:8px;border-top:1px dashed var(--border);padding-top:8px}
+  .disclosure summary{font-size:12px;color:var(--primary);cursor:pointer;list-style:none;
+    font-weight:600}
+  .disclosure summary::before{content:'▸ '}
+  .disclosure[open] summary::before{content:'▾ '}
+  .kv{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:8px;font-size:12px}
+  .kv span{color:var(--muted)}
+  .kv b{font-weight:600}
+
+  /* ---------- форма ---------- */
+  .frow{margin-bottom:10px}
+  .frow label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:4px;font-weight:600}
+  .frow input,.frow select{
+    width:100%;height:40px;border:1px solid var(--border);border-radius:10px;
+    background:#F8FAFD;padding:0 10px;font-size:13.5px;color:var(--text);
+    font-family:inherit;
+  }
+  .frow input:focus{outline:2px solid var(--primary);outline-offset:-1px}
+  .pair{display:flex;gap:8px}
+  .pair .frow{flex:1}
+  .pair .frow.narrow{flex:0 0 92px}
+  .err{font-size:11.5px;color:var(--danger);margin-top:3px;font-weight:600}
+  .input.err-in{border-color:var(--danger);outline:1px solid var(--danger)}
+
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:6px;height:44px;
+    border-radius:12px;font-size:13.5px;font-weight:600;border:1px solid transparent;cursor:default;
+    width:100%;
+  }
+  .btn.primary{background:var(--primary);color:#fff}
+  .btn.ghost{background:transparent;color:var(--primary);border-color:var(--border)}
+  .btn.small{height:38px;font-size:12.5px}
+  .btn.warn{background:#FEF3C7;color:#92400E;border-color:#FDE68A}
+
+  .check{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
+  .switch{width:44px;height:26px;border-radius:13px;background:var(--track);
+    position:relative;flex:0 0 auto;transition:background .2s}
+  .switch::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.25)}
+  .switch.on{background:var(--success)}
+  .switch.on::after{left:21px}
+
+  /* ---------- список папок (listRow) ---------- */
+  .list{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    overflow:hidden;margin-bottom:10px}
+  .listhead{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px;border-bottom:1px solid var(--border)}
+  .listhead h3{font-size:14px;font-weight:700}
+  .iconbtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--muted);
+    background:#F8FAFD}
+  .listrow{display:flex;align-items:center;gap:10px;padding:11px 14px;
+    border-bottom:1px solid #EDF2F9;font-size:13px}
+  .listrow:last-child{border-bottom:none}
+  .listrow .fi{width:28px;height:28px;border-radius:8px;background:#E4EDFD;color:var(--primary);
+    display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto}
+  .listrow .txt{flex:1;min-width:0}
+  .listrow .txt .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .listrow .txt .sub{font-size:11.5px;color:var(--muted);margin-top:1px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:8px;flex:0 0 auto}
+  .badge.both{background:#DBEAFE;color:#1E40AF}
+  .badge.off{background:#F1F5F9;color:#64748B}
+  .badge.up{background:#D1FAE5;color:#065F46}
+  .badge.new{background:#FEF3C7;color:#92400E}
+  .kebab{color:var(--muted);font-size:17px;padding:4px;flex:0 0 auto;font-weight:700}
+
+  /* дерево файлов */
+  .tree .trow{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:13px;
+    border-bottom:1px solid #EDF2F9}
+  .tree .ind1{padding-left:30px}
+  .tree .ind2{padding-left:52px}
+  .trow .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trow .sz{font-size:11px;color:var(--muted);flex:0 0 auto}
+  .loading{padding:14px;text-align:center;color:var(--muted);font-size:12px}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .toolbar .path{flex:1;font-size:11.5px;color:var(--muted);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- диалог папки ---------- */
+  .dialogwrap{position:absolute;inset:0;background:rgba(15,23,42,.45);
+    display:flex;align-items:stretch;justify-content:center;z-index:5}
+  .dialog{width:100%;background:var(--bg);display:flex;flex-direction:column;
+    padding-top:22px}
+  .dlghead{padding:12px 16px 10px;display:flex;align-items:center;gap:8px}
+  .dlghead .t{font-size:15px;font-weight:700;flex:1}
+  .dlgbody{flex:1;overflow:auto;padding:0 12px}
+  .quick{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    overflow:hidden;margin-bottom:10px}
+  .quick .listrow .nm{font-weight:600}
+  .crumb{display:flex;gap:4px;font-size:11px;color:var(--primary);padding:8px 4px;
+    flex-wrap:wrap}
+  .crumb .sep{color:var(--muted)}
+  .dlgfoot{padding:10px 12px 14px;display:flex;gap:8px;border-top:1px solid var(--border)}
+  .dlgfoot .btn{height:40px}
+
+  .legend{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px 16px;
+    max-width:900px;font-size:12.5px;line-height:1.6;color:#334155}
+  .legend b{color:#0F172A}
+</style>
+</head>
+<body>
+<h1>POSCloud Client (Android) — улучшенные макеты</h1>
+<p class="intro">Макеты отражают улучшения из ревью: ① статус — одна строка вместо 4 плиток, карточка передач всегда на месте; ② «Подключение» — быстрый старт сверху, ручная настройка свёрнута; ③ «Папки» — плоский список-строки вместо вложенных карточек, второстепенные действия в ⋮; ④ «Файлы» — чтение дерева в фоне с индикатором; ⑤ диалог выбора папки — на весь экран, быстрые переходы вертикальным списком.</p>
+
+<div class="legend">
+<b>Условные обозначения приоритетов:</b>
+<span class="tag p0">P0</span> фиксы стабильности/батареи ·
+<span class="tag p1">P1</span> компоновка ·
+<span class="tag p2">P2</span> UX-полировка ·
+<span class="tag p3">P3</span> дальний запас. Каждому макету сопоставлены пункты ревью, которые он закрывает.
+</div>
+
+<!-- ===================== СТАТУС ===================== -->
+<div class="row-label">Статус — было 4 плитки → одна строка + раскрываемая детализация</div>
+<div class="phones">
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar">
+          <div class="title">POSCloud</div>
+          <div class="statusline">
+            <div class="main">Синхронизируется</div>
+            <div class="stats">Синхронизировано 22:49 · <b>↑ 2,1 МБ</b> · <b>↓ 5,4 МБ</b> · 128 файлов</div>
+          </div>
+        </div>
+        <div class="content">
+          <div class="card">
+            <h3>Передачи</h3>
+            <div class="kv">
+              <span>Отправлено</span><b>2,1 МБ</b>
+              <span>Получено</span><b>5,4 МБ</b>
+              <span>Скорость</span><b>1,2 МБ/с</b>
+            </div>
+            <div class="hint">Карточка закреплена на месте — не появляется и не «прыгает» содержимым выше.</div>
+          </div>
+          <div class="card">
+            <h3>Сервер</h3>
+            <div class="kv">
+              <span>Адрес</span><b>192.168.1.10:8080</b>
+              <span>Связь</span><b style="color:var(--success)">есть</b>
+              <span>Цикл</span><b>каждые 30 с</b>
+              <span>Обновление</span><b>есть · 1.0.38</b>
+            </div>
+            <details class="disclosure">
+              <summary>Подробная телеметрия</summary>
+              <div class="kv">
+                <span>Сессия ↑</span><b>12,4 МБ</b>
+                <span>Сессия ↓</span><b>38,9 МБ</b>
+                <span>Конфликтов</span><b>0</b>
+                <span>Ошибок за час</span><b>0</b>
+              </div>
+            </details>
+          </div>
+          <button class="btn warn small" style="margin-bottom:10px">Полная сверка</button>
+          <button class="btn primary" style="margin-bottom:8px">⏸ Остановить синхронизацию</button>
+        </div>
+        <div class="navbar">
+          <div class="navitem active"><div class="ic">◉</div>Статус</div>
+          <div class="navitem"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><span class="tag p1">п.2</span> Одна строка статуса заменяет 4 плитки; карточка «Передачи» закреплена. <b>«Полная сверка»</b> ушла из-под пальца — вниз, <span class="tag p2">п.4</span>.</p>
+  </div>
+
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar">
+          <div class="title">POSCloud</div>
+          <div class="statusline">
+            <div class="main off">Остановлена</div>
+            <div class="stats">Последняя синхронизация 22:49 · 128 файлов</div>
+          </div>
+        </div>
+        <div class="content">
+          <div class="card">
+            <h3>Передачи</h3>
+            <div class="kv">
+              <span>Отправлено</span><b>2,1 МБ</b>
+              <span>Получено</span><b>5,4 МБ</b>
+              <span>Скорость</span><b>—</b>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Сервер</h3>
+            <div class="kv">
+              <span>Адрес</span><b>192.168.1.10:8080</b>
+              <span>Связь</span><b style="color:var(--muted)">не проверялась</b>
+              <span>Обновление</span><b>есть · 1.0.38</b>
+            </div>
+            <div class="err" style="margin-top:8px">⚠ Токен отклонён сервером — проверьте подключение</div>
+          </div>
+          <button class="btn primary">▶ Запустить синхронизацию</button>
+          <div class="hint">Ошибка перенесена к началу экрана (была между карточками) — <span class="tag p2">п.2/мелочи</span>.</div>
+        </div>
+        <div class="navbar">
+          <div class="navitem active"><div class="ic">◉</div>Статус</div>
+          <div class="navitem"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><span class="tag p2">п.2</span> Состояние «остановлена»: та же сетка, строка статуса серая, кнопка та же зона — layout не прыгает.</p>
+  </div>
+</div>
+
+<!-- ===================== ПОДКЛЮЧЕНИЕ ===================== -->
+<div class="row-label">Подключение — быстрый старт сверху, ручная настройка свёрнута по умолчанию</div>
+<div class="phones">
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar"><div class="title">Подключение</div></div>
+        <div class="content">
+          <div class="card">
+            <h3>Подключиться за 10 секунд</h3>
+            <div class="pair" style="margin-bottom:8px">
+              <button class="btn primary small">📷 Сканировать QR</button>
+            </div>
+            <div class="frow">
+              <label>Код подключения (или вставьте из буфера)</label>
+              <input type="text" placeholder="XXXX-XXXX-XXXX-XXXX">
+            </div>
+            <button class="btn ghost small">📋 Взять из буфера</button>
+            <div class="hint">90% пользователей проходят только этот блок — он первый и единственный видимый.</div>
+          </div>
+          <details>
+            <summary style="font-size:13px;font-weight:600;color:var(--primary);
+              padding:12px 14px;background:var(--card);border:1px solid var(--border);
+              border-radius:14px;display:block;cursor:pointer">
+              ▸ Ручная настройка · 192.168.1.10:8080
+            </summary>
+            <div class="card" style="border-top:none;border-radius:0 0 14px 14px;margin-top:-10px;padding-top:16px">
+              <div class="pair">
+                <div class="frow"><label>Сервер</label><input type="text" value="192.168.1.10"></div>
+                <div class="frow narrow"><label>Порт</label><input type="text" value="8080"></div>
+              </div>
+              <div class="frow"><label>Токен</label><input type="password" value="1234abcd5678"></div>
+              <div class="frow"><label>Устройство</label><input type="text" value="Телефон"></div>
+              <div class="frow"><label>Папка синхронизации</label><input type="text" value="/storage/emulated/0/POSCloud"></div>
+              <div class="pair">
+                <div class="frow"><label>Интервал, с</label><input type="text" value="30"></div>
+                <div class="frow narrow"><label>Лимит ↓</label><input type="text" placeholder="0"></div>
+              </div>
+              <div class="check"><div class="switch on"></div>HTTPS и проверка отпечатка</div>
+              <div class="check"><div class="switch"></div>Тихие часы 23:00 – 07:00</div>
+              <div class="check"><div class="switch on"></div>Автозапуск при включении</div>
+              <button class="btn primary small" style="margin-top:8px">Сохранить</button>
+            </div>
+          </details>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem active"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><span class="tag p1">п.1</span> Свернутый блок с состоянием в заголовке («192.168.1.10:8080») — видно, что уже настроено. Без stepper: переиспользуется существующий паттерн Hide/Show.</p>
+  </div>
+
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar"><div class="title">Подключение</div></div>
+        <div class="content">
+          <div class="card">
+            <h3>Подключиться за 10 секунд</h3>
+            <button class="btn primary small" style="margin-bottom:8px">📷 Сканировать QR</button>
+            <div class="frow">
+              <label>Код подключения (или вставьте из буфера)</label>
+              <input class="input err-in" type="text" value="XXXX-XXXX-XXX">
+            </div>
+            <div class="err">Код неполный: не хватает блока после третьего дефиса</div>
+            <button class="btn ghost small" style="margin-top:8px">📋 Взять из буфера</button>
+          </div>
+          <details open>
+            <summary style="font-size:13px;font-weight:600;color:var(--primary);
+              padding:12px 14px;background:var(--card);border:1px solid var(--border);
+              border-radius:14px 14px 0 0;cursor:pointer">
+              ▾ Ручная настройка · 192.168.1.10:8080
+            </summary>
+            <div class="card" style="border-top:none;border-radius:0 0 14px 14px;margin-top:-10px;padding-top:16px">
+              <div class="pair">
+                <div class="frow"><label>Сервер</label><input type="text" value="192.168.1.10"></div>
+                <div class="frow narrow"><label>Порт</label><input class="input err-in" type="text" value="8O80"></div>
+              </div>
+              <div class="err" style="margin:-6px 0 10px">Только цифры — буква «O» вместо нуля</div>
+              <div class="frow"><label>Тихие часы — от</label>
+                <input class="input err-in" type="text" value="9:5"></div>
+              <div class="err" style="margin:-6px 0 10px">Формат ЧЧ:ММ — «9:5» будет сохранено как 09:05</div>
+              <div class="pair">
+                <div class="frow"><label>Интервал, с</label><input type="text" value="30"></div>
+                <div class="frow narrow"><label>Лимит ↓</label><input type="text" placeholder="0"></div>
+              </div>
+              <button class="btn primary small" style="margin-top:8px">Сохранить</button>
+              <div class="hint">Порт и интервал получили тот же валидатор, что тихие часы и лимит — <span class="tag p0">мелочь</span>.</div>
+            </div>
+          </details>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem active"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Развернутое состояние: единые валидаторы у всех числовых полей (порт «8O80», тихие часы «9:5») — красная подсветка в поле, сообщение рядом.</p>
+  </div>
+</div>
+
+<!-- ===================== ПАПКИ ===================== -->
+<div class="row-label">Папки — плоский список вместо вложенных карточек, действия в ⋮</div>
+<div class="phones">
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar"><div class="title">Папки · 4</div></div>
+        <div class="content">
+          <div class="list">
+            <div class="listhead">
+              <h3>Папка синхронизации</h3>
+              <div class="iconbtn">↻</div>
+            </div>
+            <div class="listrow">
+              <div class="fi">📂</div>
+              <div class="txt"><div class="nm">POSCloud</div>
+                <div class="sub">/storage/emulated/0/POSCloud</div></div>
+              <span class="badge both">в обе стороны</span>
+              <div class="kebab">⋮</div>
+            </div>
+            <div class="listrow">
+              <div class="fi">📷</div>
+              <div class="txt"><div class="nm">Screenshots</div>
+                <div class="sub">1234 файла · только отправлять</div></div>
+              <span class="badge up">отправка</span>
+              <div class="kebab">⋮</div>
+            </div>
+            <div class="listrow">
+              <div class="fi">🎬</div>
+              <div class="txt"><div class="nm">DCIM/Camera</div>
+                <div class="sub">2184 файла · новая папка на сервере</div></div>
+              <span class="badge new">новая</span>
+              <div class="kebab">⋮</div>
+            </div>
+            <div class="listrow">
+              <div class="fi">🎵</div>
+              <div class="txt"><div class="nm">Music</div>
+                <div class="sub">не синхронизируется</div></div>
+              <span class="badge off">выкл</span>
+              <div class="kebab">⋮</div>
+            </div>
+          </div>
+          <button class="btn ghost small">＋ Выбрать папку на устройстве</button>
+          <div class="hint">Один слой: строка + разделитель, бейдж режима вместо многострочного описания. «Обновить» — иконкой в заголовке (как во «Файлах»), «Полная сверка» — в меню ⋮.</div>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem active"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><span class="tag p2">п.3–4</span> Глубина вложенности с 5–6 уровней до одного списка; второстепенные действия убраны в ⋮ (там: режим, полная сверка, свойства).</p>
+  </div>
+
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar"><div class="title">Папки · 4</div></div>
+        <div class="content" style="position:relative">
+          <div class="list">
+            <div class="listhead">
+              <h3>Папка синхронизация</h3>
+              <div class="iconbtn">↻</div>
+            </div>
+            <div class="listrow">
+              <div class="fi">📂</div>
+              <div class="txt"><div class="nm">POSCloud</div>
+                <div class="sub">/storage/emulated/0/POSCloud</div></div>
+              <span class="badge both">в обе стороны</span>
+              <div class="kebab">⋮</div>
+            </div>
+          </div>
+          <button class="btn ghost small">＋ Выбрать папку на устройстве</button>
+          <div class="hint" style="margin-top:10px">⋮ раскрыт:</div>
+          <div class="list" style="margin-top:8px">
+            <div class="listrow"><div class="fi">⇅</div>
+              <div class="txt"><div class="nm">Режим синхронизации</div><div class="sub">в обе стороны</div></div></div>
+            <div class="listrow"><div class="fi">⟳</div>
+              <div class="txt"><div class="nm">Полная сверка</div><div class="sub">перечитать весь сервер — осторожно</div></div></div>
+            <div class="listrow"><div class="fi">ℹ</div>
+              <div class="txt"><div class="nm">Свойства</div><div class="sub">142 МБ · 128 файлов · 2195 блоков</div></div></div>
+          </div>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem active"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Overflow-меню ⋮ для строки: режим, полная сверка (с предупреждением), свойства с размером в блоках движка.</p>
+  </div>
+</div>
+
+<!-- ===================== ФАЙЛЫ ===================== -->
+<div class="row-label">Файлы — чтение дерева в фоне с индикатором, «Обновить» в тулбаре строки состояния</div>
+<div class="phones">
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar"><div class="title">Файлы</div></div>
+        <div class="content">
+          <div class="toolbar">
+            <div class="path">/storage/emulated/0/POSCloud</div>
+            <div class="iconbtn">↻</div>
+          </div>
+          <div class="list tree">
+            <div class="trow"><span>▾</span><span class="nm">📷 Screenshots</span><span class="sz">42 МБ</span></div>
+            <div class="trow ind1"><span>&nbsp;</span><span class="nm">Screenshot_2026-11-24-09-41-02.png</span><span class="sz">214 КБ</span></div>
+            <div class="trow ind1"><span>&nbsp;</span><span class="nm">Screenshot_2026-11-24-08-12-55.png</span><span class="sz">198 КБ</span></div>
+            <div class="trow"><span>▾</span><span class="nm">📄 Документы</span><span class="sz">1,2 МБ</span></div>
+            <div class="trow ind1"><span>&nbsp;</span><span class="nm">Отчёт за ноябрь.pdf</span><span class="sz">640 КБ</span></div>
+            <div class="trow"><span>▸</span><span class="nm">🎬 Видео</span><span class="sz">8,4 МБ</span></div>
+            <div class="trow"><span>&nbsp;</span><span class="nm">notes.txt</span><span class="sz">3 КБ</span></div>
+          </div>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem active"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Тулбар с путём и «Обновить»-иконкой — как в текущем filesPage, сохранено.</p>
+  </div>
+
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="appbar"><div class="title">Файлы</div></div>
+        <div class="content">
+          <div class="toolbar">
+            <div class="path">/storage/emulated/0/POSCloud/DCIM/Camera</div>
+            <div class="iconbtn">↻</div>
+          </div>
+          <div class="loading">⏳ читаю DCIM/Camera… (2184 файла, в фоне)</div>
+          <div class="list tree">
+            <div class="trow"><span>▾</span><span class="nm">📷 Screenshots</span><span class="sz">42 МБ</span></div>
+            <div class="trow"><span>▸</span><span class="nm">📄 Документы</span><span class="sz">1,2 МБ</span></div>
+          </div>
+          <div class="hint">Раскрытие большой папки: узел показывает индикатор, os.ReadDir идёт в горутине, UI-поток не замирает. Кеш stat-результатов на переметку.</div>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem active"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><span class="tag p0">п.9c</span> Ключевой фикс: дерево не читает диск в UI-потоке — вместо фриза индикатор в раскрывающемся узле.</p>
+  </div>
+</div>
+
+<!-- ===================== ДИАЛОГ ПАПКИ ===================== -->
+<div class="row-label">Диалог выбора папки — на весь экран, быстрые переходы вертикальным списком</div>
+<div class="phones">
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen" style="position:relative">
+        <div class="appbar"><div class="title">Файлы</div></div>
+        <div class="content">
+          <div class="toolbar">
+            <div class="path">/storage/emulated/0/POSCloud</div>
+            <div class="iconbtn">↻</div>
+          </div>
+          <div class="list tree">
+            <div class="trow"><span>▸</span><span class="nm">📷 Screenshots</span><span class="sz">42 МБ</span></div>
+            <div class="trow"><span>▸</span><span class="nm">📄 Документы</span><span class="sz">1,2 МБ</span></div>
+          </div>
+          <button class="btn primary small" style="margin-top:12px">＋ Добавить папку с устройства</button>
+        </div>
+        <div class="navbar">
+          <div class="navitem"><div class="ic">◉</div>Статус</div>
+          <div class="navitem"><div class="ic">⇅</div>Папки</div>
+          <div class="navitem active"><div class="ic">▦</div>Файлы</div>
+          <div class="navitem"><div class="ic">☰</div>Журнал</div>
+        </div>
+        <div class="dialogwrap">
+          <div class="dialog">
+            <div class="dlghead">
+              <div class="iconbtn">✕</div>
+              <div class="t">Выбор папки</div>
+            </div>
+            <div class="dlgbody">
+              <div class="quick">
+                <div class="listrow"><div class="fi">⬇</div>
+                  <div class="txt"><div class="nm">Загрузки</div><div class="sub">/storage/emulated/0/Download</div></div></div>
+                <div class="listrow"><div class="fi">☁</div>
+                  <div class="txt"><div class="nm">POSCloud</div><div class="sub">/storage/emulated/0/POSCloud</div></div></div>
+                <div class="listrow"><div class="fi">💾</div>
+                  <div class="txt"><div class="nm">Память устройства</div><div class="sub">/storage/emulated/0</div></div></div>
+              </div>
+              <div class="crumb">
+                <span>Память</span><span class="sep">›</span><span>DCIM</span><span class="sep">›</span><span>Camera</span>
+              </div>
+              <div class="list">
+                <div class="listrow"><div class="fi">📁</div>
+                  <div class="txt"><div class="nm">Android</div></div></div>
+                <div class="listrow"><div class="fi">📁</div>
+                  <div class="txt"><div class="nm">DCIM</div></div></div>
+                <div class="listrow"><div class="fi">📁</div>
+                  <div class="txt"><div class="nm">Documents</div></div></div>
+                <div class="listrow"><div class="fi">📁</div>
+                  <div class="txt"><div class="nm">Download</div></div></div>
+                <div class="listrow"><div class="fi">📁</div>
+                  <div class="txt"><div class="nm">Pictures</div></div></div>
+                <div class="listrow"><div class="fi">📁</div>
+                  <div class="txt"><div class="nm">POSCloud</div></div></div>
+              </div>
+            </div>
+            <div class="dlgfoot">
+              <button class="btn ghost">Отмена</button>
+              <button class="btn primary">Выбрать Camera</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><span class="tag p1">п.5</span> Диалог на весь экран: список каталогов получает всю высоту. Быстрые переходы — вертикальные строки во всю ширину, подписи не режутся (было: три узкие кнопки в HBox). Хлебные крошки вместо длинного пути.</p>
+  </div>
+</div>
+
+<script>/* статический макет — интерактив не требуется */</script>
+</body>
+</html>

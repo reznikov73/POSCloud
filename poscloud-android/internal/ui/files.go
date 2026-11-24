@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -35,6 +37,12 @@ type filesPage struct {
 	search    *widget.Entry // поиск по имени: дерево становится плоским списком находок
 	conflicts *conflictsCard
 	nodes     map[fyne.CanvasObject]*fileNode // строки дерева: объект → подписи
+
+	searchMu      sync.Mutex // кеш поиска: читает горутина, читает UI-поток
+	results       []widget.TreeNodeID
+	searchGen     int         // поколение запроса: устаревший результат отбрасывается
+	searchTimer   *time.Timer // debounce ввода
+	searchLoading bool        // идёт обход папки в фоне
 }
 
 // filesRootUID — корневой узел дерева: сама папка синхронизации.
@@ -47,7 +55,10 @@ func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
 	p.state = caption("")
 	p.search = widget.NewEntry()
 	p.search.SetPlaceHolder("Поиск по имени…")
-	p.search.OnChanged = func(string) { p.tree.Refresh() }
+	// Обход папки — в горутине и с debounce: колбэки дерева Fyne вызываются
+	// на UI-потоке, и WalkDir по тысячам файлов прямо в childUIDs замораживал
+	// бы экран на каждое нажатие клавиши.
+	p.search.OnChanged = func(string) { p.scheduleSearch() }
 	p.conflicts = newConflictsCard(ctrl, p, win)
 	p.tree = widget.NewTree(p.childUIDs, p.isBranch, p.createNode, p.updateNode)
 	p.tree.Root = filesRootUID
@@ -91,6 +102,11 @@ func (p *filesPage) Refresh() {
 	}
 	n, bytes := eng.DirStats(p.root)
 	p.state.SetText(pluralFiles(n) + ", " + humanBytes(bytes) + " · нажмите на файл для действий")
+	// при активном поиске папка могла измениться — перезапускаем обход,
+	// иначе дерево покажет устаревший кеш
+	if p.filtering() {
+		p.scheduleSearch()
+	}
 	p.tree.Refresh()
 }
 
@@ -108,20 +124,78 @@ func (p *filesPage) filtering() bool {
 	return p.root != "" && strings.TrimSpace(p.search.Text) != ""
 }
 
-// searchResults ищет файлы по имени (без учёта регистра) во всей папке,
-// включая свёрнутые папки, и возвращает узлы дерева для плоского списка.
-func (p *filesPage) searchResults() []widget.TreeNodeID {
+// searchDebounce — пауза после нажатия клавиши, прежде чем идти по диску.
+const searchDebounce = 300 * time.Millisecond
+
+// scheduleSearch перезапускает поиск с debounce: пока человек печатает,
+// по диску не ходим. Вызывается на UI-потоке: текст поля и путь папки
+// снимаем здесь и передаём в горутину значениями.
+func (p *filesPage) scheduleSearch() {
+	if p.searchTimer != nil {
+		p.searchTimer.Stop()
+	}
+	if !p.filtering() {
+		// фильтр очищен — дерево сразу возвращается к обычному виду
+		p.searchMu.Lock()
+		p.results = nil
+		p.searchGen++
+		p.searchLoading = false
+		p.searchMu.Unlock()
+		p.tree.Refresh()
+		return
+	}
 	q := strings.ToLower(strings.TrimSpace(p.search.Text))
-	if q == "" {
+	root := p.root
+	p.searchTimer = time.AfterFunc(searchDebounce, func() { p.runSearch(q, root) })
+}
+
+// runSearch обходит папку в горутине и кладёт результат в кеш; tree.Refresh
+// уже не читает диск, а берёт готовый список. Результат устаревшего запроса
+// (человек успел допечатать) отбрасывается по номеру поколения.
+func (p *filesPage) runSearch(q, root string) {
+	if q == "" || root == "" {
+		return
+	}
+	p.searchMu.Lock()
+	p.searchGen++
+	gen := p.searchGen
+	p.searchLoading = true
+	p.searchMu.Unlock()
+	go func() {
+		p.doSearch(q, root, gen)
+		fyne.Do(func() { p.tree.Refresh() })
+	}()
+}
+
+// doSearch — само выполнение поиска (синхронно): вызывается из горутины,
+// а в тестах — напрямую. Возвращает false, если запрос устарел.
+func (p *filesPage) doSearch(q, root string, gen int) bool {
+	found := walkMatches(root, q, 300)
+	p.searchMu.Lock()
+	defer p.searchMu.Unlock()
+	if gen != p.searchGen {
+		return false
+	}
+	p.results = found
+	p.searchLoading = false
+	return true
+}
+
+// walkMatches ищет файлы по подстроке имени (без учёта регистра) во всей
+// папке, включая свёрнутые, и возвращает узлы дерева для плоского списка.
+// Чистая функция без состояния — вызывается вне UI-потока.
+func walkMatches(root, q string, limit int) []widget.TreeNodeID {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" || root == "" {
 		return nil
 	}
 	var out []widget.TreeNodeID
-	_ = filepath.WalkDir(p.root, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d == nil {
 			return nil
 		}
 		if d.IsDir() {
-			if path != p.root && strings.HasPrefix(d.Name(), ".") {
+			if path != root && strings.HasPrefix(d.Name(), ".") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -132,12 +206,12 @@ func (p *filesPage) searchResults() []widget.TreeNodeID {
 		if !strings.Contains(strings.ToLower(d.Name()), q) {
 			return nil
 		}
-		rel, rerr := filepath.Rel(p.root, path)
+		rel, rerr := filepath.Rel(root, path)
 		if rerr != nil {
 			return nil
 		}
 		out = append(out, widget.TreeNodeID(filesRootUID+"/"+filepath.ToSlash(rel)))
-		if len(out) >= 300 {
+		if len(out) >= limit {
 			return filepath.SkipAll
 		}
 		return nil
@@ -146,8 +220,15 @@ func (p *filesPage) searchResults() []widget.TreeNodeID {
 	return out
 }
 
+// searchResults возвращает кеш последнего поиска (мгновенно, без диска).
+func (p *filesPage) searchResults() []widget.TreeNodeID {
+	p.searchMu.Lock()
+	defer p.searchMu.Unlock()
+	return append([]widget.TreeNodeID(nil), p.results...)
+}
+
 // childUIDs отдаёт содержимое каталога: сначала папки, потом файлы, по алфавиту.
-// Во время поиска — плоский список находок от корня.
+// Во время поиска — плоский список находок из кеша.
 func (p *filesPage) childUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
 	if p.filtering() {
 		if string(uid) != filesRootUID {
@@ -203,7 +284,14 @@ func (p *filesPage) updateNode(uid widget.TreeNodeID, branch bool, o fyne.Canvas
 	abs := p.absPath(uid)
 	if string(uid) == filesRootUID {
 		if p.filtering() {
-			n.set("Результаты поиска", true, "")
+			p.searchMu.Lock()
+			loading := p.searchLoading
+			p.searchMu.Unlock()
+			if loading {
+				n.set("Ищем…", true, "")
+				return
+			}
+			n.set("Результаты поиска", true, fmt.Sprintf("%d", len(p.searchResults())))
 		} else {
 			n.set(filepath.Base(p.root), true, "")
 		}
