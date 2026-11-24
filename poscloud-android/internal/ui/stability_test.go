@@ -62,43 +62,43 @@ func newTestController(t *testing.T, host string, port int, token string) *clien
 	return ctrl
 }
 
-// TestManualSetupCollapsed — ручная настройка свёрнута по умолчанию, а её
+// TestAdvancedCollapsed — блок «Дополнительно» свёрнут по умолчанию, а его
 // заголовок показывает настроенный сервер; тап разворачивает. Поля при этом
 // заполнены из сохранённых настроек — «Запустить» работает и свёрнутым.
-func TestManualSetupCollapsed(t *testing.T) {
+func TestAdvancedCollapsed(t *testing.T) {
 	testApp := test.NewApp()
 	testApp.Settings().SetTheme(Theme())
 	w := testApp.NewWindow("x")
 	ctrl := newTestController(t, "192.168.1.10", 8090, "secret-token")
 	st := Build(ctrl, w)
-	if !st.manualCard.Hidden {
-		t.Fatal("ручная настройка должна быть свёрнута по умолчанию")
+	if !st.advancedCard.Hidden {
+		t.Fatal("дополнительные настройки должны быть свёрнуты по умолчанию")
 	}
-	if got := st.manualToggle.Text; !strings.Contains(got, "192.168.1.10:8090") {
+	if got := st.advancedToggle.Text; !strings.Contains(got, "192.168.1.10:8090") {
 		t.Fatalf("заголовок не показывает сервер: %q", got)
 	}
 	if st.hostEntry.Text != "192.168.1.10" || st.tokenEntry.Text != "secret-token" {
 		t.Fatalf("поля не заполнены из настроек: %q / %q", st.hostEntry.Text, st.tokenEntry.Text)
 	}
-	st.manualToggle.OnTapped()
-	if st.manualCard.Hidden {
+	st.advancedToggle.OnTapped()
+	if st.advancedCard.Hidden {
 		t.Fatal("тап по заголовку не развернул блок")
 	}
-	st.manualToggle.OnTapped()
-	if !st.manualCard.Hidden {
+	st.advancedToggle.OnTapped()
+	if !st.advancedCard.Hidden {
 		t.Fatal("повторный тап не свернул блок")
 	}
 	w.Close()
 }
 
-// TestManualSetupTitleWithoutServer — без подключения заголовок без адреса.
-func TestManualSetupTitleWithoutServer(t *testing.T) {
+// TestAdvancedTitleWithoutServer — без подключения заголовок без адреса.
+func TestAdvancedTitleWithoutServer(t *testing.T) {
 	testApp := test.NewApp()
 	testApp.Settings().SetTheme(Theme())
 	w := testApp.NewWindow("x")
 	ctrl := newTestController(t, "localhost", 8090, "")
 	st := Build(ctrl, w)
-	if got := st.manualToggle.Text; got != "Ручная настройка" {
+	if got := st.advancedToggle.Text; got != "Дополнительно" {
 		t.Fatalf("заголовок без подключения: %q", got)
 	}
 	w.Close()

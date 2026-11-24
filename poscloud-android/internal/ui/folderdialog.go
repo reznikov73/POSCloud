@@ -136,7 +136,7 @@ func dialogRow(text string, icon fyne.Resource, tapped func()) fyne.CanvasObject
 	btn := widget.NewButtonWithIcon(text, icon, tapped)
 	btn.Alignment = widget.ButtonAlignLeading
 	bg := canvas.NewRectangle(color.Transparent)
-	bg.SetMinSize(fyne.NewSize(0, 48))
+	bg.SetMinSize(fyne.NewSize(0, rowMin))
 	return container.NewStack(bg, btn)
 }
 

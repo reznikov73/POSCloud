@@ -53,7 +53,16 @@ func (p *pager) object() fyne.CanvasObject {
 	}
 	line := canvas.NewRectangle(colBorder)
 	line.SetMinSize(fyne.NewSize(0, 1))
-	return container.NewBorder(nil, container.NewVBox(line, p.bar), nil, nil, p.stack)
+	// Панель непрозрачная: раньше при прокрутке текст уезжал под иконки.
+	barBg := canvas.NewRectangle(colCard)
+	barBox := container.NewStack(barBg, p.bar)
+	// Полоса под панелью — место под жест-бар Android: вставку системы
+	// Fyne 2.8 не отдаёт, и подписи вкладок попадали под жест.
+	inset := canvas.NewRectangle(colCard)
+	inset.SetMinSize(fyne.NewSize(0, pagerInset))
+	// Страницы с отступом от краёв: карточки больше не липнут к рамке экрана.
+	return container.NewBorder(nil, container.NewVBox(line, barBox, inset), nil, nil,
+		container.NewPadded(p.stack))
 }
 
 // Select показывает страницу с индексом i.
@@ -118,6 +127,12 @@ type navItem struct {
 
 const navMarkHeight = 3
 
+// pagerInset — полоса под панелью под системный жест-бар.
+const pagerInset = 16
+
+// navBarHeight — высота панели: иконка, подпись и отступы, но не меньше 56.
+const navBarHeight = 56
+
 func newNavItem(text string, icon fyne.Resource, onTap func()) *navItem {
 	n := &navItem{
 		base:  icon,
@@ -127,6 +142,7 @@ func newNavItem(text string, icon fyne.Resource, onTap func()) *navItem {
 		onTap: onTap,
 	}
 	n.label.Alignment = fyne.TextAlignCenter
+	n.label.SizeName = theme.SizeNameCaptionText
 	n.label.TextStyle = fyne.TextStyle{Bold: false}
 	n.mark.Hide()
 	n.ExtendBaseWidget(n)
@@ -173,10 +189,14 @@ func (n *navItem) CreateRenderer() fyne.WidgetRenderer {
 	return r
 }
 
-// MinSize — высота в палец: иконка, подпись и отступы.
+// MinSize — высота в палец: иконка 20, подпись 12 и отступы; не ниже 56.
 func (n *navItem) MinSize() fyne.Size {
-	return fyne.NewSize(0, theme.CurrentForWidget(n).Size(theme.SizeNameInlineIcon)*1.2+
-		n.label.MinSize().Height+2*theme.CurrentForWidget(n).Size(theme.SizeNameInnerPadding))
+	h := theme.CurrentForWidget(n).Size(theme.SizeNameInlineIcon) + spaceXS +
+		n.label.MinSize().Height + 2*spaceXS
+	if h < navBarHeight {
+		h = navBarHeight
+	}
+	return fyne.NewSize(0, h)
 }
 
 type navItemRenderer struct {

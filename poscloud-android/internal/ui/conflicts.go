@@ -28,6 +28,7 @@ type conflictsCard struct {
 	win    fyne.Window
 	label  *widget.Label
 	button *widget.Button
+	box    *fyne.Container
 }
 
 func newConflictsCard(ctrl *client.Controller, files *filesPage, win fyne.Window) *conflictsCard {
@@ -39,9 +40,11 @@ func newConflictsCard(ctrl *client.Controller, files *filesPage, win fyne.Window
 	return c
 }
 
-// object собирает карточку: подпись о числе конфликтов и кнопка входа.
+// object — контейнер, содержимое которого зависит от наличия конфликтов:
+// пустое состояние — строка, а не карточка на 200 px.
 func (c *conflictsCard) object() fyne.CanvasObject {
-	return widget.NewCard("Конфликты", "", container.NewVBox(c.label, c.button))
+	c.box = container.NewVBox()
+	return c.box
 }
 
 // Refresh перечитывает список конфликтных копий — локальный обход папки
@@ -49,17 +52,25 @@ func (c *conflictsCard) object() fyne.CanvasObject {
 func (c *conflictsCard) Refresh() {
 	list := c.ctrl.Conflicts()
 	if len(list) == 0 {
-		c.label.SetText("Конфликтных копий нет")
+		c.label.SetText("Конфликтов нет")
 		c.button.Hide()
+		if c.box != nil {
+			c.box.Objects = []fyne.CanvasObject{c.label}
+			c.box.Refresh()
+		}
 		return
 	}
 	var size int64
 	for _, p := range list {
 		size += p.Size
 	}
-	c.label.SetText(fmt.Sprintf("%s (%s): версии файлов разошлись между устройствами — выберите, какая верна",
+	c.label.SetText(fmt.Sprintf("Конфликты: %s (%s) — выберите версию",
 		pluralConflicts(len(list)), humanBytes(size)))
 	c.button.Show()
+	if c.box != nil {
+		c.box.Objects = []fyne.CanvasObject{cardBox(container.NewVBox(c.label, c.button))}
+		c.box.Refresh()
+	}
 }
 
 // show открывает список конфликтных копий: тап по строке — выбор версии.
@@ -89,7 +100,7 @@ func (c *conflictsCard) show() {
 		rows.Add(row)
 	}
 	d = dialog.NewCustom("Конфликтные копии", "Закрыть", container.NewVScroll(rows), c.win)
-	d.Resize(fyne.NewSize(420, 560))
+	d.Resize(dialogSize(c.win))
 	d.Show()
 }
 
@@ -119,7 +130,7 @@ func (c *conflictsCard) choose(pair eng.ConflictPair) {
 		}),
 	)
 	d = dialog.NewCustom("Какую версию оставить?", "Закрыть", rows, c.win)
-	d.Resize(fyne.NewSize(420, 460))
+	d.Resize(dialogSize(c.win))
 	d.Show()
 }
 

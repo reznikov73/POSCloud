@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
@@ -48,6 +47,21 @@ func modeTitle(mode string) string {
 	return mode
 }
 
+// shortModeTitle — подпись режима для чипа в строке папки: полные названия
+// в строку не влезают, а открыть выбор можно касанием.
+func shortModeTitle(mode string) string {
+	switch mode {
+	case eng.FolderBoth:
+		return "В обе"
+	case eng.FolderUp:
+		return "Отправка"
+	case eng.FolderDown:
+		return "Приём"
+	default:
+		return "Нет"
+	}
+}
+
 // ---------- элементы интерфейса ----------
 
 // heading возвращает крупный заголовок раздела (markdown-стиль).
@@ -57,11 +71,28 @@ func heading(text string) fyne.CanvasObject {
 	return rt
 }
 
+// pageHeader — заголовок страницы с действиями справа (иконки).
+func pageHeader(title string, actions ...fyne.CanvasObject) fyne.CanvasObject {
+	h := heading(title)
+	if len(actions) == 0 {
+		return h
+	}
+	return container.NewBorder(nil, nil, nil, container.NewHBox(actions...), h)
+}
+
+// iconButton — кнопка-иконка в шапке страницы.
+func iconButton(icon fyne.Resource, tapped func()) *widget.Button {
+	b := widget.NewButtonWithIcon("", icon, tapped)
+	b.Importance = widget.LowImportance
+	return b
+}
+
 // caption возвращает второстепенную подпись.
 func caption(text string) *widget.Label {
 	l := widget.NewLabel(text)
 	l.Importance = widget.LowImportance
 	l.Wrapping = fyne.TextWrapWord
+	l.SizeName = theme.SizeNameCaptionText
 	return l
 }
 
@@ -71,21 +102,6 @@ func (st *State) setDir(dir string) {
 	st.dirLabel.SetText(dir)
 }
 
-// hint возвращает курсивную подсказку.
-func hint(text string) fyne.CanvasObject {
-	rt := widget.NewRichText(&widget.TextSegment{
-		Text:  text,
-		Style: widget.RichTextStyleInline,
-	})
-	rt.Wrapping = fyne.TextWrapWord
-	return rt
-}
-
-// tile — плитка «подпись + крупное значение» для сетки 2×2.
-func tile(label string, value *widget.Label) fyne.CanvasObject {
-	return widget.NewCard("", "", container.NewVBox(caption(label), value))
-}
-
 // ---------- состояние интерфейса ----------
 
 // State держит виджеты, которые обновляет таймер.
@@ -93,7 +109,6 @@ type State struct {
 	Content fyne.CanvasObject
 
 	// статус
-	stateTitle   *widget.Label
 	stateSub     *widget.Label
 	swSync       *pillSwitch
 	onToggle     func(bool)
@@ -106,7 +121,7 @@ type State struct {
 	errLabel     *widget.Label
 	transferText *widget.Label
 	transferBar  *widget.ProgressBar
-	transferCard *widget.Card
+	transferBox  *fyne.Container
 	shotBox      *fyne.Container
 	shotLabel    *widget.Label
 	btnShotPerm  *widget.Button
@@ -119,32 +134,38 @@ type State struct {
 	btnInstall *widget.Button
 
 	// подключение (поля читает «Запустить»)
-	hostEntry     *widget.Entry
-	portEntry     *widget.Entry
-	tokenEntry    *widget.Entry
-	deviceEntry   *widget.Entry
-	dirLabel      *widget.Label
-	dirValue      string
-	intervalEntry *widget.Entry
-	tlsCheck      *widget.Check
-	fpEntry       *widget.Entry
-	autoRunCheck  *widget.Check
-	pairEntry     *widget.Entry
-	manualCard    *widget.Card   // ручная настройка: свёрнута, 90% подключаются по QR
-	manualToggle  *widget.Button // заголовок-кнопка, показывает текущий сервер
+	hostEntry      *formEntry
+	portEntry      *formEntry
+	tokenEntry     *formEntry
+	deviceEntry    *formEntry
+	dirLabel       *widget.Label
+	dirValue       string
+	intervalEntry  *formEntry
+	tlsSwitch      *pillSwitch
+	fpEntry        *widget.Entry
+	fpBox          fyne.CanvasObject
+	autoSwitch     *pillSwitch
+	pairEntry      *widget.Entry
+	pairBox        fyne.CanvasObject
+	pairToggle     *widget.Button
+	advancedCard   *widget.Card   // дополнительно: свёрнуто
+	advancedToggle *widget.Button // заголовок-кнопка, показывает сервер
+	testInfo       *widget.Label  // результат «Проверить связь» строкой
+	saveInfo       *widget.Label  // «Настройки сохранены» строкой
 
 	// тихие часы и лимит скачивания
-	quietCheck  *widget.Check
-	quietFrom   *widget.Entry
-	quietTo     *widget.Entry
+	quietSwitch *pillSwitch
+	quietFrom   *formEntry
+	quietTo     *formEntry
 	quietRow    fyne.CanvasObject
-	maxDownEntr *widget.Entry
+	quietErr    *widget.Label
+	limitErr    *widget.Label
+	maxDownEntr *formEntry
 
 	// папки
 	foldersBox    *fyne.Container
 	foldersState  *widget.Label
-	freeCheck     *widget.Check
-	btnResync     *widget.Button
+	freeSwitch    *pillSwitch
 	btnRefreshFld *widget.Button
 
 	// журнал
@@ -171,26 +192,29 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	cfg := ctrl.Config()
 
 	// ===== вкладка «Статус» =====
-	// Макет B: главное действие — переключатель «Синхронизация» (как Wi-Fi в
-	// настройках телефона), под ним одна крупная кнопка «сейчас», цифры —
-	// плитками 2×2. Кнопки и плитки — в высоту пальца.
+	// Переключатель — главное действие (как Wi-Fi в настройках телефона),
+	// цифры — одной полосой, пустые состояния — строками, а не карточками.
 	ui.serverValue = widget.NewLabel(eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS))
+	ui.serverValue.SizeName = theme.SizeNameText
 	ui.onlineValue = widget.NewLabel("—")
-	ui.folderValue = widget.NewLabel(cfg.Dir)
 	ui.countValue = widget.NewLabel("—")
 	ui.upValue = widget.NewLabel("0 Б")
 	ui.downValue = widget.NewLabel("0 Б")
-	// Путь к папке — одна длинная строка без пробелов: переносим её в любом месте,
+	ui.folderValue = widget.NewLabel(cfg.Dir)
+	// Путь — одна длинная строка без пробелов: переносим её в любом месте,
 	// иначе карточка требует ширину больше экрана телефона.
 	ui.folderValue.Wrapping = fyne.TextWrapBreak
+	ui.folderValue.SizeName = theme.SizeNameCaptionText
 	for _, l := range []*widget.Label{ui.onlineValue, ui.countValue, ui.upValue, ui.downValue} {
 		l.TextStyle = fyne.TextStyle{Bold: true}
-		l.SizeName = theme.SizeNameHeadingText
+		l.SizeName = theme.SizeNameSubHeadingText
+		l.Alignment = fyne.TextAlignTrailing
 	}
 
-	ui.stateTitle = widget.NewLabelWithStyle("Синхронизация", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	ui.stateTitle.SizeName = theme.SizeNameHeadingText
 	ui.stateSub = caption("остановлена")
+	// Подпись статуса не переносится: в строке рядом с переключателем
+	// перенос ломал «работает · цикл 21:33:26» на две строки.
+	ui.stateSub.Wrapping = fyne.TextWrapOff
 	ui.swSync = newPillSwitch(false, nil)
 	ui.onToggle = func(on bool) {
 		if on {
@@ -200,33 +224,36 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		}
 	}
 	ui.swSync.OnChanged = ui.onToggle
-	// Переключатель держим в окошке своего размера: BorderLayout растянул бы его
-	// на всю высоту карточки, и ползунок стал бы огромным кругом.
-	swBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(toggleW, toggleH)), ui.swSync)
-	syncCard := container.NewPadded(widget.NewCard("", "", container.NewBorder(nil, nil,
-		container.NewVBox(ui.stateTitle, ui.stateSub), swBox)))
+	syncTitle := widget.NewLabelWithStyle("Синхронизация", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	syncTitle.SizeName = theme.SizeNameSubHeadingText
+	syncCard := cardBox(container.NewBorder(nil, nil,
+		container.NewCenter(container.NewVBox(syncTitle, ui.stateSub)),
+		container.New(layout.NewGridWrapLayout(fyne.NewSize(toggleW, toggleTouchH)), ui.swSync)))
 
 	ui.btnNow = widget.NewButtonWithIcon("Синхронизировать сейчас", theme.ViewRefreshIcon(), func() { ctrl.SyncNow() })
-	ui.btnNow.Importance = widget.HighImportance
 	ui.btnNow.Disable()
 
-	tiles := container.NewGridWithColumns(2,
-		tile("Связь", ui.onlineValue), tile("Файлов", ui.countValue),
-		tile("Отправлено", ui.upValue), tile("Получено", ui.downValue),
-	)
+	// Цифры — сеткой 2×2 «подпись слева, значение справа»: четыре колонки
+	// на 360 dp не влезали и подписи переносились посередине слова.
+	stat := func(label string, v *widget.Label) fyne.CanvasObject {
+		l := caption(label)
+		return container.NewBorder(nil, nil, l, nil, v)
+	}
+	statsCard := cardBox(container.NewGridWithColumns(2,
+		stat("Связь", ui.onlineValue), stat("Файлов", ui.countValue),
+		stat("Отправлено", ui.upValue), stat("Получено", ui.downValue)))
 
 	ui.errLabel = widget.NewLabel("")
 	ui.errLabel.Wrapping = fyne.TextWrapWord
 	ui.errLabel.Importance = widget.DangerImportance
+	ui.errLabel.SizeName = theme.SizeNameCaptionText
 	ui.errLabel.Hide()
 
-	ui.transferText = caption("Передач нет")
+	// Передачи — строка: пустое состояние больше не занимает карточку.
+	ui.transferText = caption("Передачи: нет")
 	ui.transferBar = widget.NewProgressBar()
 	ui.transferBar.Hide()
-	transferCard := widget.NewCard("Передачи", "", container.NewVBox(ui.transferText, ui.transferBar))
-	ui.transferCard = transferCard
-	// Карточка всегда на месте: когда она появлялась и исчезала, содержимое
-	// выше неё «прыгало». Пустое состояние — «Передач нет», бар скрыт.
+	ui.transferBox = container.NewVBox(ui.transferText, ui.transferBar)
 
 	// Снимки экрана создаёт система; пока нет разрешения на чтение фото,
 	// они не попадают в папку синхронизации — говорим об этом и даём кнопку.
@@ -235,17 +262,16 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	ui.btnShotPerm = widget.NewButtonWithIcon("Разрешить доступ к фото", theme.MediaPhotoIcon(), func() {
 		go ctrl.RequestPhotoAccess()
 	})
-	ui.btnShotPerm.Importance = widget.HighImportance
 	ui.shotBox = container.NewVBox(ui.shotLabel, ui.btnShotPerm)
 	ui.shotBox.Hide()
 
-	serverCard := widget.NewCard("", "", container.NewVBox(
-		fieldRow("Сервер", ui.serverValue),
-		fieldRow("Папка", ui.folderValue),
+	serverCard := cardBox(container.NewVBox(
+		valueRow("Сервер", ui.serverValue),
+		valueRow("Папка", ui.folderValue),
 	))
 
 	// обновление: версию берём из манифеста, APK ищем в папке синхронизации
-	ui.updateInfo = caption("")
+	ui.updateInfo = caption("Проверяем обновление…")
 	ui.btnInstall = widget.NewButtonWithIcon("Установить", theme.DownloadIcon(), func() {
 		path := ui.updateAPK
 		if path == "" {
@@ -259,287 +285,264 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	})
 	ui.btnInstall.Importance = widget.HighImportance
 	ui.btnInstall.Hide()
-	updateCard := widget.NewCard("Обновление", "", container.NewVBox(
+	updateTitle := widget.NewLabelWithStyle("Обновление", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	updateTitle.SizeName = theme.SizeNameText
+	updateCard := cardBox(container.NewVBox(
+		updateTitle,
 		ui.updateInfo,
-		widget.NewButtonWithIcon("Проверить обновление", theme.ViewRefreshIcon(), func() {
+		buttonBox(widget.NewButtonWithIcon("Проверить обновление", theme.ViewRefreshIcon(), func() {
 			ui.checkUpdate(ctrl, true)
-		}),
+		})),
 		ui.btnInstall,
 	))
 
-	statusCard := container.NewVBox(
+	statusPage := container.NewVBox(
 		heading("POSCloud"),
 		syncCard,
-		ui.btnNow,
+		buttonBox(ui.btnNow),
 		ui.shotBox,
-		tiles,
-		serverCard,
-		transferCard,
+		statsCard,
+		ui.transferBox,
 		ui.errLabel,
 		updateCard,
-		container.NewPadded(caption("Синхронизация работает, пока приложение открыто; для фоновой работы держите его в недавних.")),
+		serverCard,
+		helpText("Синхронизация работает, пока приложение открыто; для фоновой работы держите его в недавних."),
+		layout.NewSpacer(),
 	)
 
-	// ===== вкладка «Подключение» =====
+	// ===== вкладка «Связь» =====
+	// Одно главное действие — скан QR. Ручной ввод кода и ручная настройка
+	// свёрнуты; кнопки формы закреплены внизу и не уезжают за прокруткой.
 	ui.pairEntry = widget.NewMultiLineEntry()
 	ui.pairEntry.SetPlaceHolder("poscloud://connect?…")
 	ui.pairEntry.Wrapping = fyne.TextWrapBreak
+	ui.pairEntry.SetMinRowsVisible(2)
 
 	pairBtn := widget.NewButtonWithIcon("Подключиться по коду", theme.LoginIcon(), func() {
 		code := strings.TrimSpace(ui.pairEntry.Text)
 		if code == "" {
-			dialog.ShowInformation("Код подключения", "Вставьте код, выданный сервером POSCloud (кнопка «Код подключения» в окне сервера), или отсканируйте его снимком.", w)
+			dialog.ShowInformation("Код подключения", "Вставьте код, выданный сервером POSCloud (кнопка «Код подключения» в окне сервера), или отсканируйте его камерой.", w)
 			return
 		}
 		ui.pairConnect(ctrl, code)
 	})
+	ui.pairBox = container.NewVBox(fieldFill(ui.pairEntry), buttonBox(pairBtn))
+	ui.pairBox.Hide()
+	ui.pairToggle = widget.NewButton("Ввести код вручную", nil)
+	ui.pairToggle.Alignment = widget.ButtonAlignLeading
+	ui.pairToggle.Importance = widget.LowImportance
+	ui.pairToggle.OnTapped = func() {
+		show := !ui.pairBox.Visible()
+		showIf(ui.pairBox, show)
+	}
 
-	// выбор снимка с QR-кодом: сервер показывает QR, телефон снимает его
-	// камерой (системной), снимок декодируется прямо в приложении.
-	qrBtn := widget.NewButtonWithIcon("Снимок QR", theme.MediaPhotoIcon(), func() {
-		fd := dialog.NewFileOpen(func(r fyne.URIReadCloser, err error) {
-			if err != nil {
-				dialog.ShowError(err, w)
-				return
-			}
-			if r == nil {
-				return
-			}
-			go func(r fyne.URIReadCloser) {
-				defer r.Close()
-				code, derr := client.DecodeQRReader(r)
-				fyne.Do(func() {
-					if derr != nil {
-						dialog.ShowError(derr, w)
-						return
-					}
-					ui.pairEntry.SetText(code)
-					ui.pairConnect(ctrl, code)
-				})
-			}(r)
-		}, w)
-		fd.SetFilter(storage.NewMimeTypeFileFilter([]string{"image/*"}))
-		fd.Show()
+	scanBtn := widget.NewButtonWithIcon("Сканировать QR-код", theme.MediaPhotoIcon(), func() {
+		ui.scanQR(ctrl)
 	})
-	qrBtn.Importance = widget.HighImportance
+	scanBtn.Importance = widget.HighImportance
 
-	// Съёмка системной камерой: снимок сразу ложится в папку синхронизации
-	// и, если на нём QR, приложение подключается само.
-	shootBtn := widget.NewButtonWithIcon("Сфотографировать", theme.MediaPhotoIcon(), func() {
-		ui.shootAndConnect(ctrl)
-	})
-	shootBtn.Importance = widget.HighImportance
-
-	// Вставить код из буфера — быстрее, чем набирать его вручную.
-	pasteBtn := widget.NewButtonWithIcon("Из буфера", theme.ContentPasteIcon(), func() {
+	pasteBtn := widget.NewButtonWithIcon("Вставить код из буфера", theme.ContentPasteIcon(), func() {
 		if cb := w.Clipboard(); cb != nil {
 			if code := strings.TrimSpace(cb.Content()); code != "" {
 				ui.pairEntry.SetText(code)
+				showIf(ui.pairBox, true)
 			}
 		}
 	})
 
-	quickCard := widget.NewCard("Быстрое подключение", "", container.NewVBox(
-		shootBtn,
-		container.NewGridWithColumns(2, qrBtn, pasteBtn),
-		caption("Сфотографируйте QR камерой: снимок сохранится в «Фото смартфона» внутри папки синхронизации, приложение подключится само."),
-		ui.pairEntry,
-		pairBtn,
+	quickCard := cardBox(container.NewVBox(
+		buttonBox(scanBtn),
+		buttonBox(pasteBtn),
+		ui.pairToggle,
+		ui.pairBox,
 	))
 
-	ui.hostEntry = widget.NewEntry()
+	ui.hostEntry = newFormEntry(false)
 	ui.hostEntry.SetPlaceHolder("192.168.1.10")
-	ui.portEntry = widget.NewEntry()
+	ui.portEntry = newFormEntry(true)
 	ui.portEntry.SetPlaceHolder("8090")
-	ui.tokenEntry = widget.NewPasswordEntry()
+	ui.tokenEntry = &formEntry{Entry: widget.NewPasswordEntry()}
 	ui.tokenEntry.SetPlaceHolder("токен устройства")
-	ui.deviceEntry = widget.NewEntry()
+	ui.deviceEntry = newFormEntry(false)
 	ui.deviceEntry.SetPlaceHolder("имя устройства")
+
+	ui.tlsSwitch = newPillSwitch(false, nil)
+	ui.fpEntry = widget.NewMultiLineEntry()
+	ui.fpEntry.Wrapping = fyne.TextWrapBreak
+	ui.fpEntry.TextStyle = fyne.TextStyle{Monospace: true}
+	ui.fpEntry.SetMinRowsVisible(2)
+	ui.fpEntry.SetPlaceHolder("SHA-256")
+	ui.fpBox = container.NewVBox(
+		fieldRow("Отпечаток", fieldFill(ui.fpEntry)),
+		helperLine("64 hex-символа, сверяется по SHA-256."),
+	)
+	ui.fpBox.Hide()
+	ui.tlsSwitch.OnChanged = func(on bool) { showIf(ui.fpBox, on) }
+
+	serverCardForm := cardBox(container.NewVBox(
+		pairRow("Адрес", ui.hostEntry, "Порт", ui.portEntry, colPort),
+		fieldRow("Токен", fieldFill(ui.tokenEntry)),
+		fieldRow("Имя устройства", fieldFill(ui.deviceEntry)),
+		switchRow("TLS с самоподписанным сертификатом", ui.tlsSwitch),
+		ui.fpBox,
+	))
+
+	// —— дополнительно: папка, интервал, тихие часы, лимит, автозапуск ——
 	ui.dirLabel = widget.NewLabel("")
 	ui.dirLabel.Wrapping = fyne.TextWrapBreak
-	// Папка выбирается диалогом: путь — только для чтения, длинный путь
-	// переносится целиком и не рисует текст за границами поля.
+	ui.dirLabel.SizeName = theme.SizeNameCaptionText
 	pickBtn := widget.NewButtonWithIcon("Выбрать папку…", theme.FolderOpenIcon(), func() {
 		ui.pickFolder(ctrl)
 	})
-	ui.intervalEntry = widget.NewEntry()
+	ui.intervalEntry = newFormEntry(true)
 	ui.intervalEntry.SetPlaceHolder("3")
-	ui.tlsCheck = widget.NewCheck("TLS (самоподписанный сертификат)", nil)
-	// Отпечаток — 64 hex-символа: в одну строку не влезает, поэтому поле многострочное
-	// с переносом в любом месте (минимум две строки).
-	ui.fpEntry = widget.NewMultiLineEntry()
-	ui.fpEntry.Wrapping = fyne.TextWrapBreak
-	ui.fpEntry.SetMinRowsVisible(2)
-	ui.fpEntry.SetPlaceHolder("SHA-256")
-	ui.fpEntry.Hide()
-	ui.tlsCheck.OnChanged = func(on bool) {
-		if on {
-			ui.fpEntry.Show()
-		} else {
-			ui.fpEntry.Hide()
-		}
-	}
-	ui.autoRunCheck = widget.NewCheck("Запускать синхронизацию при старте", nil)
+	intervalRow := container.NewHBox(fieldBox(colNarrow, ui.intervalEntry), helpText("с"))
 
-	// Тихие часы: окно локального времени, в котором автоматический цикл не
-	// стартует (ночью не тратим трафик и батарею). Ручная синхронизация
-	// работает и в тихие часы. Пустые или равные значения — окно выключено.
-	ui.quietCheck = widget.NewCheck("Тихие часы (не синхронизировать ночью)", func(on bool) {
-		if on {
-			ui.quietRow.Show()
-		} else {
-			ui.quietRow.Hide()
-		}
-	})
-	ui.quietFrom = widget.NewEntry()
+	ui.quietSwitch = newPillSwitch(false, nil)
+	ui.quietFrom = newFormEntry(false)
 	ui.quietFrom.SetPlaceHolder("23:00")
 	ui.quietFrom.Validator = clockValidator
-	ui.quietFrom.OnChanged = func(s string) { clockFilter(ui.quietFrom) }
-	ui.quietTo = widget.NewEntry()
+	ui.quietFrom.OnChanged = func(string) { clockFilter(ui.quietFrom.Entry) }
+	ui.quietTo = newFormEntry(false)
 	ui.quietTo.SetPlaceHolder("07:00")
 	ui.quietTo.Validator = clockValidator
-	ui.quietTo.OnChanged = func(s string) { clockFilter(ui.quietTo) }
-	// Поля фиксированной ширины: обычные Entry в HBox сжимаются и обрезают текст.
-	quietFromBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(84, 46)), ui.quietFrom)
-	quietToBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(84, 46)), ui.quietTo)
-	quietRow := container.NewHBox(quietFromBox, widget.NewLabel("—"), quietToBox)
-	quietFormRow := formRow("Тихие часы, с — по", quietRow)
-	ui.quietRow = quietFormRow
-	ui.quietRow.Hide()
-	// Лимит скачивания: файлы больше не качаются автоматически, причина — в журнале.
-	ui.maxDownEntr = widget.NewEntry()
-	ui.maxDownEntr.SetPlaceHolder("0 — без лимита")
-	ui.maxDownEntr.Validator = limitValidator
-	ui.maxDownEntr.OnChanged = func(s string) { digitsFilter(ui.maxDownEntr, 5) }
-	limitBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(120, 46)), ui.maxDownEntr)
-
-	// Форма для узкого экрана: подпись над полем, поля и кнопки — на всю ширину.
-	// Классическая форма Fyne держит подписи в отдельной колонке слева и на
-	// телефоне оставляет полям слишком мало места.
-	// Адрес и порт — на одной горизонтали: порт узкий, адрес занимает остальное.
-	portBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(96, 46)), ui.portEntry)
-
-	form := container.NewVBox(
-		container.NewBorder(nil, nil, nil, formRow("Порт", portBox), formRow("Адрес сервера", ui.hostEntry)),
-		formRow("Токен", ui.tokenEntry),
-		formRow("Имя устройства", ui.deviceEntry),
-		formRow("Папка", container.NewVBox(ui.dirLabel, pickBtn)),
-		formRow("Интервал, с", ui.intervalEntry),
-		ui.quietCheck,
-		quietFormRow,
-		formRow("Лимит скачивания, МБ", limitBox),
-		ui.tlsCheck,
-		formRow("Отпечаток", ui.fpEntry),
-		ui.autoRunCheck,
+	ui.quietTo.OnChanged = func(string) { clockFilter(ui.quietTo.Entry) }
+	ui.quietErr = fieldErrorLabel()
+	quietFields := container.NewGridWithColumns(2,
+		container.NewVBox(fieldLabel("с"), fieldFill(ui.quietFrom)),
+		container.NewVBox(fieldLabel("по"), fieldFill(ui.quietTo)),
 	)
+	ui.quietRow = container.NewVBox(quietFields, ui.quietErr)
+	ui.quietRow.Hide()
+	ui.quietSwitch.OnChanged = func(on bool) { showIf(ui.quietRow, on) }
+
+	ui.maxDownEntr = newFormEntry(true)
+	ui.maxDownEntr.SetPlaceHolder("0")
+	ui.maxDownEntr.Validator = limitValidator
+	ui.maxDownEntr.OnChanged = func(string) { digitsFilter(ui.maxDownEntr.Entry, 5) }
+	ui.limitErr = fieldErrorLabel()
+	limitRow := container.NewHBox(fieldBox(colNarrow, ui.maxDownEntr), helpText("МБ"))
+
+	ui.autoSwitch = newPillSwitch(false, nil)
+
+	advanced := container.NewVBox(
+		fieldRow("Папка", container.NewVBox(ui.dirLabel, pickBtn)),
+		fieldRow("Интервал", intervalRow),
+		switchRow("Тихие часы", ui.quietSwitch),
+		ui.quietRow,
+		fieldRow("Лимит скачивания", limitRow),
+		helperLine("0 — без ограничения. Файлы больше лимита не скачиваются, причина — в журнале."),
+		ui.limitErr,
+		switchRow("Запускать синхронизацию при старте", ui.autoSwitch),
+	)
+	ui.advancedCard = widget.NewCard("", "", advanced)
+	ui.advancedCard.Hide()
+	ui.advancedToggle = widget.NewButtonWithIcon("Дополнительно", theme.SettingsIcon(), nil)
+	ui.advancedToggle.Alignment = widget.ButtonAlignLeading
+	ui.advancedToggle.OnTapped = func() {
+		showIf(ui.advancedCard, !ui.advancedCard.Visible())
+	}
+	advancedBlock := container.NewVBox(ui.advancedToggle, ui.advancedCard)
+
+	ui.testInfo = caption("")
+	ui.testInfo.Wrapping = fyne.TextWrapWord
+	ui.testInfo.Hide()
+	ui.saveInfo = caption("")
+	ui.saveInfo.Importance = widget.SuccessImportance
+	ui.saveInfo.Hide()
 
 	testBtn := widget.NewButtonWithIcon("Проверить связь", theme.ConfirmIcon(), func() {
-		d := dialog.NewProgress("Проверка связи", "Обращаемся к серверу…", w)
-		d.Show()
+		setTextIfChanged(ui.testInfo, "Проверяем связь…")
+		ui.testInfo.Importance = widget.LowImportance
+		showIf(ui.testInfo, true)
 		go func() {
 			res := ctrl.TestConnection(strings.TrimSpace(ui.hostEntry.Text),
 				atoiDefault(ui.portEntry.Text, cfg.Port), ui.tokenEntry.Text,
-				ui.tlsCheck.Checked, ui.fingerprint())
+				ui.tlsSwitch.Checked(), ui.fingerprint())
 			fyne.Do(func() {
-				d.Hide()
-				title := "Связь установлена"
+				setTextIfChanged(ui.testInfo, res)
 				if strings.HasPrefix(res, "Ошибка") {
-					title = "Нет связи"
+					ui.testInfo.Importance = widget.DangerImportance
+				} else {
+					ui.testInfo.Importance = widget.SuccessImportance
 				}
-				dialog.ShowInformation(title, res, w)
+				ui.testInfo.Refresh()
 			})
 		}()
 	})
 	saveBtn := widget.NewButtonWithIcon("Сохранить настройки", theme.DocumentSaveIcon(), func() {
-		// сначала проверяем ввод: ерунда не сохраняется и не глушит тихие часы молча
-		quietFrom, quietTo := "", ""
-		if ui.quietCheck.Checked {
-			var okFrom, okTo bool
-			quietFrom, okFrom = normClock(ui.quietFrom.Text)
-			quietTo, okTo = normClock(ui.quietTo.Text)
-			if !okFrom || !okTo {
-				dialog.ShowError(fmt.Errorf("Тихие часы: введите время в формате ЧЧ:ММ — например 23:00 и 07:00"), w)
-				return
-			}
-		}
-		limitTxt := strings.TrimSpace(ui.maxDownEntr.Text)
-		if limitTxt != "" {
-			if n, err := strconv.Atoi(limitTxt); err != nil || n < 0 {
-				dialog.ShowError(fmt.Errorf("Лимит скачивания: целое число мегабайт или пусто (без лимита)"), w)
-				return
-			}
-		}
-		ctrl.SaveSettings(strings.TrimSpace(ui.hostEntry.Text),
-			atoiDefault(ui.portEntry.Text, cfg.Port),
-			cleanPath(ui.dirValue),
-			atoiDefault(ui.intervalEntry.Text, cfg.Interval),
-			ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fingerprint(),
-			ui.deviceEntry.Text, ui.autoRunCheck.Checked,
-			quietFrom, quietTo, int64(atoiDefault(ui.maxDownEntr.Text, 0)))
-		// показываем канонический вид введённого («9:5» → «09:05»)
-		ui.quietFrom.SetText(quietFrom)
-		ui.quietTo.SetText(quietTo)
-		ui.refreshStatic(ctrl)
-		dialog.ShowInformation("Настройки", "Настройки сохранены.", w)
+		ui.saveSettings(ctrl)
 	})
+	saveBtn.Importance = widget.HighImportance
 
-	manualCard := widget.NewCard("", "", container.NewVBox(
-		form,
-		container.NewVBox(testBtn, saveBtn),
-	))
-	ui.manualCard = manualCard
-	// Ручная настройка — одиннадцать полей на виду, хотя 90% подключаются
-	// по QR-коду. Свёрнута по умолчанию; в заголовке-кнопке видно, что уже
-	// настроено («Ручная настройка · 192.168.1.10:8090»), поэтому свёрнутость
-	// не скрывает состояние подключения.
-	ui.manualToggle = widget.NewButtonWithIcon("Ручная настройка", theme.SettingsIcon(), nil)
-	ui.manualToggle.Alignment = widget.ButtonAlignLeading
-	ui.manualToggle.OnTapped = func() { showIf(ui.manualCard, !ui.manualCard.Visible()) }
-	manualCard.Hide()
-	manualBlock := container.NewVBox(ui.manualToggle, manualCard)
+	footer := container.NewVBox(
+		widget.NewSeparator(),
+		ui.testInfo, ui.saveInfo,
+		container.NewGridWithColumns(2, buttonBox(testBtn), buttonBox(saveBtn)))
 
-	connectCard := container.NewVBox(
-		heading("Подключение"),
+	formScroll := container.NewVScroll(container.NewVBox(
+		sectionLabel("Быстрое подключение"),
 		quickCard,
-		manualBlock,
-		container.NewPadded(caption("Сервер создаёт пользователя и устройство и выдаёт токен. На Android по умолчанию используется папка внутри приложения; внешние пути (например /storage/emulated/0/…) требуют разрешения «Доступ ко всем файлам» и могут не работать.")),
+		sectionLabel("Сервер"),
+		serverCardForm,
+		advancedBlock,
+		helpText("Сервер создаёт пользователя и устройство и выдаёт токен. На Android по умолчанию используется папка внутри приложения; внешние пути (например /storage/emulated/0/…) требуют разрешения «Доступ ко всем файлам» и могут не работать."),
+		bottomPad(),
+		layout.NewSpacer(),
+	))
+	ui.setFormScroll(formScroll)
+
+	connectPage := container.NewBorder(
+		heading("Подключение"),
+		footer,
+		nil, nil,
+		formScroll,
 	)
 	ui.loadFromConfig(ctrl)
 
 	// ===== вкладка «Папки» =====
-	ui.freeCheck = widget.NewCheck("Без правил — синхронизировать всё", func(on bool) {
+	ui.freeSwitch = newPillSwitch(ctrl.RulesFreeEnabled(), func(on bool) {
 		go func() {
 			if err := ctrl.SetRulesFree(on); err != nil {
 				fyne.Do(func() { dialog.ShowError(err, ui.win) })
 			}
+			fyne.Do(func() { refreshFolders(ctrl, ui) })
 		}()
 	})
-	ui.freeCheck.SetChecked(ctrl.RulesFreeEnabled())
 
 	ui.foldersState = caption("")
 	ui.foldersBox = container.NewVBox()
-	ui.btnRefreshFld = widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), nil)
-	ui.btnResync = widget.NewButtonWithIcon("Полная сверка", theme.SearchIcon(), func() {
-		ctrl.Resync()
-		dialog.ShowInformation("Полная сверка", "Сервер будет перечитан полностью при следующем цикле.", w)
+	ui.btnRefreshFld = iconButton(theme.ViewRefreshIcon(), func() { refreshFolders(ctrl, ui) })
+	moreBtn := iconButton(theme.MoreHorizontalIcon(), func() {
+		var d *dialog.CustomDialog
+		d = dialog.NewCustom("Папки", "Отмена", container.NewVBox(
+			dialogRow("Полная сверка", theme.SearchIcon(), func() {
+				d.Hide()
+				ctrl.Resync()
+				dialog.ShowInformation("Полная сверка", "Сервер будет перечитан полностью при следующем цикле.", w)
+			}),
+			dialogRow("Обновить список", theme.ViewRefreshIcon(), func() {
+				d.Hide()
+				refreshFolders(ctrl, ui)
+			}),
+		), w)
+		d.Resize(dialogSize(w))
+		d.Show()
 	})
-	ui.btnRefreshFld.OnTapped = func() { refreshFolders(ctrl, ui) }
 
-	foldersCard := container.NewBorder(
-		container.NewVBox(
-			widget.NewCard("", "", container.NewVBox(
-				ui.freeCheck,
-				container.NewGridWithColumns(2, ui.btnRefreshFld, ui.btnResync),
-				ui.foldersState,
-			)),
-		),
-		nil, nil, nil,
-		container.NewScroll(ui.foldersBox),
+	foldersHeader := container.NewVBox(
+		pageHeader("Папки", ui.btnRefreshFld, moreBtn),
+		cardBox(container.NewVBox(
+			switchRow("Без правил — синхронизировать всё", ui.freeSwitch),
+			ui.foldersState,
+		)),
 	)
+	foldersPage := container.NewBorder(foldersHeader, nil, nil, nil, container.NewVScroll(ui.foldersBox))
 
 	// ===== вкладка «Журнал» =====
 	ui.logLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 	ui.logLabel.Wrapping = fyne.TextWrapWord
+	ui.logLabel.SizeName = theme.SizeNameCaptionText
 	// куда пишется журнал — вопрос возникает сразу, как только что-то не работает:
 	// полный журнал в каталоге приложения (на телефоне без root не прочитать),
 	// а копия — в папке синхронизации, её видно на компьютере.
@@ -551,7 +554,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// на сервер и дальше на компьютер, где его можно открыть и прочитать
 	ui.logSaveLabel = caption("")
 	ui.logSaveLabel.Wrapping = fyne.TextWrapWord
-	ui.btnSaveLog = widget.NewButtonWithIcon("Сохранить журнал в папку", theme.DocumentSaveIcon(), func() {
+	ui.btnSaveLog = iconButton(theme.DocumentSaveIcon(), func() {
 		ui.btnSaveLog.Disable()
 		go func() {
 			p, err := ctrl.SaveLogCopy()
@@ -567,15 +570,16 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 			})
 		}()
 	})
-	clearBtn := widget.NewButtonWithIcon("Очистить журнал", theme.DeleteIcon(), func() {
+	clearBtn := iconButton(theme.DeleteIcon(), func() {
 		ctrl.ClearLogs()
 		ui.logLabel.SetText("")
 	})
-	logCard := container.NewBorder(
-		container.NewVBox(heading("Журнал"), clearBtn, ui.btnSaveLog, ui.logSaveLabel, ui.logPathLabel),
-		nil, nil, nil,
-		container.NewScroll(ui.logLabel),
+	logTop := container.NewVBox(
+		pageHeader("Журнал", ui.btnSaveLog, clearBtn),
+		ui.logPathLabel,
+		ui.logSaveLabel,
 	)
+	logPage := container.NewBorder(logTop, nil, nil, nil, container.NewScroll(ui.logLabel))
 
 	// ===== вкладка «Файлы» =====
 	ui.files = newFilesPage(ctrl, w)
@@ -586,14 +590,18 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// Нижняя панель — своя (см. pager.go): пять стандартных вкладок Fyne на
 	// экране телефона не влезают, и «Файлы» с «Журналом» уезжали бы в «…».
 	pg := newPager()
-	pg.Add("Статус", theme.HomeIcon(), withBottomInset(container.NewScroll(statusCard)))
-	pg.Add("Связь", theme.SettingsIcon(), withBottomInset(container.NewScroll(connectCard)))
-	pg.Add("Папки", theme.FolderOpenIcon(), withBottomInset(foldersCard))
-	pg.Add("Файлы", theme.ListIcon(), withBottomInset(ui.files.object()))
-	pg.Add("Лента", theme.HistoryIcon(), withBottomInset(ui.recent.object()))
-	pg.Add("Журнал", theme.DocumentIcon(), withBottomInset(logCard))
-	// дерево файлов и ленту перечитываем при открытии страницы
+	pg.Add("Статус", theme.HomeIcon(), container.NewScroll(statusPage))
+	pg.Add("Связь", theme.SettingsIcon(), connectPage)
+	pg.Add("Папки", theme.FolderOpenIcon(), foldersPage)
+	pg.Add("Файлы", theme.ListIcon(), ui.files.object())
+	pg.Add("Лента", theme.HistoryIcon(), ui.recent.object())
+	pg.Add("Журнал", theme.DocumentIcon(), logPage)
+	// дерево файлов и ленту перечитываем при открытии страницы; клавиатуру
+	// при смене вкладки убираем — иначе она остаётся висеть поверх новой
 	pg.OnSelect = func(name string) {
+		if w.Canvas() != nil {
+			w.Canvas().Unfocus()
+		}
 		if name == "Файлы" {
 			ui.files.Refresh()
 		}
@@ -618,21 +626,92 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	return ui
 }
 
-// fieldRow строит пару «подпись — значение» в столбик. Классический Border
-// с подписью слева на телефоне сжимает переносимую подпись до нулевой ширины,
-// и текст наезжает на значение. Подпись — caption: второстепенный цвет и
-// размер из темы (размер подписи следует масштабу, а не захардкоженным 12 px).
-func fieldRow(label string, value *widget.Label) fyne.CanvasObject {
-	cap := caption(label)
-	cap.SizeName = theme.SizeNameCaptionText
-	return container.NewVBox(cap, value)
+// helpText — пояснение под блоком: мелкое, второстепенное.
+func helpText(text string) fyne.CanvasObject {
+	l := caption(text)
+	l.Wrapping = fyne.TextWrapWord
+	return l
 }
 
-// formRow строит строку формы для узкого экрана: подпись над полем.
-func formRow(label string, obj fyne.CanvasObject) fyne.CanvasObject {
-	l := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	l.Wrapping = fyne.TextWrapWord
-	return container.NewVBox(l, obj)
+// fieldErrorLabel — подпись ошибки под полем: скрыта, пока ошибки нет.
+func fieldErrorLabel() *widget.Label {
+	l := caption("")
+	l.Importance = widget.DangerImportance
+	l.Hide()
+	return l
+}
+
+// setFieldError показывает или прячет ошибку под полем.
+func setFieldError(l *widget.Label, err error) {
+	if err == nil {
+		l.SetText("")
+		showIf(l, false)
+		return
+	}
+	l.SetText(err.Error())
+	showIf(l, true)
+}
+
+// setFormScroll привязывает поля формы к прокрутке: при фокусе форма
+// подкручивается к полю, иначе клавиатура закрывает его.
+func (ui *State) setFormScroll(s *container.Scroll) {
+	for _, e := range []*formEntry{ui.hostEntry, ui.portEntry, ui.tokenEntry,
+		ui.deviceEntry, ui.intervalEntry, ui.quietFrom, ui.quietTo, ui.maxDownEntr} {
+		if e != nil {
+			e.setScroll(s)
+		}
+	}
+	// «Далее» ведёт по форме сверху вниз, последнее поле закрывает клавиатуру.
+	chain(ui.hostEntry, ui.portEntry, ui.tokenEntry, ui.deviceEntry,
+		ui.intervalEntry, ui.quietFrom, ui.quietTo, ui.maxDownEntr)
+}
+
+// scanQR — выбор способа сканирования: снять камерой или взять готовый снимок.
+func (ui *State) scanQR(ctrl *client.Controller) {
+	var d *dialog.CustomDialog
+	rows := container.NewVBox(
+		caption("Снимок сохранится в папке синхронизации, приложение подключится само."),
+		dialogRow("Сфотографировать", theme.MediaPhotoIcon(), func() {
+			d.Hide()
+			ui.shootAndConnect(ctrl)
+		}),
+		dialogRow("Выбрать снимок из галереи", theme.FolderOpenIcon(), func() {
+			d.Hide()
+			ui.pickQR(ctrl)
+		}),
+	)
+	d = dialog.NewCustom("Сканировать QR-код", "Отмена", rows, ui.win)
+	d.Resize(dialogSize(ui.win))
+	d.Show()
+}
+
+// pickQR берёт снимок с QR-кодом из файлов устройства.
+func (ui *State) pickQR(ctrl *client.Controller) {
+	w := ui.win
+	fd := dialog.NewFileOpen(func(r fyne.URIReadCloser, err error) {
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if r == nil {
+			return
+		}
+		go func(r fyne.URIReadCloser) {
+			defer r.Close()
+			code, derr := client.DecodeQRReader(r)
+			fyne.Do(func() {
+				if derr != nil {
+					dialog.ShowError(derr, w)
+					return
+				}
+				ui.pairEntry.SetText(code)
+				showIf(ui.pairBox, true)
+				ui.pairConnect(ctrl, code)
+			})
+		}(r)
+	}, w)
+	fd.SetFilter(storage.NewMimeTypeFileFilter([]string{"image/*"}))
+	fd.Show()
 }
 
 // shootAndConnect снимает QR системной камерой. Снимок сохраняется
@@ -735,6 +814,7 @@ func (ui *State) shootAndConnect(ctrl *client.Controller) {
 				return
 			}
 			ui.pairEntry.SetText(code)
+			showIf(ui.pairBox, true)
 			ui.pairConnect(ctrl, code)
 		})
 	}()
@@ -784,19 +864,16 @@ func (ui *State) loadFromConfig(ctrl *client.Controller) {
 	ui.dirLabel.SetText(cfg.Dir)
 	ui.dirValue = cfg.Dir
 	ui.intervalEntry.SetText(strconv.Itoa(cfg.Interval))
-	ui.tlsCheck.SetChecked(cfg.TLS)
+	ui.tlsSwitch.SetCheckedSilently(cfg.TLS)
+	showIf(ui.fpBox, cfg.TLS)
 	if cfg.TLS {
 		ui.fpEntry.SetText(cfg.TLSFingerprint)
 	}
-	ui.autoRunCheck.SetChecked(ctrl.AutoRunEnabled())
-	// чекбокс отражает то, что тихие часы настроены, а не то, что они активны сейчас
+	ui.autoSwitch.SetCheckedSilently(ctrl.AutoRunEnabled())
+	// переключатель отражает то, что тихие часы настроены, а не то, что они активны сейчас
 	quietConfigured := cfg.QuietFrom != "" && cfg.QuietTo != "" && cfg.QuietFrom != cfg.QuietTo
-	ui.quietCheck.SetChecked(quietConfigured)
-	if quietConfigured {
-		ui.quietRow.Show()
-	} else {
-		ui.quietRow.Hide()
-	}
+	ui.quietSwitch.SetCheckedSilently(quietConfigured)
+	showIf(ui.quietRow, quietConfigured)
 	ui.quietFrom.SetText(cfg.QuietFrom)
 	ui.quietTo.SetText(cfg.QuietTo)
 	if cfg.MaxDownMB > 0 {
@@ -804,18 +881,18 @@ func (ui *State) loadFromConfig(ctrl *client.Controller) {
 	} else {
 		ui.maxDownEntr.SetText("")
 	}
-	ui.updateManualTitle(ctrl)
+	ui.updateAdvancedTitle(ctrl)
 }
 
-// updateManualTitle показывает в свёрнутом заголовке ручной настройки то,
-// что уже настроено: адрес сервера, а без него — просто «Ручная настройка».
-func (ui *State) updateManualTitle(ctrl *client.Controller) {
+// updateAdvancedTitle показывает в свёрнутом заголовке то, что уже настроено:
+// адрес сервера и порт, без длинного URL (он не влезал в строку).
+func (ui *State) updateAdvancedTitle(ctrl *client.Controller) {
 	cfg := ctrl.Config()
-	text := "Ручная настройка"
+	text := "Дополнительно"
 	if strings.TrimSpace(cfg.Token) != "" || (strings.TrimSpace(cfg.Host) != "" && cfg.Host != "localhost") {
-		text += " · " + eng.BaseURL(cfg.Host, cfg.Port, cfg.TLS)
+		text += fmt.Sprintf(" · %s:%d", cfg.Host, cfg.Port)
 	}
-	setButtonTextIfChanged(ui.manualToggle, text)
+	setButtonTextIfChanged(ui.advancedToggle, text)
 }
 
 // setSwitch выставляет переключатель синхронизации молча: таймер обновляет
@@ -829,13 +906,55 @@ func (ui *State) startSync(ctrl *client.Controller) {
 	port := atoiDefault(ui.portEntry.Text, ctrl.Config().Port)
 	interval := atoiDefault(ui.intervalEntry.Text, ctrl.Config().Interval)
 	if err := ctrl.Start(host, port, cleanPath(ui.dirValue), interval,
-		ui.tokenEntry.Text, ui.tlsCheck.Checked, ui.fingerprint()); err != nil {
+		ui.tokenEntry.Text, ui.tlsSwitch.Checked(), ui.fingerprint()); err != nil {
 		ui.setSwitch(false)
 		dialog.ShowError(err, ui.win)
 		return
 	}
 	ui.refreshStatic(ctrl)
 	refreshFolders(ctrl, ui)
+}
+
+// saveSettings проверяет ввод и сохраняет настройки. Ошибки показываются
+// подписями под полями, а не модальными окнами без имени поля.
+func (ui *State) saveSettings(ctrl *client.Controller) {
+	cfg := ctrl.Config()
+	setFieldError(ui.quietErr, nil)
+	setFieldError(ui.limitErr, nil)
+
+	quietFrom, quietTo := "", ""
+	if ui.quietSwitch.Checked() {
+		var okFrom, okTo bool
+		quietFrom, okFrom = normClock(ui.quietFrom.Text)
+		quietTo, okTo = normClock(ui.quietTo.Text)
+		if !okFrom || !okTo {
+			setFieldError(ui.quietErr, fmt.Errorf("Введите время в формате ЧЧ:ММ — например 23:00 и 07:00"))
+			ui.quietFrom.ensureVisible()
+			return
+		}
+	}
+	limitTxt := strings.TrimSpace(ui.maxDownEntr.Text)
+	if limitTxt != "" {
+		if n, err := strconv.Atoi(limitTxt); err != nil || n < 0 {
+			setFieldError(ui.limitErr, fmt.Errorf("Целое число мегабайт или пусто — без лимита"))
+			ui.maxDownEntr.ensureVisible()
+			return
+		}
+	}
+	ctrl.SaveSettings(strings.TrimSpace(ui.hostEntry.Text),
+		atoiDefault(ui.portEntry.Text, cfg.Port),
+		cleanPath(ui.dirValue),
+		atoiDefault(ui.intervalEntry.Text, cfg.Interval),
+		ui.tokenEntry.Text, ui.tlsSwitch.Checked(), ui.fingerprint(),
+		ui.deviceEntry.Text, ui.autoSwitch.Checked(),
+		quietFrom, quietTo, int64(atoiDefault(ui.maxDownEntr.Text, 0)))
+	// показываем канонический вид введённого («9:5» → «09:05»)
+	ui.quietFrom.SetText(quietFrom)
+	ui.quietTo.SetText(quietTo)
+	ui.refreshStatic(ctrl)
+	ui.updateAdvancedTitle(ctrl)
+	setTextIfChanged(ui.saveInfo, "Настройки сохранены в "+time.Now().Format("15:04"))
+	showIf(ui.saveInfo, true)
 }
 
 // refreshStatic обновляет статические подписи (сервер, папка).
@@ -918,6 +1037,11 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 					lines = lines[len(lines)-300:]
 				}
 				logTxt = strings.Join(lines, "\n")
+				// общий префикс пути выносим из строк: иначе каждая запись
+				// занимает три строки на телефоне
+				if root := ctrl.Root(); root != "" {
+					logTxt = strings.ReplaceAll(logTxt, root, "…")
+				}
 				lastLog = logTxt
 			}
 
@@ -954,7 +1078,7 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 					ui.btnNow.Disable()
 				}
 				if len(tr) == 0 {
-					setTextIfChanged(ui.transferText, "Передач нет")
+					setTextIfChanged(ui.transferText, "Передачи: нет")
 					ui.transferBar.SetValue(0)
 					showIf(ui.transferBar, false)
 				} else {
@@ -984,7 +1108,7 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 						ui.logPathLabel.SetText(txt)
 					}
 				}
-				ui.updateManualTitle(ctrl)
+				ui.updateAdvancedTitle(ctrl)
 			})
 		}
 	}
@@ -996,7 +1120,8 @@ func logPathText(ctrl *client.Controller) string {
 		"\nКопия (по кнопке) — в папке синхронизации: " + ctrl.LogMirrorPath()
 }
 
-// refreshFolders запрашивает у движка список папок первого уровня и строит строки.
+// refreshFolders запрашивает у движка список папок первого уровня и строит
+// компактные строки: папки с данными — списком, пустые — под раскрывашкой.
 func refreshFolders(ctrl *client.Controller, ui *State) {
 	ui.btnRefreshFld.Disable()
 	ui.foldersState.SetText("Загрузка…")
@@ -1014,10 +1139,49 @@ func refreshFolders(ctrl *client.Controller, ui *State) {
 				ui.foldersBox.Refresh()
 				return
 			}
-			ui.foldersState.SetText(fmt.Sprintf("Папок: %d", len(nodes)))
-			objs := make([]fyne.CanvasObject, 0, len(nodes))
+			var filled, empty []eng.ServerFolderNode
 			for _, n := range nodes {
-				objs = append(objs, folderRow(ctrl, ui, n))
+				if n.Files == 0 && n.LocFiles == 0 {
+					empty = append(empty, n)
+				} else {
+					filled = append(filled, n)
+				}
+			}
+			ui.foldersState.SetText(fmt.Sprintf("Папок: %d", len(nodes)))
+
+			objs := make([]fyne.CanvasObject, 0, 4)
+			if len(filled) > 0 {
+				rows := container.NewVBox()
+				for i, n := range filled {
+					if i > 0 {
+						rows.Add(widget.NewSeparator())
+					}
+					rows.Add(folderRow(ctrl, ui, n))
+				}
+				objs = append(objs, cardBox(rows))
+			}
+			if len(empty) > 0 {
+				rows := container.NewVBox()
+				for i, n := range empty {
+					if i > 0 {
+						rows.Add(widget.NewSeparator())
+					}
+					rows.Add(folderRow(ctrl, ui, n))
+				}
+				rows.Hide()
+				toggle := widget.NewButton(fmt.Sprintf("▸ Ещё %d пустых", len(empty)), nil)
+				toggle.Alignment = widget.ButtonAlignLeading
+				toggle.Importance = widget.LowImportance
+				toggle.OnTapped = func() {
+					show := !rows.Visible()
+					showIf(rows, show)
+					if show {
+						setButtonTextIfChanged(toggle, fmt.Sprintf("▾ Ещё %d пустых", len(empty)))
+					} else {
+						setButtonTextIfChanged(toggle, fmt.Sprintf("▸ Ещё %d пустых", len(empty)))
+					}
+				}
+				objs = append(objs, toggle, cardBox(rows))
 			}
 			ui.foldersBox.Objects = objs
 			ui.foldersBox.Refresh()
@@ -1031,60 +1195,47 @@ func (ui *State) fingerprint() string {
 	return strings.Join(strings.Fields(ui.fpEntry.Text), "")
 }
 
-// folderRow строит карточку папки: имя, статистика и выбор режима.
+// folderRow строит компактную строку папки: имя, статистика и чип режима.
+// Раньше каждая папка была карточкой на 150–170 dp с полноширинным Select —
+// двенадцать папок занимали четыре экрана.
 func folderRow(ctrl *client.Controller, ui *State, n eng.ServerFolderNode) fyne.CanvasObject {
-	info := fmt.Sprintf("на сервере: %s (%s)", pluralFiles(n.Files), humanBytes(n.Bytes))
-	if n.LocFiles > 0 || n.Local {
-		info += fmt.Sprintf("\nздесь: %s (%s)", pluralFiles(n.LocFiles), humanBytes(n.LocBytes))
-	} else {
-		info += "\nздесь: нет копии"
-	}
+	stats := fmt.Sprintf("сервер %d · здесь %d", n.Files, n.LocFiles)
 	if n.New {
-		info += "\nновая папка — выберите режим"
+		stats += " · новая"
 	}
 	name := widget.NewLabelWithStyle(n.Path, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	name.SizeName = theme.SizeNameText
 	name.Wrapping = fyne.TextWrapBreak
-	details := caption(info)
-	details.Wrapping = fyne.TextWrapWord
+	details := caption(stats)
 
-	titles := make([]string, len(modePairs))
-	for i, p := range modePairs {
-		titles[i] = p.title
-	}
-	sel := widget.NewSelect(titles, func(pick string) {
-		for _, p := range modePairs {
-			if p.title == pick {
-				if err := ctrl.SetFolderRule(n.Path, p.mode); err != nil {
-					dialog.ShowError(err, ui.win)
-				}
-				return
-			}
-		}
+	chip := widget.NewButton(shortModeTitle(n.Mode), func() {
+		showModeDialog(ctrl, ui, n)
 	})
-	sel.Selected = modeTitle(n.Mode)
-	if n.Mode == "" || (!n.New && n.Rule == "" && n.Mode == eng.FolderOff) {
-		sel.Selected = modeTitle(eng.FolderOff)
-	}
 
-	return widget.NewCard("", "", container.NewVBox(
-		name,
-		details,
-		sel,
-	))
+	return container.NewBorder(nil, nil, nil, chip, container.NewVBox(name, details))
+}
+
+// showModeDialog — выбор режима папки: четыре варианта крупными строками
+// вместо выпадающего списка (на телефоне он требует точного попадания).
+func showModeDialog(ctrl *client.Controller, ui *State, n eng.ServerFolderNode) {
+	var d *dialog.CustomDialog
+	rows := container.NewVBox()
+	for _, p := range modePairs {
+		mode := p.mode
+		rows.Add(dialogRow(modeTitle(mode), theme.ConfirmIcon(), func() {
+			d.Hide()
+			if err := ctrl.SetFolderRule(n.Path, mode); err != nil {
+				dialog.ShowError(err, ui.win)
+			}
+			refreshFolders(ctrl, ui)
+		}))
+	}
+	d = dialog.NewCustom(n.Path, "Отмена", rows, ui.win)
+	d.Resize(dialogSize(ui.win))
+	d.Show()
 }
 
 // ---------- утилиты ----------
-
-// bottomInset — пустая полоса под нижней панелью вкладок: в Fyne панель
-// с иконками и подписями выше своего MinSize и выступает над содержимым.
-const bottomInset = 12
-
-// withBottomInset добавляет пустую полосу под содержимым вкладки.
-func withBottomInset(obj fyne.CanvasObject) fyne.CanvasObject {
-	spacer := canvas.NewRectangle(colBg)
-	spacer.SetMinSize(fyne.NewSize(0, bottomInset))
-	return container.NewBorder(nil, spacer, nil, nil, obj)
-}
 
 // moveFile переносит файл; если переименование невозможно (разные файловые
 // системы), копирует и удаляет исходный.
@@ -1288,8 +1439,6 @@ func pluralFiles(n int) string {
 	}
 }
 
-// unusedImageImport — image/png и image/jpeg нужны для декодирования снимков.
-
 // checkUpdate проверяет, нет ли в папке синхронизации APK новее установленного.
 // manual — нажали кнопку (тогда показываем ответ диалогом даже без обновления).
 func (ui *State) checkUpdate(ctrl *client.Controller, manual bool) {
@@ -1314,7 +1463,7 @@ func (ui *State) checkUpdate(ctrl *client.Controller, manual bool) {
 			ui.btnInstall.Show()
 			if manual {
 				dialog.ShowConfirm("Доступно обновление "+v,
-					"Скачанный APK лежит в папке синхронизации.\\nУстановить сейчас?",
+					"Скачанный APK лежит в папке синхронизации.\nУстановить сейчас?",
 					func(ok bool) {
 						if !ok {
 							return

@@ -42,7 +42,7 @@ func TestConflictsCardRefresh(t *testing.T) {
 	p := newFilesPage(ctrl, w)
 	c := p.conflicts
 	c.Refresh()
-	if c.label.Text != "Конфликтных копий нет" {
+	if c.label.Text != "Конфликтов нет" {
 		t.Fatalf("пустая папка: подпись %q", c.label.Text)
 	}
 	if !c.button.Hidden {

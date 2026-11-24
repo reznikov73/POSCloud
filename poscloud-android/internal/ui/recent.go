@@ -118,7 +118,7 @@ func (p *recentPage) details(ev eng.ChangeEvent, op string) {
 		}),
 	)
 	d = dialog.NewCustom("Изменение файла", "Закрыть", rows, p.win)
-	d.Resize(fyne.NewSize(420, 420))
+	d.Resize(dialogSize(p.win))
 	d.Show()
 }
 

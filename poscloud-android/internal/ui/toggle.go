@@ -25,9 +25,10 @@ type pillSwitch struct {
 }
 
 const (
-	toggleW   = 56 // ширина таблетки, dp
-	toggleH   = 32 // высота таблетки, dp
-	togglePad = 4  // отступ ползунка от края таблетки, dp
+	toggleW      = 52 // ширина рисуемой таблетки, dp
+	toggleH      = 32 // высота таблетки, dp
+	toggleTouchH = 48 // зона касания: не меньше строки пальца
+	togglePad    = 4  // отступ ползунка от края таблетки, dp
 )
 
 func newPillSwitch(on bool, changed func(bool)) *pillSwitch {
@@ -78,8 +79,9 @@ func (t *pillSwitch) SetCheckedSilently(on bool) {
 // Tapped переключает по касанию.
 func (t *pillSwitch) Tapped(*fyne.PointEvent) { t.SetChecked(!t.on) }
 
-// MinSize — размер таблетки: касание попадает по всей площади.
-func (t *pillSwitch) MinSize() fyne.Size { return fyne.NewSize(toggleW, toggleH) }
+// MinSize — зона касания 52×48: сама таблетка 52×32 рисуется по центру,
+// но палец попадает и по вертикали (раньше касание было всего 32 dp).
+func (t *pillSwitch) MinSize() fyne.Size { return fyne.NewSize(toggleW, toggleTouchH) }
 
 // CreateRenderer возвращает отрисовщик из фона-«таблетки» и кружка-ползунка.
 func (t *pillSwitch) CreateRenderer() fyne.WidgetRenderer {

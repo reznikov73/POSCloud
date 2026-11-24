@@ -24,7 +24,7 @@ type listRow struct {
 	onTap     func()
 }
 
-const listRowPad = 6
+const listRowPad = 8
 
 func newListRow(onTap func()) *listRow {
 	r := &listRow{
@@ -64,6 +64,9 @@ func (r *listRow) MinSize() fyne.Size {
 	line := fyne.MeasureText("Ай", th.Size(theme.SizeNameText), fyne.TextStyle{}).Height +
 		fyne.MeasureText("Ай", th.Size(theme.SizeNameCaptionText), fyne.TextStyle{}).Height + 1
 	h := fyne.Max(th.Size(theme.SizeNameInlineIcon), line) + 2*listRowPad
+	if h < rowMin {
+		h = rowMin
+	}
 	return fyne.NewSize(0, h)
 }
 
@@ -109,7 +112,7 @@ func (r *listRowRenderer) Layout(size fyne.Size) {
 	// включает отступы темы, и подпись уезжала к следующей строке.
 	titleH := fyne.MeasureText("Ай", titleSize, fyne.TextStyle{}).Height
 	subH := fyne.MeasureText("Ай", subSize, fyne.TextStyle{}).Height
-	const gap = 1
+	const gap = 3
 	total := titleH + gap + subH
 	top := (size.Height - total) / 2
 

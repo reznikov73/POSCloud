@@ -53,6 +53,8 @@ func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
 	p := &filesPage{ctrl: ctrl, win: win, nodes: map[fyne.CanvasObject]*fileNode{}}
 	p.path = widget.NewLabel("")
 	p.path.Wrapping = fyne.TextWrapBreak
+	p.path.SizeName = theme.SizeNameCaptionText
+	p.path.TextStyle = fyne.TextStyle{Monospace: true}
 	p.state = caption("")
 	p.search = widget.NewEntry()
 	p.search.SetPlaceHolder("Поиск по имени…")
@@ -70,14 +72,13 @@ func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
 // object собирает страницу: путь, поиск, итог, карточка конфликтов, кнопка
 // обновления и само дерево.
 func (p *filesPage) object() fyne.CanvasObject {
+	refresh := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() { p.Refresh() })
+	refresh.Importance = widget.LowImportance
 	top := container.NewVBox(
-		heading("Файлы"),
+		pageHeader("Файлы", refresh),
 		p.path,
-		p.search,
-		container.NewBorder(nil, nil, nil,
-			widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() { p.Refresh() }),
-			p.state,
-		),
+		fieldFill(p.search),
+		p.state,
 		p.conflicts.object(),
 		widget.NewSeparator(),
 	)
@@ -415,7 +416,7 @@ type fileNode struct {
 }
 
 const (
-	nodePad  = 4
+	nodePad  = 8
 	nodeIcon = 20
 )
 
@@ -458,8 +459,11 @@ func (n *fileNode) Tapped(*fyne.PointEvent) {
 
 func (n *fileNode) MinSize() fyne.Size {
 	th := theme.CurrentForWidget(n)
-	h := fyne.Max(nodeIcon, th.Size(theme.SizeNameText))
-	return fyne.NewSize(0, h+2*nodePad)
+	h := fyne.Max(nodeIcon, th.Size(theme.SizeNameText)) + 2*nodePad
+	if h < rowMin {
+		h = rowMin
+	}
+	return fyne.NewSize(0, h)
 }
 
 func (n *fileNode) CreateRenderer() fyne.WidgetRenderer {
@@ -635,7 +639,7 @@ func (p *filesPage) copyTo(src string) {
 			}()
 		}),
 	})
-	d.Resize(fyne.NewSize(420, 560))
+	d.Resize(dialogSize(p.win))
 	d.Show()
 }
 
@@ -727,7 +731,7 @@ func (p *filesPage) rename(abs string) {
 			}
 			p.Refresh()
 		}, p.win)
-	d.Resize(fyne.NewSize(420, 220))
+	d.Resize(dialogSizeCompact(p.win))
 	d.Show()
 }
 

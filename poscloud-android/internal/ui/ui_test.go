@@ -172,8 +172,12 @@ func TestPillSwitch(t *testing.T) {
 	testApp.Settings().SetTheme(Theme())
 	w := testApp.NewWindow("x")
 	sw := newPillSwitch(false, nil)
-	if got := sw.MinSize(); got.Width != toggleW || got.Height != toggleH {
-		t.Fatalf("MinSize = %v, ожидалось %v×%v", got, toggleW, toggleH)
+	// зона касания — 48 в высоту, таблетка 52×32 рисуется по центру
+	if got := sw.MinSize(); got.Width != toggleW || got.Height != toggleTouchH {
+		t.Fatalf("MinSize = %v, ожидалось %v×%v", got, toggleW, toggleTouchH)
+	}
+	if toggleTouchH < rowMin {
+		t.Fatalf("зона касания переключателя %v меньше строки %v", toggleTouchH, rowMin)
 	}
 	var calls []bool
 	sw.OnChanged = func(on bool) { calls = append(calls, on) }
