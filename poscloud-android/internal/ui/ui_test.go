@@ -324,6 +324,9 @@ func TestScreenshotRender(t *testing.T) {
 	}
 	st := Build(ctrl, w)
 	st.loadFromConfig(ctrl)
+	// карточка «Хранилище» с цифрами: без сервера обход не запускается, а
+	// вёрстку строк с числами на скриншоте проверить нужно
+	st.applyStorage(client.StorageStats{LocalFiles: 42, LocalBytes: 215 << 20, ServerFiles: 210, ServerBytes: 3 << 30})
 	time.Sleep(500 * time.Millisecond)
 
 	outDir := os.Getenv("POSCLOUD_SHOTS")

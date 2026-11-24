@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -128,6 +129,15 @@ type State struct {
 
 	btnNow *widget.Button
 
+	// хранилище: занято здесь и на сервере (storage.go)
+	storageLocal  *widget.Label
+	storageServer *widget.Label
+	storageNote   *widget.Label
+	btnStorage    *widget.Button
+	storageLast   *client.StorageStats
+	storageAt     atomic.Int64 // время последнего расчёта (нс)
+	storageBusy   atomic.Int32 // 1 — расчёт идёт
+
 	// обновление
 	updateInfo *widget.Label
 	updateAPK  string
@@ -243,6 +253,8 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		stat("Связь", ui.onlineValue), stat("Файлов", ui.countValue),
 		stat("Отправлено", ui.upValue), stat("Получено", ui.downValue)))
 
+	storageCard := newStorageCard(ctrl, ui)
+
 	ui.errLabel = widget.NewLabel("")
 	ui.errLabel.Wrapping = fyne.TextWrapWord
 	ui.errLabel.Importance = widget.DangerImportance
@@ -302,6 +314,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		buttonBox(ui.btnNow),
 		ui.shotBox,
 		statsCard,
+		storageCard,
 		ui.transferBox,
 		ui.errLabel,
 		updateCard,
@@ -602,6 +615,9 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		if w.Canvas() != nil {
 			w.Canvas().Unfocus()
 		}
+		if name == "Статус" {
+			refreshStorage(ctrl, ui, false)
+		}
 		if name == "Файлы" {
 			ui.files.Refresh()
 		}
@@ -620,6 +636,7 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// интерфейса (в тестах это даёт гонку в шейпере текста).
 	if ctrl.HasCredentials() {
 		refreshFolders(ctrl, ui)
+		refreshStorage(ctrl, ui, true)
 	} else {
 		ui.foldersState.SetText("Подключитесь к серверу — здесь появятся папки для выборочной синхронизации.")
 	}
@@ -969,6 +986,7 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	var lastLog string
+	var lastSyncSeen string
 	ticks := 0
 	photoGranted := ctrl.PhotoPermissionGranted()
 	for {
@@ -997,6 +1015,14 @@ func Refresh(ctrl *client.Controller, ui *State, stop chan struct{}) {
 			st := ctrl.Status()
 			cfg := ctrl.Config()
 			running := ctrl.Running()
+			// Хранилище пересчитываем после цикла (метка цикла изменилась), но
+			// только пока открыта «Статус» и не чаще раза в минуту — см. refreshStorage.
+			if st.LastSync != lastSyncSeen {
+				lastSyncSeen = st.LastSync
+				if running && ui.pager.Current() == "Статус" {
+					refreshStorage(ctrl, ui, false)
+				}
+			}
 			tr := client.Transfers.Snapshot()
 			// ленту «Недавние» перечитываем только когда она открыта и пришли
 			// новые события — иначе зря перерисовываем список

@@ -49,6 +49,12 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
   folders); while searching, the tree turns into a flat list of matches. The
   folder walk runs off the UI thread with a 300 ms debounce and a result
   cache — typing never freezes the screen, stale results are discarded;
+- **storage screen**: the “Хранилище” card on the “Статус” tab shows how much
+  is taken here and on the server (files and bytes); tapping it opens the
+  breakdown by first-level folders. The numbers come from a folder walk plus
+  the server manifest, computed off the UI thread; refreshed after each sync
+  cycle (at most once a minute) or by the refresh button. No quota: the server
+  does not expose it, and the screen is deliberately Android-only;
 - **manual setup**: collapsed by default under a “Ручная настройка · <server>”
   header (QR is the main path); the fields are still filled from the saved
   settings, so “Запустить” works collapsed. Address, port, token, interval,
@@ -74,7 +80,9 @@ protocol, block transfer, versions, tombstones, conflicts and folder rules.
 | `internal/ui/` | Fyne interface: tabs “Status”, “Connection”, “Folders”, “Log”, brand theme |
 | `internal/ui/conflicts.go` | conflict resolution card: list of “ (конфликт …)” copies, choice of version |
 | `internal/ui/recent.go` | the “Лента” (Недавние) tab: what changed in the folder, with history |
+| `internal/ui/storage.go` | the “Хранилище” card on “Статус” and the per-folder breakdown dialog |
 | `internal/client/` | controller: settings, engine, log, progress, QR decoder — no UI (tested separately) |
+| `internal/client/storage.go` | storage figures: local folder walk grouped by first-level folders, server totals from the manifest |
 | `tools/genicon/` | `Icon.png` generator: draws the icon from vector geometry with 4x supersampling — deterministic, the repository is text only |
 | `build.sh` | local APK build: tests, package, signing |
 | `../engine` | the shared sync engine (included via `replace` in `go.mod`) |
