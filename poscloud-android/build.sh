@@ -48,6 +48,11 @@ fi
 # NDK r28+ выравнивает так по умолчанию, r27 и младше — только так.
 export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
 
+# Свой манифест (ради REQUEST_INSTALL_PACKAGES) собираем из шаблона: fyne в
+# режиме без adaptive-иконки не проставляет versionCode сам (получался 1, и
+# обновление не ставилось поверх), поэтому подставляем версию здесь.
+sed -e "s/@VERSION_CODE@/$BUILD/" -e "s/@VERSION_NAME@/$VERSION/" \
+        AndroidManifest.xml.in > AndroidManifest.xml
 # fyne package --release собирает .so без отладочной информации (примерно на
 # 20% меньше); подпись и выравнивание APK — ниже
 rm -f POSCloud_Client.apk

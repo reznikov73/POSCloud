@@ -5,6 +5,8 @@ package camera
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Shot — снимок экрана (на других системах недоступен).
@@ -49,4 +51,36 @@ func RequestPhotoPermission() error {
 // OpenAppSettings доступен только на Android.
 func OpenAppSettings() error {
 	return errors.New("настройки приложения доступны только на Android")
+}
+
+// MimeFor — тип файла по расширению (кроссплатформенная часть).
+func MimeFor(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".pdf":
+		return "application/pdf"
+	case ".txt", ".log", ".md", ".json", ".xml", ".csv":
+		return "text/plain"
+	case ".html", ".htm":
+		return "text/html"
+	case ".mp4":
+		return "video/mp4"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".apk":
+		return "application/vnd.android.package-archive"
+	}
+	return ""
+}
+
+// OpenFile доступен только на Android.
+func OpenFile(path string) error {
+	return errors.New("открытие файлов доступно только на Android")
 }

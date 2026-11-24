@@ -122,7 +122,8 @@ func (r *pillRenderer) Layout(size fyne.Size) {
 	r.t.knob.Move(fyne.NewPos(x, y0+pad))
 }
 
-// Refresh перекрашивает фон: зелёный — включено, серый — выключено.
+// Refresh перекрашивает фон (зелёный — включено, серый — выключено) и заново
+// расставляет ползунок: без Layout он оставался на месте, менялся только цвет.
 func (r *pillRenderer) Refresh() {
 	if r.t.on {
 		r.t.bg.FillColor = colSuccess
@@ -130,6 +131,9 @@ func (r *pillRenderer) Refresh() {
 	} else {
 		r.t.bg.FillColor = colTrackOff
 		r.t.knob.StrokeColor = colTrackEdge
+	}
+	if size := r.t.Size(); size.Width > 0 && size.Height > 0 {
+		r.Layout(size)
 	}
 	canvas.Refresh(r.t.bg)
 	canvas.Refresh(r.t.knob)

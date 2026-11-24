@@ -4,6 +4,8 @@
 *.idsig
 aligned.apk
 Icon.png
+# манифест собирается из AndroidManifest.xml.in (подстановка версии)
+AndroidManifest.xml
 
 # signing keys — never committed to the repository
 *.keystore

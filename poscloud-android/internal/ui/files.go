@@ -1,25 +1,29 @@
 package ui
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	eng "poscloud-engine"
 
+	"poscloud-client-android/internal/camera"
 	"poscloud-client-android/internal/client"
 )
 
-// filesPage — вкладка «Файлы»: содержимое папки синхронизации деревом, как в
-// проводнике. Только чтение: ни настройки, ни файлы не меняются, поэтому
-// страница работает при любой папке — в том числе служебной, которую не видит
-// файловый менеджер телефона.
+// filesPage — вкладка «Файлы»: папка синхронизации деревом, как в проводнике.
+// Можно раскрывать папки, открывать файлы системными приложениями, копировать,
+// переименовывать и удалять — сами настройки синхронизации при этом не меняются.
 type filesPage struct {
 	ctrl  *client.Controller
 	win   fyne.Window
@@ -27,14 +31,14 @@ type filesPage struct {
 	tree  *widget.Tree
 	path  *widget.Label
 	state *widget.Label
-	rows  map[fyne.CanvasObject]*fileRow // строки дерева: объект → подписи
+	nodes map[fyne.CanvasObject]*fileNode // строки дерева: объект → подписи
 }
 
 // filesRootUID — корневой узел дерева: сама папка синхронизации.
 const filesRootUID = "root"
 
 func newFilesPage(ctrl *client.Controller, win fyne.Window) *filesPage {
-	p := &filesPage{ctrl: ctrl, win: win, rows: map[fyne.CanvasObject]*fileRow{}}
+	p := &filesPage{ctrl: ctrl, win: win, nodes: map[fyne.CanvasObject]*fileNode{}}
 	p.path = widget.NewLabel("")
 	p.path.Wrapping = fyne.TextWrapBreak
 	p.state = caption("")
@@ -74,8 +78,7 @@ func (p *filesPage) Refresh() {
 		return
 	}
 	n, bytes := eng.DirStats(p.root)
-	p.state.SetText(pluralFiles(n) + ", " + humanBytes(bytes) + " · нажмите на папку, чтобы раскрыть")
-	p.tree.OpenAllBranches()
+	p.state.SetText(pluralFiles(n) + ", " + humanBytes(bytes) + " · нажмите на файл для действий")
 	p.tree.Refresh()
 }
 
@@ -89,7 +92,6 @@ func (p *filesPage) absPath(uid widget.TreeNodeID) string {
 }
 
 // childUIDs отдаёт содержимое каталога: сначала папки, потом файлы, по алфавиту.
-// Скрытые (служебные) файлы движка не показываем — они не синхронизируются.
 func (p *filesPage) childUIDs(uid widget.TreeNodeID) []widget.TreeNodeID {
 	entries, err := os.ReadDir(p.absPath(uid))
 	if err != nil {
@@ -119,67 +121,34 @@ func (p *filesPage) isBranch(uid widget.TreeNodeID) bool {
 	return err == nil && fi.IsDir()
 }
 
-// fileRow — строка дерева: иконка, имя, справа размер и дата.
-type fileRow struct {
-	icon *widget.Icon
-	name *widget.Label
-	info *widget.Label
-}
-
 func (p *filesPage) createNode(branch bool) fyne.CanvasObject {
-	row := &fileRow{
-		icon: widget.NewIcon(theme.FileIcon()),
-		name: widget.NewLabel(""),
-		info: caption(""),
-	}
-	row.name.Truncation = fyne.TextTruncateEllipsis
-	row.info.SizeName = theme.SizeNameCaptionText
-	obj := container.NewBorder(nil, nil, row.icon, nil, container.NewVBox(row.name, row.info))
-	p.rows[obj] = row
-	return obj
+	n := newFileNode(nil)
+	n.onTap = func() { p.actions(n.uid) }
+	p.nodes[n] = n
+	return n
 }
 
 func (p *filesPage) updateNode(uid widget.TreeNodeID, branch bool, o fyne.CanvasObject) {
-	row, ok := p.rows[o]
+	n, ok := p.nodes[o]
 	if !ok {
 		return
 	}
+	n.uid = uid
+	abs := p.absPath(uid)
 	if string(uid) == filesRootUID {
-		row.icon.SetResource(theme.FolderIcon())
-		row.name.SetText(filepath.Base(p.root))
-		row.info.SetText("")
+		n.set(filepath.Base(p.root), true, "")
 		return
 	}
-	row.name.SetText(shortenName(nameOf(uid)))
-	if branch {
-		row.icon.SetResource(theme.FolderIcon())
-		row.info.SetText("")
+	fi, err := os.Stat(abs)
+	if err != nil {
+		n.set(nameOf(uid), branch, "")
 		return
 	}
-	row.icon.SetResource(theme.FileIcon())
 	info := ""
-	if fi, err := os.Stat(p.absPath(uid)); err == nil {
+	if !branch {
 		info = humanBytes(fi.Size())
-		if t := fi.ModTime(); !t.IsZero() {
-			info += " · " + t.Format("02.01 15:04")
-		}
 	}
-	row.info.SetText(info)
-}
-
-// nameLimit — сколько знаков имени показываем: на телефоне строка узкая,
-// а длинные имена снимков иначе вылезали бы за край.
-const nameLimit = 40
-
-// shortenName сжимает длинное имя, оставляя начало и конец (дата и расширение).
-func shortenName(name string) string {
-	r := []rune(name)
-	if len(r) <= nameLimit {
-		return name
-	}
-	head := nameLimit/2 + 4
-	tail := nameLimit - head
-	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+	n.set(nameOf(uid), branch, info)
 }
 
 // nameOf — имя файла или папки по узлу дерева.
@@ -192,4 +161,349 @@ func nameOf(uid widget.TreeNodeID) string {
 		return "/"
 	}
 	return s
+}
+
+// ---------- строка дерева ----------
+
+// fileNode — компактная строка дерева: иконка, имя (обрезается по ширине) и
+// размер. Имя режем сами по измеренной ширине: Label в Fyne не обрезает текст,
+// если размер уже разложен, и длинные имена налезали на соседние подписи.
+type fileNode struct {
+	widget.BaseWidget
+	uid   widget.TreeNodeID
+	icon  *widget.Icon
+	name  *widget.Label
+	info  *widget.Label
+	full  string
+	onTap func()
+}
+
+const (
+	nodePad  = 4
+	nodeIcon = 20
+)
+
+func newFileNode(onTap func()) *fileNode {
+	n := &fileNode{
+		icon:  widget.NewIcon(theme.FileIcon()),
+		name:  widget.NewLabel(""),
+		info:  caption(""),
+		onTap: onTap,
+	}
+	n.name.TextStyle = fyne.TextStyle{}
+	n.info.SizeName = theme.SizeNameCaptionText
+	n.info.Alignment = fyne.TextAlignTrailing
+	n.ExtendBaseWidget(n)
+	return n
+}
+
+// set обновляет строку (full — полное имя, его обрезаем уже при раскладке).
+func (n *fileNode) set(name string, folder bool, info string) {
+	if folder {
+		n.icon.SetResource(theme.FolderIcon())
+	} else {
+		n.icon.SetResource(theme.FileIcon())
+	}
+	n.full = name
+	n.name.SetText(name)
+	n.info.SetText(info)
+}
+
+// Tapped — касание по строке: открываем меню действий.
+func (n *fileNode) Tapped(*fyne.PointEvent) {
+	if n.onTap != nil {
+		n.onTap()
+	}
+}
+
+func (n *fileNode) MinSize() fyne.Size {
+	th := theme.CurrentForWidget(n)
+	h := fyne.Max(nodeIcon, th.Size(theme.SizeNameText))
+	return fyne.NewSize(0, h+2*nodePad)
+}
+
+func (n *fileNode) CreateRenderer() fyne.WidgetRenderer {
+	r := &fileNodeRenderer{obj: n, objs: []fyne.CanvasObject{n.icon, n.name, n.info}}
+	r.Layout(n.MinSize())
+	return r
+}
+
+type fileNodeRenderer struct {
+	obj  *fileNode
+	objs []fyne.CanvasObject
+}
+
+func (r *fileNodeRenderer) Destroy()                     {}
+func (r *fileNodeRenderer) Objects() []fyne.CanvasObject { return r.objs }
+func (r *fileNodeRenderer) MinSize() fyne.Size           { return r.obj.MinSize() }
+func (r *fileNodeRenderer) Refresh()                     { canvas.Refresh(r.obj) }
+
+// Layout: иконка слева, размер справа, имя — в остатке ширины с обрезкой.
+func (r *fileNodeRenderer) Layout(size fyne.Size) {
+	n := r.obj
+	iconSize := theme.CurrentForWidget(n).Size(theme.SizeNameInlineIcon)
+	if iconSize > nodeIcon {
+		iconSize = nodeIcon
+	}
+	n.icon.Resize(fyne.NewSize(iconSize, iconSize))
+	n.icon.Move(fyne.NewPos(0, (size.Height-iconSize)/2))
+
+	infoW := float32(0)
+	if n.info.Text != "" {
+		infoW = n.info.MinSize().Width
+		if infoW > size.Width*0.45 {
+			infoW = size.Width * 0.45
+		}
+		n.info.Resize(fyne.NewSize(infoW, n.info.MinSize().Height))
+		n.info.Move(fyne.NewPos(size.Width-infoW, (size.Height-n.info.MinSize().Height)/2))
+	}
+
+	left := iconSize + nodePad
+	nameW := size.Width - left - infoW - nodePad
+	if nameW < 0 {
+		nameW = 0
+	}
+	text := ellipsize(n.full, nameW, theme.CurrentForWidget(n).Size(theme.SizeNameText))
+	if n.name.Text != text {
+		n.name.SetText(text)
+	}
+	nameH := n.name.MinSize().Height
+	n.name.Resize(fyne.NewSize(nameW, nameH))
+	n.name.Move(fyne.NewPos(left, (size.Height-nameH)/2))
+}
+
+// ellipsize сжимает текст до ширины, оставляя начало и конец: у снимков
+// различие как раз в конце имени (дата и подпись).
+func ellipsize(text string, width, fontSize float32) string {
+	if width <= 0 {
+		return ""
+	}
+	if fyne.MeasureText(text, fontSize, fyne.TextStyle{}).Width <= width {
+		return text
+	}
+	r := []rune(text)
+	tail := len(r) / 3
+	if tail > 12 {
+		tail = 12
+	}
+	if tail < 4 && len(r) > tail {
+		tail = 4
+	}
+	for head := len(r) - tail; head >= 0; head-- {
+		cand := string(r[:head]) + "…" + string(r[len(r)-tail:])
+		if fyne.MeasureText(cand, fontSize, fyne.TextStyle{}).Width <= width {
+			return cand
+		}
+	}
+	return "…"
+}
+
+// ---------- действия с файлом ----------
+
+// actions показывает меню действий для узла дерева.
+func (p *filesPage) actions(uid widget.TreeNodeID) {
+	if uid == "" || string(uid) == filesRootUID {
+		return
+	}
+	abs := p.absPath(uid)
+	fi, err := os.Stat(abs)
+	if err != nil {
+		dialog.ShowError(err, p.win)
+		return
+	}
+	name := nameOf(uid)
+	var d *dialog.CustomDialog
+	rows := container.NewVBox()
+
+	if !fi.IsDir() {
+		openTitle := "Открыть"
+		mime := camera.MimeFor(abs)
+		if mime == "application/vnd.android.package-archive" {
+			openTitle = "Установить"
+		}
+		if mime != "" {
+			rows.Add(dialogRow(openTitle, theme.FileIcon(), func() {
+				d.Hide()
+				if err := camera.OpenFile(abs); err != nil {
+					dialog.ShowError(err, p.win)
+				}
+			}))
+		}
+	}
+	rows.Add(dialogRow("Копировать в…", theme.ContentCopyIcon(), func() {
+		d.Hide()
+		p.copyTo(abs)
+	}))
+	rows.Add(dialogRow("Переименовать", theme.DocumentCreateIcon(), func() {
+		d.Hide()
+		p.rename(abs)
+	}))
+	rows.Add(dialogRow("Удалить", theme.DeleteIcon(), func() {
+		d.Hide()
+		p.remove(abs, fi.IsDir())
+	}))
+	rows.Add(dialogRow("Свойства", theme.InfoIcon(), func() {
+		d.Hide()
+		p.properties(abs, fi)
+	}))
+
+	d = dialog.NewCustom(name, "Закрыть", rows, p.win)
+	d.Show()
+}
+
+// copyTo копирует файл или папку в выбранный каталог.
+func (p *filesPage) copyTo(src string) {
+	b := newFolderBrowser(p.ctrl, p.root, p.win)
+	d := dialog.NewCustom("Куда копировать", "Отмена", b.object(), p.win)
+	d.SetButtons([]fyne.CanvasObject{
+		widget.NewButton("Отмена", func() { d.Hide() }),
+		widget.NewButtonWithIcon("Копировать сюда", theme.ConfirmIcon(), func() {
+			dst := b.current()
+			d.Hide()
+			go func() {
+				target, err := copyItem(src, dst)
+				fyne.Do(func() {
+					if err != nil {
+						dialog.ShowError(err, p.win)
+						return
+					}
+					p.Refresh()
+					dialog.ShowInformation("Скопировано", filepath.Base(target), p.win)
+				})
+			}()
+		}),
+	})
+	d.Resize(fyne.NewSize(420, 560))
+	d.Show()
+}
+
+// copyItem копирует файл или каталог; при совпадении имени добавляет «(копия N)».
+func copyItem(src, dstDir string) (string, error) {
+	name := filepath.Base(src)
+	target := filepath.Join(dstDir, name)
+	if _, err := os.Stat(target); err == nil {
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		for i := 1; i < 100; i++ {
+			target = filepath.Join(dstDir, fmt.Sprintf("%s (копия %d)%s", base, i, ext))
+			if _, err := os.Stat(target); os.IsNotExist(err) {
+				break
+			}
+		}
+	}
+	if target == src {
+		return target, fmt.Errorf("файл уже лежит в этой папке")
+	}
+	if fi, err := os.Stat(src); err == nil && fi.IsDir() {
+		return target, copyTree(src, target)
+	}
+	return target, copyOne(src, target)
+}
+
+func copyOne(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(src, path)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return copyOne(path, target)
+	})
+}
+
+// rename переименовывает файл или папку в том же каталоге.
+func (p *filesPage) rename(abs string) {
+	entry := widget.NewEntry()
+	entry.SetText(filepath.Base(abs))
+	d := dialog.NewCustomConfirm("Переименовать", "Переименовать", "Отмена",
+		container.NewVBox(caption("Текущее имя: "+filepath.Base(abs)), entry), func(ok bool) {
+			if !ok {
+				return
+			}
+			newName := strings.TrimSpace(entry.Text)
+			if newName == "" || strings.ContainsAny(newName, `/\`) {
+				dialog.ShowError(fmt.Errorf("введите имя без «/»"), p.win)
+				return
+			}
+			target := filepath.Join(filepath.Dir(abs), newName)
+			if target == abs {
+				return
+			}
+			if _, err := os.Stat(target); err == nil {
+				dialog.ShowError(fmt.Errorf("такое имя уже есть"), p.win)
+				return
+			}
+			if err := moveFile(abs, target); err != nil {
+				dialog.ShowError(err, p.win)
+				return
+			}
+			p.Refresh()
+		}, p.win)
+	d.Resize(fyne.NewSize(420, 220))
+	d.Show()
+}
+
+// remove удаляет файл или папку — с подтверждением: удаление разъедется по
+// устройствам через синхронизацию.
+func (p *filesPage) remove(abs string, isDir bool) {
+	what := "файл"
+	if isDir {
+		what = "папку со всем содержимым"
+	}
+	dialog.ShowConfirm("Удалить?",
+		fmt.Sprintf("Удалить %s «%s»?\n\nУдаление уйдёт через синхронизацию на сервер и другие устройства.", what, filepath.Base(abs)),
+		func(ok bool) {
+			if !ok {
+				return
+			}
+			if err := os.RemoveAll(abs); err != nil {
+				dialog.ShowError(err, p.win)
+				return
+			}
+			p.Refresh()
+		}, p.win)
+}
+
+// properties показывает размер, дату и путь.
+func (p *filesPage) properties(abs string, fi os.FileInfo) {
+	size := fi.Size()
+	lines := 1
+	if fi.IsDir() {
+		n, bytes := eng.DirStats(abs)
+		size = bytes
+		lines = n
+	}
+	text := "Путь: " + abs + "\n"
+	text += "Размер: " + humanBytes(size) + "\n"
+	if fi.IsDir() {
+		text += fmt.Sprintf("Файлов внутри: %d\n", lines)
+	}
+	text += "Изменён: " + fi.ModTime().Format("02.01.2006 15:04:05")
+	dialog.ShowInformation(filepath.Base(abs), text, p.win)
 }

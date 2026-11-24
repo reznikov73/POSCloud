@@ -150,6 +150,31 @@ func TestPillSwitch(t *testing.T) {
 	w.Close()
 }
 
+// TestPillSwitchKnobMoves — при переключении ползунок переезжает: раньше
+// менялся только цвет дорожки, а белый кружок оставался на месте.
+func TestPillSwitchKnobMoves(t *testing.T) {
+	testApp := test.NewApp()
+	testApp.Settings().SetTheme(Theme())
+	w := testApp.NewWindow("x")
+	sw := newPillSwitch(false, nil)
+	r := sw.CreateRenderer().(*pillRenderer)
+	c := software.NewCanvas()
+	c.SetPadded(false)
+	c.SetContent(sw)
+	c.Resize(fyne.NewSize(toggleW, toggleH))
+	off := r.t.knob.Position().X
+	sw.SetChecked(true)
+	on := r.t.knob.Position().X
+	if on <= off {
+		t.Fatalf("ползунок не переехал вправо: было %.0f, стало %.0f", off, on)
+	}
+	sw.SetChecked(false)
+	if got := r.t.knob.Position().X; got != off {
+		t.Fatalf("ползунок не вернулся влево: %.0f, ожидалось %.0f", got, off)
+	}
+	w.Close()
+}
+
 // TestRenderToggle рисует переключатель в обоих положениях — глазами проверяем
 // форму таблетки и ползунка (только при заданном POSCLOUD_SHOTS).
 func TestRenderToggle(t *testing.T) {

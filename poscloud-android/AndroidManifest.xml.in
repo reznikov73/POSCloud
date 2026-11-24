@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+	Манифест POSCloud Client для Android.
+
+	Свой манифест нужен ради REQUEST_INSTALL_PACKAGES: вкладка «Файлы» умеет
+	запускать установку APK, а с Android 8 без этого разрешения система молча
+	блокирует установку из приложения.
+
+	Иконку и uses-sdk сюда добавлять нельзя — fyne подставляет их сам и падает
+	с «manual declaration … not supported». Атрибуты новее таблицы binres в
+	сборке fyne (например requestLegacyExternalStorage) тоже не поддерживаются:
+	сборка падает с «failed to find table ref». Остальное повторяет шаблон
+	fyne 1.7.4 (internal/templates/data/AndroidManifest.xml).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+	package="io.github.reznikov73.poscloud.client"
+	android:versionCode="@VERSION_CODE@"
+	android:versionName="@VERSION_NAME@">
+
+	<application android:label="POSCloud Client"
+		android:debuggable="true">
+		<activity android:name="org.golang.app.GoNativeActivity"
+			android:label="POSCloud Client"
+			android:configChanges="orientation|keyboardHidden|uiMode"
+			android:exported="true"
+			android:theme="@android:style/Theme">
+			<meta-data android:name="android.app.lib_name" android:value="POSCloud_Client" />
+			<intent-filter>
+				<action android:name="android.intent.action.MAIN" />
+				<category android:name="android.intent.category.LAUNCHER" />
+			</intent-filter>
+		</activity>
+
+		<receiver android:name="org.golang.app.FyneNotificationReceiver"
+			android:exported="false" />
+	</application>
+
+	<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>
