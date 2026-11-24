@@ -135,6 +135,7 @@ type State struct {
 	quietCheck  *widget.Check
 	quietFrom   *widget.Entry
 	quietTo     *widget.Entry
+	quietRow    fyne.CanvasObject
 	maxDownEntr *widget.Entry
 
 	// папки
@@ -377,15 +378,28 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 	// Тихие часы: окно локального времени, в котором автоматический цикл не
 	// стартует (ночью не тратим трафик и батарею). Ручная синхронизация
 	// работает и в тихие часы. Пустые или равные значения — окно выключено.
-	ui.quietCheck = widget.NewCheck("Тихие часы (не синхронизировать ночью)", nil)
+	ui.quietCheck = widget.NewCheck("Тихие часы (не синхронизировать ночью)", func(on bool) {
+		if on {
+			ui.quietRow.Show()
+		} else {
+			ui.quietRow.Hide()
+		}
+	})
 	ui.quietFrom = widget.NewEntry()
 	ui.quietFrom.SetPlaceHolder("23:00")
 	ui.quietTo = widget.NewEntry()
 	ui.quietTo.SetPlaceHolder("07:00")
-	quietRow := container.NewHBox(ui.quietFrom, widget.NewLabel("—"), ui.quietTo)
+	// Поля фиксированной ширины: обычные Entry в HBox сжимаются и обрезают текст.
+	quietFromBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(84, 46)), ui.quietFrom)
+	quietToBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(84, 46)), ui.quietTo)
+	quietRow := container.NewHBox(quietFromBox, widget.NewLabel("—"), quietToBox)
+	quietFormRow := formRow("Тихие часы, с — по", quietRow)
+	ui.quietRow = quietFormRow
+	ui.quietRow.Hide()
 	// Лимит скачивания: файлы больше не качаются автоматически, причина — в журнале.
 	ui.maxDownEntr = widget.NewEntry()
 	ui.maxDownEntr.SetPlaceHolder("0 — без лимита")
+	limitBox := container.New(layout.NewGridWrapLayout(fyne.NewSize(120, 46)), ui.maxDownEntr)
 
 	// Форма для узкого экрана: подпись над полем, поля и кнопки — на всю ширину.
 	// Классическая форма Fyne держит подписи в отдельной колонке слева и на
@@ -399,12 +413,12 @@ func Build(ctrl *client.Controller, w fyne.Window) *State {
 		formRow("Имя устройства", ui.deviceEntry),
 		formRow("Папка", container.NewVBox(ui.dirLabel, pickBtn)),
 		formRow("Интервал, с", ui.intervalEntry),
+		ui.quietCheck,
+		quietFormRow,
+		formRow("Лимит скачивания, МБ", limitBox),
 		ui.tlsCheck,
 		formRow("Отпечаток", ui.fpEntry),
 		ui.autoRunCheck,
-		ui.quietCheck,
-		formRow("Тихие часы, с — по", quietRow),
-		formRow("Лимит скачивания, МБ", ui.maxDownEntr),
 	)
 
 	testBtn := widget.NewButtonWithIcon("Проверить связь", theme.ConfirmIcon(), func() {
@@ -729,8 +743,14 @@ func (ui *State) loadFromConfig(ctrl *client.Controller) {
 		ui.fpEntry.SetText(cfg.TLSFingerprint)
 	}
 	ui.autoRunCheck.SetChecked(ctrl.AutoRunEnabled())
-	quietOn := eng.QuietActive(cfg.QuietFrom, cfg.QuietTo, time.Now())
-	ui.quietCheck.SetChecked(quietOn)
+	// чекбокс отражает то, что тихие часы настроены, а не то, что они активны сейчас
+	quietConfigured := cfg.QuietFrom != "" && cfg.QuietTo != "" && cfg.QuietFrom != cfg.QuietTo
+	ui.quietCheck.SetChecked(quietConfigured)
+	if quietConfigured {
+		ui.quietRow.Show()
+	} else {
+		ui.quietRow.Hide()
+	}
 	ui.quietFrom.SetText(cfg.QuietFrom)
 	ui.quietTo.SetText(cfg.QuietTo)
 	if cfg.MaxDownMB > 0 {

@@ -15,5 +15,6 @@
   "files.eol": "\n",
   "terminal.integrated.env.windows": {
     "GOBIN": "C:\\Users\\Administrator\\go\\bin"
-  }
+  },
+  "compilets.autoStart": true
 }

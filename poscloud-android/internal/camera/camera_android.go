@@ -15,6 +15,7 @@ package camera
 #include <jni.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -261,6 +262,165 @@ done:
 	if (cStr) (*env)->DeleteLocalRef(env, cStr);
 	if (cIntent) (*env)->DeleteLocalRef(env, cIntent);
 	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
+	if (attached) {
+		(*vm)->DetachCurrentThread(vm);
+	}
+	return rc;
+}
+
+// open_via_download — фолбэк open_path для файлов вне MediaStore (служебная
+// папка приложения): копирует файл в MediaStore.Downloads и открывает по
+// content://, чтобы чужое приложение (установщик, просмотрщик) получило доступ.
+static int open_via_download(const char* path, const char* mime, char* err, int errlen) {
+	JavaVM* vm = get_vm(err, errlen);
+	if (!vm) {
+		return 1;
+	}
+	JNIEnv* env = NULL;
+	int attached = 0;
+	if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+			return 1;
+		}
+		attached = 1;
+	}
+	int rc = 0;
+	jobject app = NULL, resolver = NULL, values = NULL, collection = NULL, uri = NULL, intent = NULL;
+	jclass cCV = NULL, cDl = NULL, cRes = NULL, cPfd = NULL, cIntent = NULL, cCtx = NULL, cUriCls = NULL;
+	jstring jName = NULL, jMime = NULL, jRel = NULL, jKeyN = NULL, jKeyM = NULL, jKeyR = NULL, jAction = NULL, jMode = NULL;
+
+	(*env)->EnsureLocalCapacity(env, 48);
+
+	app = app_context(env, err, errlen);
+	if (!app) { rc = 2; goto done; }
+	resolver = resolver_of(env, app, err, errlen);
+	if (!resolver) { rc = 3; goto done; }
+
+	// имя файла без каталога (в имени бывает кириллица — NewStringUTF это умеет)
+	const char* slash = strrchr(path, '/');
+	const char* base = slash ? slash + 1 : path;
+
+	cCV = (*env)->FindClass(env, "android/content/ContentValues");
+	cDl = (*env)->FindClass(env, "android/provider/MediaStore$Downloads");
+	cRes = (*env)->FindClass(env, "android/content/ContentResolver");
+	if (!cCV || !cDl || !cRes) {
+		set_err(err, errlen, "классы MediaStore.Downloads не найдены");
+		rc = 4;
+		goto done;
+	}
+	{
+		jmethodID ctor = (*env)->GetMethodID(env, cCV, "<init>", "()V");
+		jmethodID put = (*env)->GetMethodID(env, cCV, "put", "(Ljava/lang/String;Ljava/lang/String;)V");
+		values = (*env)->NewObject(env, cCV, ctor);
+		jName = (*env)->NewStringUTF(env, base);
+		jMime = (*env)->NewStringUTF(env, mime);
+		jRel = (*env)->NewStringUTF(env, "Download/POSCloud");
+		jKeyN = (*env)->NewStringUTF(env, "_display_name");
+		jKeyM = (*env)->NewStringUTF(env, "mime_type");
+		jKeyR = (*env)->NewStringUTF(env, "relative_path");
+		(*env)->CallVoidMethod(env, values, put, jKeyN, jName);
+		(*env)->CallVoidMethod(env, values, put, jKeyM, jMime);
+		(*env)->CallVoidMethod(env, values, put, jKeyR, jRel);
+		if (take_exception(env, err, errlen, "ContentValues.put")) { rc = 5; goto done; }
+
+		jfieldID fUri = (*env)->GetStaticFieldID(env, cDl, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;");
+		collection = (*env)->GetStaticObjectField(env, cDl, fUri);
+		jmethodID insert = (*env)->GetMethodID(env, cRes, "insert",
+			"(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;");
+		uri = (*env)->CallObjectMethod(env, resolver, insert, collection, values);
+		if (take_exception(env, err, errlen, "MediaStore.Downloads.insert")) { rc = 6; goto done; }
+		if (!uri) {
+			set_err(err, errlen, "не удалось создать файл в MediaStore.Downloads");
+			rc = 6;
+			goto done;
+		}
+	}
+
+	// пишем содержимое: detachFd отдаёт нам дескриптор, дальше — обычный write
+	{
+		jmethodID openFd = (*env)->GetMethodID(env, cRes, "openFileDescriptor",
+			"(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;");
+		jMode = (*env)->NewStringUTF(env, "wt");
+		jobject pfd = (*env)->CallObjectMethod(env, resolver, openFd, uri, jMode);
+		if (take_exception(env, err, errlen, "openFileDescriptor(wt)")) { rc = 7; goto done; }
+		if (!pfd) { set_err(err, errlen, "не удалось открыть файл на запись"); rc = 7; goto done; }
+		cPfd = (*env)->FindClass(env, "android/os/ParcelFileDescriptor");
+		jmethodID detach = (*env)->GetMethodID(env, cPfd, "detachFd", "()I");
+		int fd = (int)(*env)->CallIntMethod(env, pfd, detach);
+		(*env)->DeleteLocalRef(env, pfd);
+		if (take_exception(env, err, errlen, "detachFd")) { rc = 7; goto done; }
+
+		FILE* src = fopen(path, "rb");
+		if (!src) {
+			close(fd);
+			set_err(err, errlen, "не удалось прочитать исходный файл");
+			rc = 8;
+			goto done;
+		}
+		char buf[65536];
+		size_t n;
+		while ((n = fread(buf, 1, sizeof buf, src)) > 0) {
+			size_t off = 0;
+			while (off < n) {
+				ssize_t w = write(fd, buf + off, n - off);
+				if (w <= 0) {
+					fclose(src);
+					close(fd);
+					set_err(err, errlen, "ошибка записи в MediaStore");
+					rc = 8;
+					goto done;
+				}
+				off += (size_t)w;
+			}
+		}
+		fclose(src);
+		close(fd);
+	}
+
+	// ACTION_VIEW по content:// — установщик или просмотрщик
+	cIntent = (*env)->FindClass(env, "android/content/Intent");
+	cCtx = (*env)->FindClass(env, "android/content/Context");
+	cUriCls = (*env)->FindClass(env, "android/net/Uri");
+	{
+		jmethodID ctor = (*env)->GetMethodID(env, cIntent, "<init>", "(Ljava/lang/String;)V");
+		jAction = (*env)->NewStringUTF(env, "android.intent.action.VIEW");
+		intent = (*env)->NewObject(env, cIntent, ctor, jAction);
+		jmethodID setDT = (*env)->GetMethodID(env, cIntent, "setDataAndType", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;");
+		(*env)->CallObjectMethod(env, intent, setDT, uri, jMime);
+		if (take_exception(env, err, errlen, "Intent.setDataAndType")) { rc = 9; goto done; }
+		jmethodID addFlags = (*env)->GetMethodID(env, cIntent, "addFlags", "(I)Landroid/content/Intent;");
+		// FLAG_ACTIVITY_NEW_TASK | FLAG_GRANT_READ_URI_PERMISSION
+		(*env)->CallObjectMethod(env, intent, addFlags, (jint)(0x10000000 | 0x00000001));
+		if (take_exception(env, err, errlen, "Intent.addFlags")) { rc = 9; goto done; }
+		jmethodID startAct = (*env)->GetMethodID(env, cCtx, "startActivity", "(Landroid/content/Intent;)V");
+		(*env)->CallVoidMethod(env, app, startAct, intent);
+		if (take_exception(env, err, errlen, "startActivity")) {
+			set_err(err, errlen, "нет приложения, которое открывает такой файл");
+			rc = 10;
+			goto done;
+		}
+	}
+
+done:
+	if (jAction) (*env)->DeleteLocalRef(env, jAction);
+	if (jMode) (*env)->DeleteLocalRef(env, jMode);
+	if (jKeyN) (*env)->DeleteLocalRef(env, jKeyN);
+	if (jKeyM) (*env)->DeleteLocalRef(env, jKeyM);
+	if (jKeyR) (*env)->DeleteLocalRef(env, jKeyR);
+	if (jName) (*env)->DeleteLocalRef(env, jName);
+	if (jMime) (*env)->DeleteLocalRef(env, jMime);
+	if (jRel) (*env)->DeleteLocalRef(env, jRel);
+	if (intent) (*env)->DeleteLocalRef(env, intent);
+	if (uri) (*env)->DeleteLocalRef(env, uri);
+	if (values) (*env)->DeleteLocalRef(env, values);
+	if (collection) (*env)->DeleteLocalRef(env, collection);
+	if (cUriCls) (*env)->DeleteLocalRef(env, cUriCls);
+	if (cIntent) (*env)->DeleteLocalRef(env, cIntent);
+	if (cCtx) (*env)->DeleteLocalRef(env, cCtx);
+	if (cPfd) (*env)->DeleteLocalRef(env, cPfd);
+	if (cRes) (*env)->DeleteLocalRef(env, cRes);
+	if (cDl) (*env)->DeleteLocalRef(env, cDl);
+	if (cCV) (*env)->DeleteLocalRef(env, cCV);
 	if (attached) {
 		(*vm)->DetachCurrentThread(vm);
 	}
@@ -1259,14 +1419,27 @@ func OpenFile(path string) error {
 	cMime := C.CString(mime)
 	defer C.free(unsafe.Pointer(cMime))
 	code := C.open_path(cPath, cMime, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
-	if code != 0 {
-		msg := strings.TrimSpace(C.GoString((*C.char)(unsafe.Pointer(&errBuf[0]))))
-		if msg == "" {
-			msg = "не удалось открыть файл"
-		}
-		return errors.New(msg)
+	if code == 0 {
+		return nil
 	}
-	return nil
+	errMsg := strings.TrimSpace(C.GoString((*C.char)(unsafe.Pointer(&errBuf[0]))))
+	// rc == 9: файл вне MediaStore (служебная папка приложения или только что
+	// скопирован). Копируем его в MediaStore.Downloads и открываем по content://.
+	if code == 9 {
+		errBuf2 := make([]byte, 256)
+		code2 := C.open_via_download(cPath, cMime, (*C.char)(unsafe.Pointer(&errBuf2[0])), C.int(len(errBuf2)))
+		if code2 == 0 {
+			return nil
+		}
+		msg2 := strings.TrimSpace(C.GoString((*C.char)(unsafe.Pointer(&errBuf2[0]))))
+		if msg2 != "" {
+			return errors.New(msg2)
+		}
+	}
+	if errMsg == "" {
+		errMsg = "не удалось открыть файл"
+	}
+	return errors.New(errMsg)
 }
 
 // AppVersion — версия приложения из манифеста (пустая, если прочитать не удалось).
