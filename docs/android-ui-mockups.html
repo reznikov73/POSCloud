@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>POSCloud Android — варианты макета главного экрана</title>
+<style>
+  :root{
+    --blue:#2563EB; --blue-d:#1D4ED8; --bg:#EFF3FA; --card:#fff; --text:#0F172A; --muted:#64748B;
+    --border:#DBE2EF; --green:#159D4B; --red:#DC2626; --amber:#B45309;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI",Roboto,"Noto Sans",Arial,sans-serif;background:#e9edf3;color:var(--text);padding:28px}
+  h1{font-size:22px;margin-bottom:6px}
+  .sub{color:#475569;margin-bottom:24px;font-size:14px}
+  .grid{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+  .variant{width:390px}
+  .variant h2{font-size:17px;margin-bottom:4px}
+  .variant p{font-size:13px;color:#475569;margin-bottom:12px;min-height:58px}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:34px;border:10px solid #111827;overflow:hidden;position:relative;display:flex;flex-direction:column;box-shadow:0 12px 30px rgba(0,0,0,.18)}
+  .dark .phone{background:#0B1220;color:#E5E7EB}
+  .status{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;font-size:12px;color:#374151}
+  .dark .status{color:#cbd5e1}
+  .screen{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .nav{height:68px;background:var(--card);border-top:1px solid var(--border);display:flex}
+  .dark .nav{background:#111a2c;border-color:#1f2a40}
+  .nav div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;color:#64748B}
+  .nav div.on{color:var(--blue);font-weight:600}
+  .dark .nav div.on{color:#60A5FA}
+  .ico{width:22px;height:22px;border-radius:6px;background:currentColor;opacity:.9}
+  .pad{padding:14px 14px 0;display:flex;flex-direction:column;gap:12px;flex:1;overflow:hidden}
+  .title{font-size:22px;font-weight:700}
+  .card{background:var(--card);border-radius:14px;padding:14px;border:1px solid var(--border)}
+  .dark .card{background:#111a2c;border-color:#1f2a40}
+  .row{display:flex;justify-content:space-between;align-items:center;min-height:40px;gap:10px;font-size:15px}
+  .row span:first-child{color:var(--muted)}
+  .dark .row span:first-child{color:#94a3b8}
+  .row span:last-child{text-align:right;word-break:break-all}
+  .btn{display:flex;align-items:center;justify-content:center;gap:8px;height:54px;border-radius:14px;font-size:16px;font-weight:600;background:var(--card);color:var(--text);border:1px solid var(--border)}
+  .btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .btn.primary:active{background:var(--blue-d)}
+  .dark .btn{background:#1a2540;color:#e5e7eb;border-color:#27344f}
+  .dark .btn.primary{background:#2563EB;border-color:#2563EB;color:#fff}
+  .btn.soft{background:#DBEAFE;border-color:#DBEAFE;color:#1D4ED8}
+  .btn.stop{background:#FEF2F2;border-color:#FECACA;color:#B91C1C}
+  .btn.warn{background:#FFFBEB;border-color:#FDE68A;color:#92400E}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .dot{width:12px;height:12px;border-radius:50%;background:var(--green);display:inline-block;margin-right:8px}
+  .state{font-size:18px;font-weight:700;display:flex;align-items:center}
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .tile{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
+  .dark .tile{background:#111a2c;border-color:#1f2a40}
+  .tile small{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
+  .dark .tile small{color:#94a3b8}
+  .tile b{font-size:20px}
+  .tile.online b{color:var(--green)}
+  .switch{width:64px;height:36px;border-radius:18px;background:var(--green);position:relative;flex:none}
+  .switch::after{content:"";position:absolute;top:4px;right:4px;width:28px;height:28px;border-radius:50%;background:#fff}
+  .seg{display:flex;background:#DBE2EF;border-radius:12px;padding:4px;gap:4px}
+  .dark .seg{background:#111a2c}
+  .seg div{flex:1;text-align:center;padding:9px 0;border-radius:9px;font-size:14px;color:#475569}
+  .dark .seg div{color:#94a3b8}
+  .seg div.on{background:var(--card);color:var(--blue);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .dark .seg div.on{background:#1a2540;color:#60A5FA}
+  .hero{padding:6px 4px 0}
+  .hero .big{font-size:40px;font-weight:700;line-height:1.05}
+  .hero .cap{color:#94a3b8;font-size:14px;margin-top:4px}
+  .tabs{display:flex;gap:18px;padding:6px 18px 0;font-size:15px;color:#94a3b8;border-bottom:1px solid #1f2a40}
+  .tabs div{padding:8px 0 10px}
+  .tabs .on{color:#fff;font-weight:600;border-bottom:3px solid var(--blue);margin-bottom:-1px}
+  .banner{display:flex;align-items:center;gap:12px;background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:14px;padding:12px 14px;font-size:14px}
+  .banner b{display:block;font-size:15px}
+  .banner .btn{height:44px;flex:none;padding:0 14px;font-size:14px;background:#fff;border-color:#FCD34D;color:#92400E}
+  .card .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .card .head b{font-size:16px}
+  .card .head span{font-size:13px;color:var(--green);font-weight:600}
+  .label{font-size:12px;color:var(--muted);margin-top:10px}
+  .dark .label{color:#64748b}
+</style>
+</head>
+<body>
+<h1>POSCloud для Android — 4 варианта главного экрана</h1>
+<div class="sub">Все кнопки высотой 54 px (минимум для пальца — 48), шрифт кнопок 16 px, нижняя навигация 68 px. Показана вкладка «Статус»; остальные вкладки наследуют тот же стиль.</div>
+
+<div class="grid">
+
+<!-- ================= A ================= -->
+<div class="variant">
+  <h2>A. «Крупные кнопки» — текущий экран, увеличенный</h2>
+  <p>Минимальная переделка: структура прежняя, но кнопки на всю ширину и в высоту пальца, строки состояния выше, добавлена панель про доступ к фото. Быстрее всего внедрить.</p>
+  <div class="phone">
+    <div class="status"><span>20:01</span><span>▲ ▮ 86%</span></div>
+    <div class="screen">
+      <div class="pad">
+        <div class="state"><span class="dot"></span>Синхронизация работает</div>
+        <div class="btn primary">▶ Запустить</div>
+        <div class="two"><div class="btn stop">■ Остановить</div><div class="btn">⟳ Синхронизировать</div></div>
+        <div class="banner"><div><b>Снимки экрана не переносятся</b>Нет доступа к фото</div><div class="btn">Разрешить</div></div>
+        <div class="card">
+          <div class="row"><span>Связь</span><span style="color:var(--green);font-weight:600">есть</span></div>
+          <div class="row"><span>Файлов</span><span>58</span></div>
+          <div class="row"><span>Последний цикл</span><span>20:01:39</span></div>
+          <div class="row"><span>Адрес</span><span style="font-size:13px">193.7.203.222:8090</span></div>
+        </div>
+        <div class="label">Синхронизация работает, пока приложение открыто.</div>
+      </div>
+    </div>
+    <div class="nav"><div class="on"><span class="ico"></span>Статус</div><div><span class="ico"></span>Связь</div><div><span class="ico"></span>Папки</div><div><span class="ico"></span>Журнал</div></div>
+  </div>
+</div>
+
+<!-- ================= B ================= -->
+<div class="variant">
+  <h2>B. «Переключатель + плитки»</h2>
+  <p>Главное действие — один большой переключатель «Синхронизация», как Wi‑Fi в настройках телефона. Ключевые цифры — крупные плитки 2×2. Кнопка «Синхронизировать сейчас» — одна, самая заметная.</p>
+  <div class="phone">
+    <div class="status"><span>20:01</span><span>▲ ▮ 86%</span></div>
+    <div class="screen">
+      <div class="pad">
+        <div class="title">POSCloud</div>
+        <div class="card row" style="min-height:72px"><div><b style="font-size:18px">Синхронизация</b><div class="label" style="margin-top:2px">работает, цикл в 20:01:39</div></div><div class="switch"></div></div>
+        <div class="btn primary">⟳ Синхронизировать сейчас</div>
+        <div class="tiles">
+          <div class="tile online"><small>Связь</small><b>есть</b></div>
+          <div class="tile"><small>Файлов</small><b>58</b></div>
+          <div class="tile"><small>Отправлено</small><b>1,2 ГБ</b></div>
+          <div class="tile"><small>Получено</small><b>840 МБ</b></div>
+        </div>
+        <div class="card">
+          <div class="row"><span>Сервер</span><span>193.7.203.222:8090</span></div>
+          <div class="row"><span>Папка</span><span style="font-size:13px">Download/POScloud</span></div>
+        </div>
+        <div class="banner"><div><b>Нет доступа к фото</b>снимки экрана не переносятся</div><div class="btn">Разрешить</div></div>
+      </div>
+    </div>
+    <div class="nav"><div class="on"><span class="ico"></span>Статус</div><div><span class="ico"></span>Связь</div><div><span class="ico"></span>Папки</div><div><span class="ico"></span>Журнал</div></div>
+  </div>
+</div>
+
+<!-- ================= C ================= -->
+<div class="variant dark">
+  <h2>C. «Тёмная тема, табы сверху»</h2>
+  <p>Тёмная тема (удобно в зале и на улице), табы перенесены наверх — под большой палец остаётся вся нижняя половина экрана. Статус — крупным числом, кнопки — «таблетки».</p>
+  <div class="phone">
+    <div class="status"><span>20:01</span><span>▲ ▮ 86%</span></div>
+    <div class="tabs"><div class="on">Статус</div><div>Связь</div><div>Папки</div><div>Журнал</div></div>
+    <div class="screen">
+      <div class="pad">
+        <div class="hero"><div class="big">58 файлов</div><div class="cap"><span class="dot"></span>синхронизировано · 20:01:39</div></div>
+        <div class="btn primary">⟳ Синхронизировать сейчас</div>
+        <div class="two"><div class="btn stop">■ Остановить</div><div class="btn">⚙ Настройки</div></div>
+        <div class="card">
+          <div class="row"><span>Сервер</span><span>193.7.203.222:8090</span></div>
+          <div class="row"><span>Папка</span><span style="font-size:13px">Download/POScloud</span></div>
+          <div class="row"><span>Интервал</span><span>3 с</span></div>
+        </div>
+        <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div><b style="font-size:15px">Доступ к фото</b><div class="label" style="margin-top:2px">нужен для снимков экрана</div></div><div class="btn" style="height:44px;padding:0 16px;font-size:14px;background:#2563EB;border-color:#2563EB;color:#fff">Разрешить</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= D ================= -->
+<div class="variant">
+  <h2>D. «Лента карточек» — у каждой карточки своя кнопка</h2>
+  <p>Material 3: экран — стек карточек, в каждой своя крупная кнопка действия. Не нужно искать кнопку «Запустить» отдельно от состояния: она прямо в карточке «Синхронизация». Легко добавлять новые блоки.</p>
+  <div class="phone">
+    <div class="status"><span>20:01</span><span>▲ ▮ 86%</span></div>
+    <div class="screen">
+      <div class="pad">
+        <div class="title">POSCloud</div>
+        <div class="card">
+          <div class="head"><b>Синхронизация</b><span>● работает</span></div>
+          <div class="label" style="margin:0 0 10px">58 файлов · последний цикл 20:01:39</div>
+          <div class="btn stop">■ Остановить</div>
+        </div>
+        <div class="card">
+          <div class="head"><b>Сейчас</b></div>
+          <div class="btn soft">⟳ Синхронизировать</div>
+        </div>
+        <div class="card">
+          <div class="head"><b>Снимки экрана</b><span style="color:var(--amber)">нет доступа</span></div>
+          <div class="label" style="margin:0 0 10px">Скриншоты телефона будут попадать в папку «Снимки экрана»</div>
+          <div class="btn warn">Разрешить доступ к фото</div>
+        </div>
+        <div class="card">
+          <div class="head"><b>Сервер</b></div>
+          <div class="row" style="min-height:28px"><span>Адрес</span><span>193.7.203.222:8090</span></div>
+          <div class="row" style="min-height:28px"><span>Папка</span><span style="font-size:13px">Download/POScloud</span></div>
+          <div class="label">193.7.203.222 · TLS</div>
+        </div>
+      </div>
+    </div>
+    <div class="nav"><div class="on"><span class="ico"></span>Статус</div><div><span class="ico"></span>Связь</div><div><span class="ico"></span>Папки</div><div><span class="ico"></span>Журнал</div></div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
